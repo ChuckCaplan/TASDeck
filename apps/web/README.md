@@ -1,0 +1,91 @@
+# TASDeck Web
+
+Browser control deck for one on-screen NES controller that can target NES port 1 or port 2, TAS file
+parsing, hardware TAS upload/control, and network manual input through the TASDeck middleware. The
+browser never opens USB serial directly; the middleware owns the Arduino serial port.
+
+## Run
+
+From the repository root:
+
+```sh
+npm start
+```
+
+Your default browser opens at `http://localhost:8000`. The middleware also prints LAN URLs that can
+be opened from an iPhone on the same Wi-Fi network.
+
+For long runs on macOS, `caffeinate -d npm start` prevents idle sleep from interrupting the
+middleware. This is not an npm script because `caffeinate` is macOS-specific; see the root README
+and hardware TAS workflow for continuous trace-stream usage.
+
+Set `PORT` to serve on a different port:
+
+```sh
+PORT=8765 npm start
+```
+
+To serve without opening a browser:
+
+```sh
+npm run serve:web
+```
+
+To force a specific Arduino serial device:
+
+```sh
+SERIAL_PORT=/dev/cu.usbmodemXXXX npm start
+```
+
+## Hardware Bridge
+
+Use the connection panel at the top of the page:
+
+Press `Connect` to open the WebSocket transport to the local middleware, which writes the UNO R4 USB
+serial port at `115200` baud.
+
+Close Arduino Serial Monitor before connecting. Hardware mode sends manual controller button events
+as text protocol commands from the middleware to the firmware:
+
+```txt
+BUTTON a down
+BUTTON a up
+BUTTON 2 a down
+BUTTON 2 a up
+```
+
+The controller shell contains a `P1` / `P2` toggle. Pointer and keyboard input go to the selected
+NES port; switching ports releases any currently held on-screen buttons first. Keyboard controls use
+the common NES emulator mapping: arrow keys for the D-pad, `Z` for `B`, `X` for `A`, `Enter` for
+`Start`, and `Shift` for `Select`.
+
+Hardware TAS playback expects a pre-generated `.tdmask` stream for real NES runs. Current exports use
+the versioned `TD2P` two-controller stream format so player-2 FM2 data is uploaded and traced with
+player 1. The header records format version 1 and two ports even when every player-2 byte is zero.
+The web UI accepts only versioned `TD2P` `.tdmask` files for real-console uploads.
+
+The TAS panel includes two poll-alignment controls:
+
+- `Start delay`: waits for this many completed NES controller reads after `Start` before poll 0 is
+  released at a latch boundary.
+- `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
+  sends data to the Arduino.
+
+The NES event log keeps the newest 120 browser-visible events. `Copy` copies the visible log to the
+clipboard. `Trace` asks the firmware for the latest TAS poll trace, logs compact rows and anomaly
+summaries, and asks the middleware to save the full event log under `logs/trace/` with a
+`<timestamp>_<tdmask-base>.trace` filename. Firmware trace rows include the active port plus
+line/mask fields from the port data line held through each controller read pulse. The current
+firmware and web UI capture 512 completed polls per trace request.
+
+## Tests
+
+```sh
+npm run lint:web
+npm run test:web
+npm run test:ui
+```
+
+The linter covers the web source, tests, and middleware script. The tests exercise the pure TAS
+helper module in `src/tas.js`, the serial command formatting helper in `src/transport.js`, and key
+middleware helpers. The Playwright UI tests cover mobile controller layout and touch input.

@@ -1,0 +1,54 @@
+node_modules/
+.DS_Store
+.claude/
+
+# Local editor and environment settings
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# User-supplied and generated TAS assets
+*.nes
+*.fds
+*.unf
+*.unif
+*.rom
+*.fm2
+*.tdmask
+*.tdmask.trace.csv
+*.stream.csv
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+diagnostics/
+logs/
+
+# Test and lint outputs
+coverage/
+.nyc_output/
+.eslintcache
+playwright-report/
+test-results/
+
+# Local build outputs and temporary binaries
+build/
+dist/
+*.elf
+*.hex
+*.bin
+*.dSYM/
+
+# Arduino local output directories
+.arduino/
+firmware/**/build/
+firmware/**/arduino_secrets.h
+firmware/uno_r4_wifi/generated/

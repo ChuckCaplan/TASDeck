@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TASDeck - NES Controller Bridge</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">NES Controller Bridge</p>
+          <h1>TASDeck</h1>
+        </div>
+        <div class="connection-panel" aria-live="polite">
+          <span class="status-light" aria-hidden="true"></span>
+          <div>
+            <strong id="connectionLabel">Arduino USB offline</strong>
+            <span id="connectionDetail">Start the middleware on this computer, then connect the Arduino serial port.</span>
+          </div>
+          <button class="small-button" type="button" id="toggleConnection">Connect</button>
+        </div>
+      </header>
+
+      <section class="layout-grid" aria-label="NES controls and TAS playback">
+        <section class="control-stage" aria-label="NES controller">
+          <article class="nes-device nes-controller" data-device="controller">
+            <div class="controller-shell" aria-label="NES controller">
+              <div class="dpad" aria-label="D-pad">
+                <button type="button" class="pad-button up" data-button="up" aria-label="Up"></button>
+                <button type="button" class="pad-button left" data-button="left" aria-label="Left"></button>
+                <span class="pad-center" aria-hidden="true"></span>
+                <button type="button" class="pad-button right" data-button="right" aria-label="Right"></button>
+                <button type="button" class="pad-button down" data-button="down" aria-label="Down"></button>
+              </div>
+
+              <div class="controller-center" aria-hidden="true">
+                <div class="center-ridges">
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="menu-labels">
+                  <span>SELECT</span>
+                  <span>START</span>
+                </div>
+              </div>
+
+              <div class="menu-pocket">
+                <button type="button" class="menu-button" data-button="select" aria-label="Select">
+                  <span class="visually-hidden">Select</span>
+                </button>
+                <button type="button" class="menu-button" data-button="start" aria-label="Start">
+                  <span class="visually-hidden">Start</span>
+                </button>
+              </div>
+
+              <div class="controller-brand" aria-hidden="true">TASDeck</div>
+
+              <div class="controller-port-toggle" aria-label="Controller port">
+                <button type="button" data-controller-port="1" aria-pressed="true">P1</button>
+                <button type="button" data-controller-port="2" aria-pressed="false">P2</button>
+              </div>
+
+              <div class="action-buttons">
+                <div class="action-button-wrap">
+                  <button type="button" class="round-button" data-button="b" aria-label="B">
+                    <span class="visually-hidden">B</span>
+                  </button>
+                  <span aria-hidden="true">B</span>
+                </div>
+                <div class="action-button-wrap">
+                  <button type="button" class="round-button" data-button="a" aria-label="A">
+                    <span class="visually-hidden">A</span>
+                  </button>
+                  <span aria-hidden="true">A</span>
+                </div>
+              </div>
+            </div>
+            <p class="device-state" id="controllerState">Idle</p>
+            <p class="shortcut-note" aria-label="Keyboard shortcuts">
+              <span>Keyboard:</span>
+              <kbd>Arrows</kbd><span>D-pad</span>
+              <kbd>Z</kbd><span>B</span>
+              <kbd>X</kbd><span>A</span>
+              <kbd>Enter</kbd><span>Start</span>
+              <kbd>Shift</kbd><span>Select</span>
+            </p>
+          </article>
+        </section>
+
+        <aside class="playback-panel" aria-label="TAS playback">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">TAS File</p>
+              <h2>Playback</h2>
+            </div>
+            <div class="file-actions">
+              <label class="file-picker">
+                Open
+                <input id="tasFile" type="file" accept=".tdmask" />
+              </label>
+            </div>
+          </div>
+
+          <div class="transport-row">
+            <button type="button" class="transport-button primary" id="playButton">Play</button>
+            <button type="button" class="transport-button" id="pauseButton">Pause</button>
+            <button type="button" class="transport-button" id="stopButton">Stop</button>
+          </div>
+
+          <div class="progress-wrap" aria-label="Playback progress">
+            <div class="progress-track">
+              <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <span id="progressText">0 / 0 frames</span>
+          </div>
+
+          <dl class="info-grid">
+            <div>
+              <dt>Status</dt>
+              <dd id="playbackStatus">No file loaded</dd>
+            </div>
+            <div>
+              <dt>File</dt>
+              <dd id="fileName">None</dd>
+            </div>
+            <div>
+              <dt>Start delay</dt>
+              <dd>
+                <label class="inline-number">
+                  <input id="syncDelayPolls" type="number" min="0" max="3600" step="1" value="0" inputmode="numeric" />
+                  <span>frames</span>
+                </label>
+              </dd>
+            </div>
+            <div>
+              <dt>Skip first</dt>
+              <dd>
+                <label class="inline-number">
+                  <input id="syncSkipPolls" type="number" min="0" step="1" value="0" inputmode="numeric" />
+                  <span>frames</span>
+                </label>
+              </dd>
+            </div>
+          </dl>
+
+          <div class="current-frame">
+            <span class="field-label">Current frame</span>
+            <code id="currentFrame">Load a TAS file to preview input.</code>
+          </div>
+        </aside>
+      </section>
+
+      <section class="event-console" aria-label="NES transport log">
+        <div class="section-heading compact">
+          <div>
+            <p class="eyebrow">Connectivity</p>
+            <h2>NES Event Log</h2>
+          </div>
+          <div class="log-actions">
+            <span class="log-capacity" id="eventLogSize">Latest 0 / 120</span>
+            <button class="small-button" type="button" id="dumpTrace">Trace</button>
+            <button class="small-button" type="button" id="copyLog" disabled>Copy</button>
+            <button class="small-button" type="button" id="clearLog">Clear</button>
+          </div>
+        </div>
+        <ol id="eventLog" class="event-log"></ol>
+      </section>
+    </main>
+
+    <script src="src/tas.js" defer></script>
+    <script src="src/transport.js" defer></script>
+    <script src="src/app.js" defer></script>
+  </body>
+</html>
