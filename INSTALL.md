@@ -38,7 +38,7 @@ Port 1:
 | Black | Controller data | `D6` |
 | Red | `+5V` | not connected; cap or insulate |
 
-Port 2 uses the same signal names and usually the same wire colors:
+Port 2 uses the same signal names and my cable used the same wire colors:
 
 | Cord wire | NES signal | Arduino UNO R4 WiFi connection |
 | --- | --- | --- |
