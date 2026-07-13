@@ -173,7 +173,7 @@ test("saves browser event log snapshots", async () => {
       reason: "tas trace",
       metadata: {
         timestamp: "2026-07-03T20:39:34.149Z",
-        tdmaskFileName: "lordtom,maru,tompav2-smb3-warps.tdmask",
+        tasFileName: "lordtom,maru,tompav2-smb3-warps.tdmask",
         originalPolls: 72254,
         effectivePolls: 72252,
         skipPolls: 2,
@@ -193,7 +193,7 @@ test("saves browser event log snapshots", async () => {
 
     const saved = await fsp.readFile(path.join(logDir, "trace", decoded.fileName), "utf8");
     assert.match(saved, /^TASDeck Trace\n/);
-    assert.match(saved, /tdmask_file: lordtom,maru,tompav2-smb3-warps\.tdmask\n/);
+    assert.match(saved, /tas_file: lordtom,maru,tompav2-smb3-warps\.tdmask\n/);
     assert.match(saved, /skip_polls: 2\n/);
     assert.match(saved, /effective_polls: 72252\n/);
     assert.match(saved, /\n\nNES Event Log\nLatest 2 \/ 120\n\n001 playback\nTAS trace captured 2 rows\n$/);

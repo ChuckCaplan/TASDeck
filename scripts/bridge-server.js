@@ -887,7 +887,7 @@ class SerialBridge {
       const traceLog = reason === "tas-trace";
       const outputDir = traceLog ? path.join(this.logDir, TRACE_LOG_DIR_NAME) : this.logDir;
       const fileName = traceLog
-        ? traceLogFileName(metadata.tdmaskFileName || metadata.tasFileName || this.activeTasRun?.fileName, timestamp)
+        ? traceLogFileName(metadata.tasFileName || metadata.tdmaskFileName || this.activeTasRun?.fileName, timestamp)
         : eventLogFileName(reason, timestamp);
       const filePath = path.join(outputDir, fileName);
       const outputText = traceLog
@@ -966,7 +966,7 @@ class SerialBridge {
     const filePath = path.join(outputDir, fileName);
     const metadata = {
       timestamp: timestamp.toISOString(),
-      tdmaskFileName: run.fileName,
+      tasFileName: run.fileName,
       bridgeRunId: run.id,
       skipPolls: run.skipPolls || 0,
       originalPolls: run.originalFrameCount || run.frameCount,
@@ -1095,7 +1095,7 @@ class SerialBridge {
         await fsp.mkdir(outputDir, { recursive: true });
         const headerLines = [
           "# tasdeck trace stream v1",
-          `# tdmask_file: ${run.fileName}`,
+          `# tas_file: ${run.fileName}`,
           `# bridge_run_id: ${run.id}`,
           `# effective_polls: ${run.frameCount}`,
           `# started: ${startedAt.toISOString()}`,
@@ -2174,8 +2174,8 @@ function padTimestampPart(value, length = 2) {
 
 function sanitizeTraceBaseName(fileName) {
   const rawBase = path.basename(String(fileName || "unknown").trim() || "unknown");
-  const withoutTdmask = rawBase.replace(/\.tdmask$/i, "");
-  const withoutExtension = withoutTdmask === rawBase ? path.parse(rawBase).name : withoutTdmask;
+  const withoutTasExtension = rawBase.replace(/\.(?:tdmask|r08)$/i, "");
+  const withoutExtension = withoutTasExtension === rawBase ? path.parse(rawBase).name : withoutTasExtension;
   const safe = withoutExtension
     .replace(/[^a-zA-Z0-9._,-]+/g, "_")
     .replace(/^_+|_+$/g, "");
@@ -2204,7 +2204,7 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
   return [
     "TASDeck Trace",
     `timestamp: ${metadata.timestamp || timestamp.toISOString()}`,
-    `tdmask_file: ${metadata.tdmaskFileName || metadata.tasFileName || run?.fileName || "unknown"}`,
+    `tas_file: ${metadata.tasFileName || metadata.tdmaskFileName || run?.fileName || "unknown"}`,
     `bridge_run_id: ${metadata.bridgeRunId ?? run?.id ?? ""}`,
     `client_run_id: ${run?.clientRunId ?? ""}`,
     `skip_polls: ${metadata.skipPolls ?? run?.skipPolls ?? 0}`,

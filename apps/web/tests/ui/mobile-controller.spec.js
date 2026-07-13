@@ -98,19 +98,15 @@ async function controllerFaceplateRect(page) {
   });
 }
 
-test("groups playback offsets without leaving an empty grid cell", async ({ page }) => {
+test("groups playback offsets in one grid row", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
 
-  const grid = await elementRect(page, ".info-grid");
   const startDelay = await elementRect(page, ".info-grid > div:has(#syncDelayPolls)");
   const skipFirst = await elementRect(page, ".info-grid > div:has(#syncSkipPolls)");
-  const syncMode = await elementRect(page, ".sync-mode-field");
 
   expect(skipFirst.y).toBeCloseTo(startDelay.y, 0);
-  expect(syncMode.x).toBeCloseTo(grid.x, 0);
-  expect(syncMode.width).toBeCloseTo(grid.width, 0);
-  expect(syncMode.y + syncMode.height).toBeLessThan(startDelay.y);
+  expect(skipFirst.width).toBeCloseTo(startDelay.width, 0);
 });
 
 test.describe("iPhone portrait controller", () => {

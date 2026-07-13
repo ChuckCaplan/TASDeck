@@ -5,7 +5,7 @@
 This project has three pieces:
 
 - `apps/web`: A dependency-free browser control deck for manual NES input, versioned `TD2P`
-  `.tdmask` validation and upload/control, event-log copy/trace controls, and a WebSocket transport
+  `.tdmask` and raw `.r08` validation/upload/control, event-log copy/trace controls, and a WebSocket transport
   through middleware.
 - `scripts/bridge-server.js`: Dependency-free Node middleware that serves the web app, accepts
   browser WebSocket events, owns the USB serial port, sends firmware protocol commands, and streams
@@ -29,7 +29,7 @@ npm start
 
 Then visit `http://localhost:8000` on the host computer or the printed LAN URL on an iPhone. Press
 `Connect` in the connection panel to open the Arduino USB serial bridge. Hardware TAS playback
-expects a pre-generated `.tdmask` mask stream. Trace captures from the event log are written under
+expects a pre-generated `.tdmask` mask stream or raw `.r08` replay. Trace captures from the event log are written under
 `logs/trace/`, which is intentionally ignored by git. Set `BRIDGE_TAS_TRACE_STREAM=1` when starting
 the app to write a continuous `.stream.csv` trace for each hardware TAS run.
 
@@ -167,8 +167,10 @@ single-producer/single-consumer indices and status snapshots read fields without
 before releasing frame 0. `Skip first` is bridge-owned; the middleware slices that many masks
 from the front of the uploaded stream before sending chunks to the Arduino.
 
-The UI accepts only versioned `TD2P` `.tdmask` files with interleaved port 1 / port 2 bytes. Each
-controller byte is a NES mask in A, B, Select, Start, Up, Down, Left, Right bit order.
+The UI accepts versioned `TD2P` `.tdmask` files with interleaved port 1 / port 2 bytes and raw R08
+files with two bytes per record. TD2P bytes use A, B, Select, Start, Up, Down, Left, Right bit order;
+R08 bytes are reversed from their NES serial order during import. File format selects sync mode:
+`.tdmask` uses completed reads and `.r08` uses latch windows.
 
 Hardware TAS playback uses the upload/chunk protocol with pre-generated mask bytes. Do not send
 browser-timed TAS button diffs to the real hardware bridge.
@@ -254,10 +256,12 @@ hardware-flow changes:
 - Disconnected Arduino mode blocks events and logs `blocked` entries.
 - The Connect button connects through the middleware and logs firmware responses.
 - Disconnecting Arduino USB while a button is held sends release commands first.
-- The file picker offers only `.tdmask` files, and invalid extensions or files without a valid
-  versioned `TD2P` header are rejected.
+- The file picker offers `.tdmask` and `.r08`; invalid extensions, TD2P files without a valid
+  versioned header, and empty or odd-length R08 files are rejected.
 - A generated versioned `TD2P` `.tdmask` file loads as a two-controller console-ready mask stream
   and uploads after Arduino USB is connected, including when all port 2 bytes are zero.
+- A raw `.r08` file loads as a two-controller latch stream, reverses each controller byte, and
+  uploads in latch sync mode without a user-selectable sync control.
 - The `Start delay` and `Skip first` controls stay editable before arming and disabled during active
   hardware playback.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.
@@ -271,4 +275,4 @@ hardware-flow changes:
 - Hardware TAS timing depends on the game latching the controller in a short burst once per frame
   and lagging on the same frames as the emulator. Games whose controller reads within one frame are
   spread wider than the latch window, or that intentionally use different values for reads within
-  one frame, would need a smaller window or a different sync mode.
+  one frame, would need a smaller window or a different playback strategy.
