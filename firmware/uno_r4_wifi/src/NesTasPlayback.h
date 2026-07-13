@@ -74,6 +74,7 @@ class NesTasPlayback {
   TasPlaybackResult onWindowExpired(uint32_t nowMicros, TasFrameMasks& nextMasks);
   bool windowExpiryDue(uint32_t nowMicros) const;
   void notePollCompleted(uint8_t controllerPort = 1);
+  void noteLatchObserved();
   void reset();
 
   // Fast-path helpers for the latch ISR's first data-line write. When a strobe

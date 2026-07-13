@@ -125,12 +125,21 @@
               <dt>File</dt>
               <dd id="fileName">None</dd>
             </div>
+            <div class="sync-mode-field">
+              <dt>Sync mode</dt>
+              <dd>
+                <select id="syncMode" class="inline-select">
+                  <option value="poll">Completed reads</option>
+                  <option value="latch">Latch / R08</option>
+                </select>
+              </dd>
+            </div>
             <div>
               <dt>Start delay</dt>
               <dd>
                 <label class="inline-number">
                   <input id="syncDelayPolls" type="number" min="0" max="3600" step="1" value="0" inputmode="numeric" />
-                  <span>frames</span>
+                  <span>windows</span>
                 </label>
               </dd>
             </div>

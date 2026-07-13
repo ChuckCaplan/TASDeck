@@ -64,10 +64,11 @@ the versioned `TD2P` two-controller stream format so player-2 FM2 data is upload
 player 1. The header records format version 1 and two ports even when every player-2 byte is zero.
 The web UI accepts only versioned `TD2P` `.tdmask` files for real-console uploads.
 
-The TAS panel includes two poll-alignment controls:
+The TAS panel includes a synchronization selector and two alignment controls:
 
-- `Start delay`: waits for this many completed NES controller reads after `Start` before poll 0 is
-  released at a latch boundary.
+- `Sync mode`: use `Completed reads` for emulator poll exports and `Latch / R08` for raw R08 input
+  records that advance once per accepted console latch.
+- `Start delay`: waits before mask 0; latch mode interprets this as an exact blank-latch count.
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
 

@@ -12,6 +12,7 @@ const path = require("node:path");
 const {
   HARDWARE_TAS_MAX_START_DELAY_POLLS,
   HARDWARE_TAS_SYNC_MODE,
+  HARDWARE_TAS_SYNC_MODES,
   NES_BUTTONS,
   TAS_CHUNK_FRAME_LIMIT,
   formatTasChunk,
@@ -377,8 +378,8 @@ class SerialBridge {
     }
 
     const syncMode = message?.syncMode || HARDWARE_TAS_SYNC_MODE;
-    if (syncMode !== HARDWARE_TAS_SYNC_MODE) {
-      throw new Error("TAS upload sync mode must be poll.");
+    if (!HARDWARE_TAS_SYNC_MODES.includes(syncMode)) {
+      throw new Error("TAS upload sync mode must be poll or latch.");
     }
 
     const skipPolls = normalizeTasRunSkipPolls(
@@ -971,6 +972,7 @@ class SerialBridge {
       originalPolls: run.originalFrameCount || run.frameCount,
       effectivePolls: run.frameCount,
       portCount: run.portCount || 1,
+      syncMode: run.syncMode || HARDWARE_TAS_SYNC_MODE,
       traceStart: dump.requestedStart,
       traceNext: dump.next,
       traceCount: dump.rows.length,
@@ -2207,6 +2209,7 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `client_run_id: ${run?.clientRunId ?? ""}`,
     `skip_polls: ${metadata.skipPolls ?? run?.skipPolls ?? 0}`,
     `delay_polls: ${metadata.delayPolls ?? ""}`,
+    `sync_mode: ${metadata.syncMode ?? run?.syncMode ?? HARDWARE_TAS_SYNC_MODE}`,
     `port_count: ${metadata.portCount ?? run?.portCount ?? ""}`,
     `original_polls: ${metadata.originalPolls ?? run?.originalFrameCount ?? ""}`,
     `effective_polls: ${metadata.effectivePolls ?? run?.frameCount ?? ""}`,

@@ -1,5 +1,6 @@
 const {
   HARDWARE_TAS_MAX_START_DELAY_POLLS,
+  HARDWARE_TAS_SYNC_MODE,
   normalizeTasMasks,
   parseTasFileBytes,
   tasMaskHasInput,
@@ -45,6 +46,7 @@ const state = {
     fileName: "None",
     frames: [],
     masks: [],
+    syncMode: HARDWARE_TAS_SYNC_MODE,
     syncDelayPolls: 0,
     syncSkipPolls: 0,
     validation: null,
@@ -87,6 +89,7 @@ const elements = {
   playbackStatus: document.querySelector("#playbackStatus"),
   fileName: document.querySelector("#fileName"),
   syncDelayPolls: document.querySelector("#syncDelayPolls"),
+  syncMode: document.querySelector("#syncMode"),
   syncSkipPolls: document.querySelector("#syncSkipPolls"),
   currentFrame: document.querySelector("#currentFrame"),
   dumpTrace: document.querySelector("#dumpTrace"),
@@ -358,7 +361,7 @@ class NetworkBridgeTransport {
     return true;
   }
 
-  sendTasUpload(fileName, masks, clientRunId, skipPolls = 0) {
+  sendTasUpload(fileName, masks, clientRunId, skipPolls = 0, syncMode = HARDWARE_TAS_SYNC_MODE) {
     const normalizedMasks = normalizeTasMasks(Array.isArray(masks) ? masks : []);
     const portCount = tasMasksPortCount(normalizedMasks);
     const normalizedSkipPolls = Number.isSafeInteger(Number(skipPolls)) ? Math.max(0, Number(skipPolls)) : 0;
@@ -367,6 +370,7 @@ class NetworkBridgeTransport {
         type: "tas_upload",
         fileName,
         clientRunId,
+        syncMode,
         skipPolls: normalizedSkipPolls,
         portCount,
         frameCount: normalizedMasks.length,
@@ -1043,9 +1047,11 @@ function loadTasFromParseResult(fileName, parseResult) {
   state.tas.fileName = fileName;
   state.tas.frames = frames;
   state.tas.masks = validation.masks;
+  state.tas.syncMode = HARDWARE_TAS_SYNC_MODE;
   state.tas.syncDelayPolls = 0;
   state.tas.syncSkipPolls = 0;
   elements.syncDelayPolls.value = "0";
+  elements.syncMode.value = HARDWARE_TAS_SYNC_MODE;
   elements.syncSkipPolls.value = "0";
   elements.syncSkipPolls.max = validation.masks.length > 0 ? String(validation.masks.length - 1) : "0";
   state.tas.validation = validation;
@@ -1229,6 +1235,7 @@ function hardwareTasFileKey() {
     state.tas.fileName,
     state.tas.masks.length,
     state.tas.syncSkipPolls,
+    state.tas.syncMode,
     tasMasksPortCount(state.tas.masks),
     tasRunChecksum(state.tas.masks, tasMasksPortCount(state.tas.masks)),
   ].join(":");
@@ -1256,7 +1263,13 @@ async function ensureHardwareTasUploaded(runId) {
   updatePlaybackInfo();
 
   const uploadPromise = networkTransport
-    .sendTasUpload(state.tas.fileName, state.tas.masks, runId, state.tas.syncSkipPolls)
+    .sendTasUpload(
+      state.tas.fileName,
+      state.tas.masks,
+      runId,
+      state.tas.syncSkipPolls,
+      state.tas.syncMode,
+    )
     .then((status) => {
       if (!hardwareRunIsCurrent(runId)) {
         return status;
@@ -1763,9 +1776,12 @@ function updatePlaybackInfo() {
   elements.pauseButton.disabled = !canPause;
   elements.stopButton.disabled = total === 0 || state.tas.status === "invalid";
   elements.dumpTrace.disabled = !networkTransport.isConnected();
-  elements.syncSkipPolls.disabled = ["uploading", "arming", "armed", "playing", "streaming", "paused"].includes(
+  const syncControlsDisabled = ["uploading", "arming", "armed", "playing", "streaming", "paused"].includes(
     state.tas.status,
   );
+  elements.syncMode.disabled = syncControlsDisabled;
+  elements.syncDelayPolls.disabled = syncControlsDisabled;
+  elements.syncSkipPolls.disabled = syncControlsDisabled;
 }
 
 function formatTasFrameInput(frame) {
@@ -1806,6 +1822,7 @@ function bindPlayback() {
   elements.stopButton.addEventListener("click", stopPlayback);
   elements.syncDelayPolls.addEventListener("change", handleSyncDelayChange);
   elements.syncDelayPolls.addEventListener("input", handleSyncDelayChange);
+  elements.syncMode.addEventListener("change", handleSyncModeChange);
   elements.syncSkipPolls.addEventListener("change", handleSyncSkipChange);
   elements.syncSkipPolls.addEventListener("input", handleSyncSkipChange);
 }
@@ -1869,6 +1886,7 @@ function traceEventLogMetadata(trace = {}) {
     portCount: tasMasksPortCount(state.tas.masks),
     skipPolls: state.tas.syncSkipPolls,
     delayPolls: state.tas.syncDelayPolls,
+    syncMode: state.tas.syncMode,
     hardwareRunId: state.tas.hardwareRunId,
     bridgeRunId: state.tas.hardwareBridgeRunId,
     traceStart: trace.start,
@@ -1890,6 +1908,12 @@ function handleSyncDelayChange() {
   if (String(normalized) !== elements.syncDelayPolls.value) {
     elements.syncDelayPolls.value = String(normalized);
   }
+}
+
+function handleSyncModeChange() {
+  state.tas.syncMode = elements.syncMode.value === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  state.tas.hardwareFileKey = "";
+  state.tas.hardwareUploadPromise = null;
 }
 
 function handleSyncSkipChange() {

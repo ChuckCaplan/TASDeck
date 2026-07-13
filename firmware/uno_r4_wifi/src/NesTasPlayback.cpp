@@ -23,7 +23,7 @@ TasPlaybackResult NesTasPlayback::begin(uint32_t frameCount, TasSyncMode syncMod
     frameCount == 0 ||
     portCount == 0 ||
     portCount > kNesControllerPortCount ||
-    syncMode != TasSyncMode::Poll ||
+    (syncMode != TasSyncMode::Poll && syncMode != TasSyncMode::Latch) ||
     latchWindowMicros < kTasMinLatchWindowMicros ||
     latchWindowMicros > kTasMaxLatchWindowMicros) {
     setError(TasPlaybackResult::Invalid);
@@ -179,7 +179,7 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
       result = TasPlaybackResult::Waiting;
       lastEdgeKind_ = TasEdgeKind::NotStartedWait;
     } else if (startDelayRemaining_ > 0) {
-      if (previousWindowPolled) {
+      if (syncMode_ == TasSyncMode::Latch || previousWindowPolled) {
         startDelayRemaining_ -= 1;
       }
       result = TasPlaybackResult::Waiting;
@@ -324,6 +324,12 @@ void NesTasPlayback::notePollCompleted(uint8_t controllerPort) {
   }
 
   pollCompletedInWindow_ = true;
+}
+
+void NesTasPlayback::noteLatchObserved() {
+  if (syncMode_ == TasSyncMode::Latch) {
+    pollCompletedInWindow_ = true;
+  }
 }
 
 bool NesTasPlayback::willAdvanceOnEdge() const {

@@ -53,6 +53,7 @@ enum class Action {
 enum class TasSyncMode {
   Unknown,
   Poll,
+  Latch,
 };
 
 struct TasFrameMasks {

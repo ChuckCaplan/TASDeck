@@ -342,6 +342,10 @@ test("formats TAS serial commands from bridge messages", () => {
     "TAS_BEGIN 81 poll 2",
   );
   assert.equal(
+    bridge.commandForTasMessage({ type: "tas_begin", frameCount: 81, syncMode: "latch" }),
+    "TAS_BEGIN 81 latch",
+  );
+  assert.equal(
     bridge.commandForTasMessage({
       type: "tas_begin",
       frameCount: 81,
@@ -831,6 +835,46 @@ test("stores validated TAS uploads on the bridge", () => {
   assert.equal(decoded.port_count, 1);
   assert.equal(decoded.sync, "poll");
   assert.equal(decoded.file_name, "run.fm2");
+});
+
+test("bridge-owned TAS arm preserves latch synchronization", async () => {
+  const bridge = new SerialBridge();
+  const writes = [];
+  const client = {
+    heldButtons: new Set(),
+    socket: { destroyed: false, write() {} },
+  };
+  const masks = [0x01, 0x00, 0x80];
+
+  bridge.handle = {
+    async write(command) {
+      writes.push(command);
+      const trimmed = command.trim();
+      if (trimmed === "TAS_BEGIN 3 latch") {
+        bridge.handleSerialBytes(Buffer.from("OK tas_begin active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=512 ports=1 sync=latch error=ok\n"));
+      } else if (trimmed.startsWith("TAS_CHUNK")) {
+        bridge.handleSerialBytes(Buffer.from("OK tas_chunk active=1 ready=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=latch error=ok\n"));
+      } else if (trimmed === "TAS_END") {
+        bridge.handleSerialBytes(Buffer.from("OK tas_end active=1 ready=1 receiving_complete=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=latch error=ok\n"));
+      }
+    },
+  };
+  bridge.portPath = "/dev/cu.usbmodem-test";
+  bridge.serialReady = true;
+
+  bridge.handleClientTasMessage(client, {
+    type: "tas_upload",
+    fileName: "run.tdmask",
+    frameCount: masks.length,
+    inputFrameCount: 2,
+    syncMode: "latch",
+    masks,
+    checksum: tasRunChecksum(masks),
+  });
+  assert.equal(bridge.activeTasRun.syncMode, "latch");
+
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.equal(writes[0], "TAS_BEGIN 3 latch\n");
 });
 
 test("bridge-owned TAS upload streams two-controller masks", async () => {

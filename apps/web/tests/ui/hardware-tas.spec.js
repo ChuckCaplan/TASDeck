@@ -403,6 +403,22 @@ test.describe("hardware TAS streaming UI", () => {
     expect(upload.frameCount).toBe(12);
   });
 
+  test("uploads R08 masks with latch synchronization when selected", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+    await uploadShortTas(page);
+
+    await page.selectOption("#syncMode", "latch");
+    await page.click("#playButton");
+
+    await expect.poll(async () => {
+      const uploads = await page.evaluate(() =>
+        window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload"),
+      );
+      return uploads.at(-1)?.syncMode;
+    }).toBe("latch");
+  });
+
   test("play arms the Arduino, then Start begins playback", async ({ page }) => {
     await installFakeBridge(page);
     await connectFakeNetworkBridge(page);

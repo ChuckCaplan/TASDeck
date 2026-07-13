@@ -29,7 +29,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v44";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v46";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -134,6 +134,36 @@ volatile uint8_t tasAnomalyKind = 0;
 volatile uint8_t tasAnomalyPendingMark = 0;
 NesTasPlayback tasPlayback;
 FspTimer tasServiceTimer;
+
+// The trace writer runs in the NES clock ISR while trace pages are read from
+// the main loop. A timestamp of zero marks a slot while it is being replaced;
+// the real timestamp is published last. This lets the loop retry a preempted
+// copy without ever masking the latency-sensitive NES pin interrupts.
+inline void tasTraceCompilerBarrier() {
+  __asm__ __volatile__("" ::: "memory");
+}
+
+bool copyTasTraceEntryStable(uint16_t index, TasTraceEntry& destination) {
+  constexpr uint8_t kMaxAttempts = 4;
+  for (uint8_t attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    const uint32_t timestampBefore = tasTrace[index].timestampMicros;
+    if (timestampBefore == 0) {
+      continue;
+    }
+
+    tasTraceCompilerBarrier();
+    destination = tasTrace[index];
+    tasTraceCompilerBarrier();
+    const uint32_t timestampAfter = tasTrace[index].timestampMicros;
+    if (
+      timestampBefore == timestampAfter &&
+      destination.timestampMicros == timestampBefore) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 void setupNesPins();
 void setupDiagnosticPins();
@@ -656,40 +686,60 @@ void formatTasTraceResponse(const Command& command, char* response, size_t respo
   uint32_t pageStart = 0;
   uint8_t pageCount = 0;
 
-  noInterrupts();
-  totalSnapshot = tasTraceCount;
-  nextSequenceSnapshot = tasTraceNextSequence;
-  firstSequenceSnapshot = nextSequenceSnapshot - totalSnapshot;
+  // Never wrap this copy in noInterrupts(): an NES controller clock train is
+  // only a few dozen microseconds long, so a trace page copy can collapse two
+  // clock edges into one pending IRQ and corrupt the value seen by the game.
+  // Sequence N always occupies slot N modulo capacity. Each entry publishes
+  // its timestamp last, and the sequence counter is published after the whole
+  // entry, so a main-loop copy can validate and retry if the ISR preempts it.
+  constexpr uint8_t kMaxPageAttempts = 4;
+  for (uint8_t attempt = 0; attempt < kMaxPageAttempts; ++attempt) {
+    nextSequenceSnapshot = tasTraceNextSequence;
+    totalSnapshot = nextSequenceSnapshot < kTasTraceCapacity
+      ? static_cast<uint16_t>(nextSequenceSnapshot)
+      : kTasTraceCapacity;
+    firstSequenceSnapshot = nextSequenceSnapshot - totalSnapshot;
 
-  pageStart = command.traceHasStart
-    ? command.traceStart
-    : (nextSequenceSnapshot > command.traceCount ? nextSequenceSnapshot - command.traceCount : firstSequenceSnapshot);
-  if (pageStart < firstSequenceSnapshot) {
-    pageStart = firstSequenceSnapshot;
-  }
-  if (pageStart > nextSequenceSnapshot) {
-    pageStart = nextSequenceSnapshot;
-  }
+    pageStart = command.traceHasStart
+      ? command.traceStart
+      : (nextSequenceSnapshot > command.traceCount ? nextSequenceSnapshot - command.traceCount : firstSequenceSnapshot);
+    if (pageStart < firstSequenceSnapshot) {
+      pageStart = firstSequenceSnapshot;
+    }
+    if (pageStart > nextSequenceSnapshot) {
+      pageStart = nextSequenceSnapshot;
+    }
 
-  const uint32_t available = nextSequenceSnapshot - pageStart;
-  uint32_t requestedCount = command.traceCount;
-  if (requestedCount > available) {
-    requestedCount = available;
-  }
-  if (requestedCount > tasdeck::kTasTracePageLimit) {
-    requestedCount = tasdeck::kTasTracePageLimit;
-  }
-  pageCount = static_cast<uint8_t>(requestedCount);
+    const uint32_t available = nextSequenceSnapshot - pageStart;
+    uint32_t requestedCount = command.traceCount;
+    if (requestedCount > available) {
+      requestedCount = available;
+    }
+    if (requestedCount > tasdeck::kTasTracePageLimit) {
+      requestedCount = tasdeck::kTasTracePageLimit;
+    }
+    pageCount = static_cast<uint8_t>(requestedCount);
 
-  const uint16_t oldestIndex = static_cast<uint16_t>(
-    (tasTraceHead + kTasTraceCapacity - tasTraceCount) % kTasTraceCapacity);
-  for (uint8_t index = 0; index < pageCount; ++index) {
-    const uint32_t sequence = pageStart + index;
-    const uint16_t offset = static_cast<uint16_t>(sequence - firstSequenceSnapshot);
-    const uint16_t traceIndex = static_cast<uint16_t>((oldestIndex + offset) % kTasTraceCapacity);
-    page[index] = tasTrace[traceIndex];
+    bool copied = true;
+    for (uint8_t index = 0; index < pageCount; ++index) {
+      const uint32_t sequence = pageStart + index;
+      const uint16_t traceIndex = static_cast<uint16_t>(sequence % kTasTraceCapacity);
+      if (!copyTasTraceEntryStable(traceIndex, page[index])) {
+        copied = false;
+        break;
+      }
+    }
+
+    const uint32_t nextAfterCopy = tasTraceNextSequence;
+    const uint32_t firstAfterCopy = nextAfterCopy > kTasTraceCapacity
+      ? nextAfterCopy - kTasTraceCapacity
+      : 0;
+    if (copied && pageStart >= firstAfterCopy) {
+      break;
+    }
+
+    pageCount = 0;
   }
-  interrupts();
 
   int written = snprintf(
     response,
@@ -978,7 +1028,9 @@ void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, u
 
   const uint16_t index = tasTraceHead;
   TasTraceEntry& entry = tasTrace[index];
-  entry.timestampMicros = micros();
+  const uint32_t timestampMicros = micros();
+  entry.timestampMicros = 0;
+  tasTraceCompilerBarrier();
   entry.tasFrame = tasFrame;
   entry.latchCount = controllerLatchCount;
   entry.clockCount = port == 2 ? controller2ClockCount : controllerClockCount;
@@ -996,11 +1048,16 @@ void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, u
   entry.port = port;
   tasAnomalyPendingMark = 0;
 
-  tasTraceNextSequence += 1;
+  tasTraceCompilerBarrier();
+  // micros() returning zero is only plausible at boot, before TAS playback,
+  // but keep zero reserved as the in-progress marker regardless.
+  entry.timestampMicros = timestampMicros == 0 ? 1 : timestampMicros;
+  tasTraceCompilerBarrier();
   tasTraceHead = static_cast<uint16_t>((tasTraceHead + 1) % kTasTraceCapacity);
   if (tasTraceCount < kTasTraceCapacity) {
     tasTraceCount += 1;
   }
+  tasTraceNextSequence += 1;
 
   if (tasTraceFreezeCountdown > 0) {
     tasTraceFreezeCountdown -= 1;
@@ -1234,11 +1291,19 @@ void handleLatchEdge() {
   // latched (0); 1..7 means the previous train ended short — a clock edge was
   // lost and the console just read a duplicated bit.
   const uint8_t shiftAtStrobe = controllerShiftIndex;
-  if (tasOutputEnabled && shiftAtStrobe >= 1 && shiftAtStrobe < tasdeck::kNesButtonCount) {
+  if (
+    tasOutputEnabled &&
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
+    shiftAtStrobe >= 1 &&
+    shiftAtStrobe < tasdeck::kNesButtonCount) {
     noteTasAnomaly(kTasAnomalyTornTrain);
   }
   const uint8_t shift2AtStrobe = controller2ShiftIndex;
-  if (tasOutputEnabled && shift2AtStrobe >= 1 && shift2AtStrobe < tasdeck::kNesButtonCount) {
+  if (
+    tasOutputEnabled &&
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
+    shift2AtStrobe >= 1 &&
+    shift2AtStrobe < tasdeck::kNesButtonCount) {
     noteTasAnomaly(kTasAnomalyTornTrain);
   }
 
@@ -1264,6 +1329,10 @@ void handleLatchEdge() {
         controller2PressedMask,
       };
       const TasPlaybackResult result = tasPlayback.onLatchEdge(latchMicros, nextMasks);
+      // R08 replay devices consume one input record per accepted latch, even
+      // when the game clocks fewer than eight controller bits. Poll mode keeps
+      // requiring a completed read; latch mode grants the window immediately.
+      tasPlayback.noteLatchObserved();
       if (
         result == TasPlaybackResult::Ok ||
         result == TasPlaybackResult::Complete ||

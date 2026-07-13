@@ -57,10 +57,10 @@ or startup path can change lag and controller polling enough to desynchronize th
 
 ## Console Synchronization
 
-The `.tdmask` supplies controller values; the NES latch signal supplies playback timing. Firmware
-holds the same mask across controller rereads within a latch window and advances only after a window
-that contained a completed controller read. This prevents boot strobes and same-frame rereads from
-consuming additional masks.
+The `.tdmask` supplies controller values; the NES latch signal supplies playback timing. Select
+`Completed reads` for FCEUX/BizHawk poll-accurate exports: firmware advances only after a window that
+contained a completed eight-clock controller read. Select `Latch / R08` for raw R08 records:
+firmware advances after each accepted latch window even when the game reads fewer than eight bits.
 
 This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt a controller read,
 causing the game to reread until two consecutive values match. Serving a new mask for every poll
@@ -69,8 +69,8 @@ would drift the stream, while serving one mask per latch window gives each rerea
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
-- Use `Start delay` to wait a fixed number of completed controller-read windows before releasing
-  frame 0.
+- Use `Start delay` to wait before releasing frame 0. In `Latch / R08` mode it is the exact number
+  of blank latch windows; in `Completed reads` mode it counts completed controller-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
 
 For a power-on movie, upload the `.tdmask` and press `Play` once to arm it. While the NES is off or

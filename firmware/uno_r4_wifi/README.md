@@ -35,7 +35,7 @@ The tested parser lives in `src/NesDeckProtocol.cpp`, the controller-state helpe
 The current serial build reports this firmware id in the boot banner and `STATUS` response:
 
 ```txt
-fw=tasdeck-uno-r4-serial-latchwin-v44 transport=serial
+fw=tasdeck-uno-r4-serial-latchwin-v46 transport=serial
 ```
 
 ## NES Pins
@@ -82,11 +82,13 @@ released instead of looking like phantom button presses.
 Send `STATUS` over serial to inspect the flashed firmware id, clock shift edge, current masks,
 shift index, and latch/clock counts while debugging controller timing.
 
-TAS playback uses `TAS_BEGIN <frames> poll [ports] [window_us]`. `TAS_START` arms frame 0, and the
+TAS playback uses `TAS_BEGIN <frames> <poll|latch> [ports] [window_us]`. `TAS_START` arms frame 0, and the
 firmware loads it at the next NES latch window before that controller read is sampled. Playback
-advances one mask per polled latch window, so same-frame re-reads keep serving the current mask.
+in `poll` mode advances only after a completed eight-clock read. `latch` mode, intended for R08
+replays, advances after an accepted latch even when the game reads fewer than eight bits.
 Two-port TAS chunks use interleaved port 1 / port 2 mask bytes. Use
-`TAS_START <delay_polls>` when a run needs a small alignment offset before frame 0 is released.
+`TAS_START <delay_polls>` when a run needs a small alignment offset before frame 0 is released; in
+`latch` mode this is the exact number of blank latch windows served before frame 0.
 Port 1 or port 2 completed reads can grant frame-advance credit for the two-port streams uploaded by
 the web UI.
 

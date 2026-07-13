@@ -754,6 +754,10 @@ h2 {
   font-weight: 800;
 }
 
+.info-grid .sync-mode-field {
+  grid-column: 1 / -1;
+}
+
 .inline-number {
   display: flex;
   align-items: center;
@@ -775,6 +779,19 @@ h2 {
 .inline-number span {
   color: var(--muted);
   font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.inline-select {
+  width: 100%;
+  max-width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 4px 6px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.84rem;
   font-weight: 900;
 }
 
@@ -856,6 +873,16 @@ h2 {
   .file-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .playback-panel .section-heading {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .playback-panel .file-actions {
+    display: flex;
+    width: auto;
   }
 
   .log-actions {
