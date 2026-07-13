@@ -46,8 +46,22 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
   "movie.tdmask"
 ```
 
-On Windows, use the BizHawk converter for an NES `.bk2` movie or an existing `.r08` input dump. Run
-it from PowerShell (or substitute the `.cmd` launcher in Command Prompt):
+On macOS, an existing `.r08` input dump can be converted directly without an emulator:
+
+```sh
+scripts/convert-r08-to-tasdeck-mask.sh \
+  "movie.r08" \
+  "game.nes" \
+  "movie.tdmask"
+```
+
+An `.r08` already contains interleaved port 1 / port 2 bytes for non-lag NES frames, in the same bit
+order as TASDeck. The converter validates the byte pairs and adds the `TD2P` header. The ROM path is
+required and checked, but the ROM is not opened; because `.r08` has no ROM metadata, the converter
+cannot prove that its contents match.
+
+On Windows, use the BizHawk converter for an NES `.bk2` movie. Run it from PowerShell (or substitute
+the `.cmd` launcher in Command Prompt):
 
 ```powershell
 $env:BIZHAWK_BIN = "C:\BizHawk\EmuHawk.exe"
@@ -61,15 +75,6 @@ The output path is optional. The converter also accepts the movie and ROM argume
 order. For `.bk2`, it restarts the movie at frame 0 in BizHawk, writes both controller masks for each
 non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings required by the
 movie in the BizHawk installation used for the export.
-
-An `.r08` already contains interleaved port 1 / port 2 bytes for non-lag NES frames, in the same bit
-order as TASDeck. Its conversion only validates the byte pairs and adds the `TD2P` header, so the ROM
-path is required and checked, but BizHawk is not launched. Because `.r08` has no ROM metadata, the
-converter cannot prove that the ROM contents match:
-
-```powershell
-.\scripts\convert-bk2-to-tasdeck-mask.ps1 "movie.r08" "game.nes"
-```
 
 Each converter also creates `<output>.trace.csv`. The FCEUX trace has one row per completed emulator
 poll and includes poll-level diagnostic fields. The BizHawk trace maps each emitted mask pair to its

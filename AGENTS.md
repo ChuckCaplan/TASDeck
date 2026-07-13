@@ -79,7 +79,8 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `docs/hardware-tas-workflow.md`: FM2/BK2/R08-to-`.tdmask` hardware playback workflow.
 - `scripts/convert-fm2-to-tasdeck-mask.sh`: FCEUX wrapper for producing `.tdmask` files.
 - `scripts/fceux-export-tasdeck-mask.lua`: FCEUX Lua exporter for lag-stripped mask streams.
-- `scripts/convert-bk2-to-tasdeck-mask.ps1`: Windows BizHawk BK2 and direct R08 converter.
+- `scripts/convert-r08-to-tasdeck-mask.sh`: Direct R08-to-`.tdmask` converter.
+- `scripts/convert-bk2-to-tasdeck-mask.ps1`: Windows BizHawk BK2 converter.
 - `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
   continuous hardware trace, the sibling exporter trace, and the source FM2.

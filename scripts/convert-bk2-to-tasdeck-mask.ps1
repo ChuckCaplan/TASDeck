@@ -16,8 +16,8 @@ $ErrorActionPreference = "Stop"
 function Show-Usage {
     @"
 Usage:
-  .\scripts\convert-bk2-to-tasdeck-mask.ps1 <movie.bk2|movie.r08> <rom.nes> [output.tdmask]
-  .\scripts\convert-bk2-to-tasdeck-mask.ps1 <rom.nes> <movie.bk2|movie.r08> [output.tdmask]
+  .\scripts\convert-bk2-to-tasdeck-mask.ps1 <movie.bk2> <rom.nes> [output.tdmask]
+  .\scripts\convert-bk2-to-tasdeck-mask.ps1 <rom.nes> <movie.bk2> [output.tdmask]
 
 Environment:
   BIZHAWK_BIN=C:\path\to\EmuHawk.exe   Override the BizHawk executable for .bk2 input.
@@ -25,8 +25,7 @@ Environment:
 
 Output:
   Defaults to the current working directory, with the movie base name and a
-  .tdmask extension. BizHawk is only launched for .bk2 input; .r08 already
-  contains lag-stripped two-controller NES masks and is converted directly.
+  .tdmask extension.
 "@ | Write-Host
 }
 
@@ -71,35 +70,6 @@ function Find-BizHawk {
     throw "Could not find EmuHawk.exe. Set BIZHAWK_BIN=C:\path\to\EmuHawk.exe."
 }
 
-function Write-R08Mask([string] $SourcePath, [string] $DestinationPath, [string] $TracePath) {
-    [byte[]] $source = [System.IO.File]::ReadAllBytes($SourcePath)
-    if ($source.Length -eq 0) {
-        throw "R08 input is empty: $SourcePath"
-    }
-    if (($source.Length % 2) -ne 0) {
-        throw "R08 input has an incomplete two-controller frame: $SourcePath"
-    }
-
-    [byte[]] $header = 0x54, 0x44, 0x32, 0x50, 0x01, 0x02, 0x0D, 0x0A
-    [byte[]] $result = New-Object byte[] ($header.Length + $source.Length)
-    [System.Array]::Copy($header, 0, $result, 0, $header.Length)
-    [System.Array]::Copy($source, 0, $result, $header.Length, $source.Length)
-    [System.IO.File]::WriteAllBytes($DestinationPath, $result)
-
-    $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-    $trace = New-Object System.IO.StreamWriter($TracePath, $false, $utf8WithoutBom)
-    try {
-        $trace.WriteLine("frame_index,source_frame,mask1_hex,mask2_hex,source_format")
-        for ($offset = 0; $offset -lt $source.Length; $offset += 2) {
-            $frame = [int] ($offset / 2)
-            $trace.WriteLine("{0},{0},{1:X2},{2:X2},r08", $frame, $source[$offset], $source[$offset + 1])
-        }
-    }
-    finally {
-        $trace.Dispose()
-    }
-}
-
 if ($FirstPath -in @("-h", "--help", "/?")) {
     Show-Usage
     exit 0
@@ -111,27 +81,24 @@ if ([string]::IsNullOrWhiteSpace($FirstPath) -or
     exit 2
 }
 
-$movieExtensions = @(".bk2", ".r08")
 $firstExtension = [System.IO.Path]::GetExtension($FirstPath).ToLowerInvariant()
 $secondExtension = [System.IO.Path]::GetExtension($SecondPath).ToLowerInvariant()
 
-if ($movieExtensions -contains $firstExtension) {
+if ($firstExtension -eq ".bk2") {
     $movieArgument = $FirstPath
     $romArgument = $SecondPath
-} elseif ($movieExtensions -contains $secondExtension) {
+} elseif ($secondExtension -eq ".bk2") {
     $movieArgument = $SecondPath
     $romArgument = $FirstPath
 } else {
     Show-Usage
-    throw "One input must have a .bk2 or .r08 extension."
+    throw "One input must have a .bk2 extension. Use convert-r08-to-tasdeck-mask.sh for .r08 input."
 }
 
 Assert-InputFile $movieArgument "Movie"
 Assert-InputFile $romArgument "ROM"
 $moviePath = (Resolve-Path -LiteralPath $movieArgument).ProviderPath
 $romPath = (Resolve-Path -LiteralPath $romArgument).ProviderPath
-$movieExtension = [System.IO.Path]::GetExtension($moviePath).ToLowerInvariant()
-
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $movieName = [System.IO.Path]::GetFileNameWithoutExtension($moviePath)
     $OutputPath = Join-Path (Get-Location) "$movieName.tdmask"
@@ -157,50 +124,46 @@ Write-Host ("ROM:     {0}" -f $romPath)
 Write-Host ("Output:  {0}" -f $outputFullPath)
 Write-Host ("Trace:   {0}" -f $traceFullPath)
 
-if ($movieExtension -eq ".r08") {
-    Write-R08Mask $moviePath $outputFullPath $traceFullPath
-} else {
-    $bizHawkPath = Find-BizHawk
-    Assert-InputFile $bizHawkPath "BizHawk executable"
-    $luaPath = Join-Path $PSScriptRoot "bizhawk-export-tasdeck-mask.lua"
-    Assert-InputFile $luaPath "BizHawk Lua exporter"
-    $completionPath = Join-Path ([System.IO.Path]::GetTempPath()) ("tasdeck-mask-complete-{0}.txt" -f [guid]::NewGuid())
+$bizHawkPath = Find-BizHawk
+Assert-InputFile $bizHawkPath "BizHawk executable"
+$luaPath = Join-Path $PSScriptRoot "bizhawk-export-tasdeck-mask.lua"
+Assert-InputFile $luaPath "BizHawk Lua exporter"
+$completionPath = Join-Path ([System.IO.Path]::GetTempPath()) ("tasdeck-mask-complete-{0}.txt" -f [guid]::NewGuid())
 
-    Write-Host ("BizHawk: {0}" -f $bizHawkPath)
+Write-Host ("BizHawk: {0}" -f $bizHawkPath)
 
-    $oldOutput = $env:TASDECK_MASK_OUTPUT
-    $oldTrace = $env:TASDECK_MASK_TRACE_OUTPUT
-    $oldCompletion = $env:TASDECK_MASK_COMPLETION_OUTPUT
-    try {
-        $env:TASDECK_MASK_OUTPUT = $outputFullPath
-        $env:TASDECK_MASK_TRACE_OUTPUT = $traceFullPath
-        $env:TASDECK_MASK_COMPLETION_OUTPUT = $completionPath
+$oldOutput = $env:TASDECK_MASK_OUTPUT
+$oldTrace = $env:TASDECK_MASK_TRACE_OUTPUT
+$oldCompletion = $env:TASDECK_MASK_COMPLETION_OUTPUT
+try {
+    $env:TASDECK_MASK_OUTPUT = $outputFullPath
+    $env:TASDECK_MASK_TRACE_OUTPUT = $traceFullPath
+    $env:TASDECK_MASK_COMPLETION_OUTPUT = $completionPath
 
-        & $bizHawkPath "--lua=$luaPath" "--movie=$moviePath" $romPath
-        $bizHawkStatus = $LASTEXITCODE
+    & $bizHawkPath "--lua=$luaPath" "--movie=$moviePath" $romPath
+    $bizHawkStatus = $LASTEXITCODE
 
-        if (-not (Test-Path -LiteralPath $completionPath -PathType Leaf)) {
-            throw "BizHawk did not report a completed TASDeck export (exit $bizHawkStatus)."
-        }
-
-        $completion = (Get-Content -LiteralPath $completionPath -Raw).Trim()
-        if (-not $completion.StartsWith("complete ")) {
-            throw "BizHawk exporter failed: $completion"
-        }
-        if ($bizHawkStatus -ne 0) {
-            Write-Warning "BizHawk exited with status $bizHawkStatus after completing the export; validating outputs."
-        }
-        if ($completion -match "(?:reset_frames|power_frames)=[1-9]") {
-            Write-Warning "The BK2 contains Reset or Power commands. TD2P stores controller masks only; reproduce those console actions separately on hardware."
-        }
-        Write-Host $completion
+    if (-not (Test-Path -LiteralPath $completionPath -PathType Leaf)) {
+        throw "BizHawk did not report a completed TASDeck export (exit $bizHawkStatus)."
     }
-    finally {
-        $env:TASDECK_MASK_OUTPUT = $oldOutput
-        $env:TASDECK_MASK_TRACE_OUTPUT = $oldTrace
-        $env:TASDECK_MASK_COMPLETION_OUTPUT = $oldCompletion
-        Remove-Item -LiteralPath $completionPath -Force -ErrorAction SilentlyContinue
+
+    $completion = (Get-Content -LiteralPath $completionPath -Raw).Trim()
+    if (-not $completion.StartsWith("complete ")) {
+        throw "BizHawk exporter failed: $completion"
     }
+    if ($bizHawkStatus -ne 0) {
+        Write-Warning "BizHawk exited with status $bizHawkStatus after completing the export; validating outputs."
+    }
+    if ($completion -match "(?:reset_frames|power_frames)=[1-9]") {
+        Write-Warning "The BK2 contains Reset or Power commands. TD2P stores controller masks only; reproduce those console actions separately on hardware."
+    }
+    Write-Host $completion
+}
+finally {
+    $env:TASDECK_MASK_OUTPUT = $oldOutput
+    $env:TASDECK_MASK_TRACE_OUTPUT = $oldTrace
+    $env:TASDECK_MASK_COMPLETION_OUTPUT = $oldCompletion
+    Remove-Item -LiteralPath $completionPath -Force -ErrorAction SilentlyContinue
 }
 
 if (-not (Test-Path -LiteralPath $outputFullPath -PathType Leaf)) {
