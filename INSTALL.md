@@ -213,6 +213,9 @@ scripts/convert-r08-to-tasdeck-mask.sh \
   "movie.tdmask"
 ```
 
+The converter reverses the R08 controller-serialization bit order into TASDeck's A-through-Right
+mask order before writing the versioned two-port stream.
+
 See the hardware TAS guide for format and trace details.
 
 For format details and advanced desync diagnosis, see

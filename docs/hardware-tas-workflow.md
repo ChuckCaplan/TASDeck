@@ -56,9 +56,10 @@ scripts/convert-r08-to-tasdeck-mask.sh \
 ```
 
 An `.r08` already contains interleaved port 1 / port 2 bytes for non-lag NES frames, in the same bit
-order as TASDeck. The converter validates the byte pairs and adds the `TD2P` header. The ROM path is
-required and checked, but the ROM is not opened; because `.r08` has no ROM metadata, the converter
-cannot prove that its contents match.
+serialization order used by the NES controller protocol. The converter validates the byte pairs,
+reverses each byte into TASDeck's A-through-Right bit order, and adds the `TD2P` header. The ROM path
+is required and checked, but the ROM is not opened; because `.r08` has no ROM metadata, the
+converter cannot prove that its contents match.
 
 On Windows, use the BizHawk converter for an NES `.bk2` movie. Run it from PowerShell (or substitute
 the `.cmd` launcher in Command Prompt):

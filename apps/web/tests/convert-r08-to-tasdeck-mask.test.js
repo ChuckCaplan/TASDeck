@@ -11,24 +11,25 @@ const execFileAsync = promisify(execFile);
 const scriptPath = path.resolve("scripts/convert-r08-to-tasdeck-mask.sh");
 const td2pHeader = Buffer.from([0x54, 0x44, 0x32, 0x50, 0x01, 0x02, 0x0d, 0x0a]);
 
-test("converts an R08 byte stream to a versioned two-port TDMASK", async () => {
+test("converts and bit-reverses an R08 byte stream to a versioned two-port TDMASK", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "tasdeck-r08-"));
   try {
     const r08Path = path.join(tempDir, "movie.r08");
     const romPath = path.join(tempDir, "game.nes");
     const outputPath = path.join(tempDir, "movie.tdmask");
-    const payload = Buffer.from([0x01, 0x00, 0x82, 0x08]);
-    await writeFile(r08Path, payload);
+    const r08Payload = Buffer.from([0x80, 0x01, 0x41, 0x82]);
+    const tdmaskPayload = Buffer.from([0x01, 0x80, 0x82, 0x41]);
+    await writeFile(r08Path, r08Payload);
     await writeFile(romPath, Buffer.from("NES\x1a"));
 
     const { stdout } = await execFileAsync(scriptPath, [r08Path, romPath, outputPath]);
 
-    assert.deepEqual(await readFile(outputPath), Buffer.concat([td2pHeader, payload]));
+    assert.deepEqual(await readFile(outputPath), Buffer.concat([td2pHeader, tdmaskPayload]));
     assert.equal(
       await readFile(`${outputPath}.trace.csv`, "utf8"),
       "frame_index,source_frame,mask1_hex,mask2_hex,source_format\n" +
-        "0,0,01,00,r08\n" +
-        "1,1,82,08,r08\n",
+        "0,0,01,80,r08\n" +
+        "1,1,82,41,r08\n",
     );
     assert.match(stdout, /Wrote 12 byte\(s\), 2 polled frame\(s\)/);
   } finally {

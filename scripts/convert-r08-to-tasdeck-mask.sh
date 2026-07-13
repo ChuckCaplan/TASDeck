@@ -57,6 +57,11 @@ if [[ ! -f "$rom_path" ]]; then
   exit 1
 fi
 
+if ! command -v perl >/dev/null 2>&1; then
+  echo "Could not find perl, which is required to reverse R08 controller bits." >&2
+  exit 1
+fi
+
 if [[ -z "$output_path" ]]; then
   r08_name=${r08_path##*/}
   output_path="$PWD/${r08_name%.*}.tdmask"
@@ -92,17 +97,38 @@ trace_tmp="$trace_output_path.tmp.$$"
 trap 'rm -f -- "$output_tmp" "$trace_tmp"' EXIT
 
 printf '\124\104\062\120\001\002\015\012' > "$output_tmp"
-cat -- "$r08_path" >> "$output_tmp"
+perl -0777 -pe '
+  BEGIN {
+    @reverse = map {
+      $value = $_;
+      $result = 0;
+      for (1 .. 8) {
+        $result = ($result << 1) | ($value & 1);
+        $value >>= 1;
+      }
+      $result;
+    } 0 .. 255;
+  }
+  $_ = pack("C*", map { $reverse[$_] } unpack("C*", $_));
+' "$r08_path" >> "$output_tmp"
 
 printf '%s\n' 'frame_index,source_frame,mask1_hex,mask2_hex,source_format' > "$trace_tmp"
 od -An -v -tu1 "$r08_path" | awk '
+  function reverse_byte(value, result, bit) {
+    result = 0
+    for (bit = 0; bit < 8; bit += 1) {
+      result = result * 2 + value % 2
+      value = int(value / 2)
+    }
+    return result
+  }
   {
     for (field = 1; field <= NF; field += 1) {
       if (have_port1 == 0) {
-        port1 = $field
+        port1 = reverse_byte($field)
         have_port1 = 1
       } else {
-        printf "%d,%d,%02X,%02X,r08\n", frame, frame, port1, $field
+        printf "%d,%d,%02X,%02X,r08\n", frame, frame, port1, reverse_byte($field)
         frame += 1
         have_port1 = 0
       }
