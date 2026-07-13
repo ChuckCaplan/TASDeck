@@ -36,8 +36,8 @@ currently specific to TASDeck.
 
 ## Generate A Stream
 
-Use the same ROM targeted by the FM2 movie. The converter locates FCEUX through `FCEUX_BIN`, on
-`PATH`, or at `/opt/homebrew/bin/fceux`:
+Use the same ROM targeted by the movie. On macOS, the FM2 converter locates FCEUX through
+`FCEUX_BIN`, on `PATH`, or at `/opt/homebrew/bin/fceux`:
 
 ```sh
 scripts/convert-fm2-to-tasdeck-mask.sh \
@@ -46,11 +46,35 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
   "movie.tdmask"
 ```
 
-The output path is optional. The converter also creates `<output>.trace.csv`, with one row per
-completed emulator poll. Rows include the movie frame, poll and strobe indices, active port,
-controller masks, observed controller byte when available, and mismatch counters. The `.tdmask`
-contains one mask pair per polled movie frame even when the CSV contains several polls for that
-frame.
+On Windows, use the BizHawk converter for an NES `.bk2` movie or an existing `.r08` input dump. Run
+it from PowerShell (or substitute the `.cmd` launcher in Command Prompt):
+
+```powershell
+$env:BIZHAWK_BIN = "C:\BizHawk\EmuHawk.exe"
+.\scripts\convert-bk2-to-tasdeck-mask.ps1 `
+  "movie.bk2" `
+  "game.nes" `
+  "movie.tdmask"
+```
+
+The output path is optional. The converter also accepts the movie and ROM arguments in the opposite
+order. For `.bk2`, it restarts the movie at frame 0 in BizHawk, writes both controller masks for each
+non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings required by the
+movie in the BizHawk installation used for the export.
+
+An `.r08` already contains interleaved port 1 / port 2 bytes for non-lag NES frames, in the same bit
+order as TASDeck. Its conversion only validates the byte pairs and adds the `TD2P` header, so the ROM
+path is required and checked, but BizHawk is not launched. Because `.r08` has no ROM metadata, the
+converter cannot prove that the ROM contents match:
+
+```powershell
+.\scripts\convert-bk2-to-tasdeck-mask.ps1 "movie.r08" "game.nes"
+```
+
+Each converter also creates `<output>.trace.csv`. The FCEUX trace has one row per completed emulator
+poll and includes poll-level diagnostic fields. The BizHawk trace maps each emitted mask pair to its
+source BK2 movie frame. Because `.r08` has already discarded lag frames, its trace maps each mask
+pair to the corresponding zero-based `.r08` frame instead of to the original movie timeline.
 
 The ROM, movie, and initial console state must match. A different ROM revision, header, save state,
 or startup path can change lag and controller polling enough to desynchronize the run.

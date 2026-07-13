@@ -187,7 +187,24 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
 
 Use your actual FM2 path and ROM path. The ROM must match the movie; a different revision, header, or
 start state can desync the TAS. If you omit the third argument, the `.tdmask` file is written next to
-the FM2 file. The converter also writes `<output>.trace.csv` next to the `.tdmask`; use that CSV if troubleshooting is needed to compare firmware poll traces against the emulator-exported mask stream.
+the current working directory using the FM2 base name. The converter also writes
+`<output>.trace.csv` next to the `.tdmask`; use that CSV if troubleshooting is needed to compare
+firmware poll traces against the emulator-exported mask stream.
+
+For an NES BizHawk `.bk2` movie on Windows, point `BIZHAWK_BIN` at `EmuHawk.exe` and run the Windows
+converter from PowerShell:
+
+```powershell
+$env:BIZHAWK_BIN = "C:\BizHawk\EmuHawk.exe"
+.\scripts\convert-bk2-to-tasdeck-mask.ps1 `
+  "movie.bk2" `
+  "game.nes" `
+  "movie.tdmask"
+```
+
+The same command accepts a lag-stripped `.r08` in place of the `.bk2`; that conversion is direct and
+does not launch BizHawk. A `convert-bk2-to-tasdeck-mask.cmd` launcher is also available for Command
+Prompt. See the hardware TAS guide for format and trace details.
 
 For format details and advanced desync diagnosis, see
 [Hardware TAS Playback And Troubleshooting](docs/hardware-tas-workflow.md).

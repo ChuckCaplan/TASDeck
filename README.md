@@ -39,8 +39,9 @@ Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on
 Press `Connect` in the web app to open the Arduino USB bridge.
 
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
-port 1 or port 2, and plays pre-generated `.tdmask` streams converted from .fm2 TAS files, synchronized to the NES controller latch signal. The event log can capture firmware traces for diagnosing playback alignment and
-hardware timing.
+port 1 or port 2, and plays pre-generated `.tdmask` streams converted from `.fm2`, `.bk2`, or `.r08`
+TAS inputs, synchronized to the NES controller latch signal. The event log can capture firmware
+traces for diagnosing playback alignment and hardware timing.
 
 Keyboard input uses common NES emulator mapping:
 

@@ -60,8 +60,8 @@ the common NES emulator mapping: arrow keys for the D-pad, `Z` for `B`, `X` for 
 `Start`, and `Shift` for `Select`.
 
 Hardware TAS playback expects a pre-generated `.tdmask` stream for real NES runs. Current exports use
-the versioned `TD2P` two-controller stream format so player-2 FM2 data is uploaded and traced with
-player 1. The header records format version 1 and two ports even when every player-2 byte is zero.
+the versioned `TD2P` two-controller stream format so player-2 FM2/BK2/R08 data is uploaded and traced
+with player 1. The header records format version 1 and two ports even when every player-2 byte is zero.
 The web UI accepts only versioned `TD2P` `.tdmask` files for real-console uploads.
 
 The TAS panel includes two poll-alignment controls:
