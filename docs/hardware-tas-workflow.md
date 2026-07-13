@@ -46,21 +46,6 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
   "movie.tdmask"
 ```
 
-On macOS, an existing `.r08` input dump can be converted directly without an emulator:
-
-```sh
-scripts/convert-r08-to-tasdeck-mask.sh \
-  "movie.r08" \
-  "game.nes" \
-  "movie.tdmask"
-```
-
-An `.r08` already contains interleaved port 1 / port 2 bytes for non-lag NES frames, in the same bit
-serialization order used by the NES controller protocol. The converter validates the byte pairs,
-reverses each byte into TASDeck's A-through-Right bit order, and adds the `TD2P` header. The ROM path
-is required and checked, but the ROM is not opened; because `.r08` has no ROM metadata, the
-converter cannot prove that its contents match.
-
 On Windows, use the BizHawk converter for an NES `.bk2` movie. Put `EmuHawk.exe` on `PATH` and run it
 from Git Bash:
 
@@ -81,8 +66,7 @@ movie in the BizHawk installation used for the export.
 
 Each converter also creates `<output>.trace.csv`. The FCEUX trace has one row per completed emulator
 poll and includes poll-level diagnostic fields. The BizHawk trace maps each emitted mask pair to its
-source BK2 movie frame. Because `.r08` has already discarded lag frames, its trace maps each mask
-pair to the corresponding zero-based `.r08` frame instead of to the original movie timeline.
+source BK2 movie frame.
 
 The ROM, movie, and initial console state must match. A different ROM revision, header, save state,
 or startup path can change lag and controller polling enough to desynchronize the run.

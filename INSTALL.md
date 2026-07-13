@@ -203,18 +203,6 @@ scripts/convert-bk2-to-tasdeck-mask.sh \
 
 Set `BIZHAWK_BIN=/c/path/to/EmuHawk.exe` to override the executable if needed.
 
-Convert an existing lag-stripped `.r08` directly on macOS without BizHawk:
-
-```sh
-scripts/convert-r08-to-tasdeck-mask.sh \
-  "movie.r08" \
-  "game.nes" \
-  "movie.tdmask"
-```
-
-The converter reverses the R08 controller-serialization bit order into TASDeck's A-through-Right
-mask order before writing the versioned two-port stream.
-
 See the hardware TAS guide for format and trace details.
 
 For format details and advanced desync diagnosis, see
