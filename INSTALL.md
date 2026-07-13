@@ -191,18 +191,17 @@ current working directory using the FM2 base name. The converter also writes
 `<output>.trace.csv` next to the `.tdmask`; use that CSV if troubleshooting is needed to compare
 firmware poll traces against the emulator-exported mask stream.
 
-For an NES BizHawk `.bk2` movie on Windows, point `BIZHAWK_BIN` at `EmuHawk.exe` and run the Windows
-converter from PowerShell:
+For an NES BizHawk `.bk2` movie on Windows, put `EmuHawk.exe` on `PATH` and run the converter from
+Git Bash:
 
-```powershell
-$env:BIZHAWK_BIN = "C:\BizHawk\EmuHawk.exe"
-.\scripts\convert-bk2-to-tasdeck-mask.ps1 `
-  "movie.bk2" `
-  "game.nes" `
+```sh
+scripts/convert-bk2-to-tasdeck-mask.sh \
+  "movie.bk2" \
+  "game.nes" \
   "movie.tdmask"
 ```
 
-A `convert-bk2-to-tasdeck-mask.cmd` launcher is also available for Command Prompt.
+Set `BIZHAWK_BIN=/c/path/to/EmuHawk.exe` to override the executable if needed.
 
 Convert an existing lag-stripped `.r08` directly on macOS without BizHawk:
 

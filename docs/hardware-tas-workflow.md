@@ -61,16 +61,18 @@ reverses each byte into TASDeck's A-through-Right bit order, and adds the `TD2P`
 is required and checked, but the ROM is not opened; because `.r08` has no ROM metadata, the
 converter cannot prove that its contents match.
 
-On Windows, use the BizHawk converter for an NES `.bk2` movie. Run it from PowerShell (or substitute
-the `.cmd` launcher in Command Prompt):
+On Windows, use the BizHawk converter for an NES `.bk2` movie. Put `EmuHawk.exe` on `PATH` and run it
+from Git Bash:
 
-```powershell
-$env:BIZHAWK_BIN = "C:\BizHawk\EmuHawk.exe"
-.\scripts\convert-bk2-to-tasdeck-mask.ps1 `
-  "movie.bk2" `
-  "game.nes" `
+```sh
+scripts/convert-bk2-to-tasdeck-mask.sh \
+  "movie.bk2" \
+  "game.nes" \
   "movie.tdmask"
 ```
+
+BizHawk can be overridden when needed, for example with
+`BIZHAWK_BIN=/c/BizHawk/EmuHawk.exe`.
 
 The output path is optional. The converter also accepts the movie and ROM arguments in the opposite
 order. For `.bk2`, it restarts the movie at frame 0 in BizHawk, writes both controller masks for each
