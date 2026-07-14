@@ -21,6 +21,7 @@
     0x0a,
   ]);
   const HARDWARE_TAS_SYNC_MODE = "poll";
+  const HARDWARE_TAS_SYNC_MODES = ["poll", "latch"];
   const HARDWARE_TAS_MAX_START_DELAY_POLLS = 3600;
   const TAS_CHUNK_FRAME_LIMIT = 48;
   // Accepted aliases for a frame's player-2 input, in precedence order. Keep
@@ -78,9 +79,19 @@
 
   function parseTasFileBytes(fileName, bytes) {
     const normalizedBytes = normalizeBytes(bytes);
+    const extension = extensionForFileName(fileName);
 
-    if (extensionForFileName(fileName) !== ".tdmask") {
-      throw new Error("TASDeck only accepts .tdmask files.");
+    if (extension === ".r08") {
+      return parseResult(parseR08Bytes(normalizedBytes), {
+        format: "r08",
+        label: "R08 two-controller stream",
+        fileName,
+        syncMode: HARDWARE_TAS_SYNC_MODE,
+      });
+    }
+
+    if (extension !== ".tdmask") {
+      throw new Error("TASDeck only accepts .tdmask and .r08 files.");
     }
 
     if (!isTwoControllerMaskStream(normalizedBytes)) {
@@ -91,6 +102,7 @@
       format: "raw-mask-v2",
       label: "TASDeck two-controller mask stream",
       fileName,
+      syncMode: HARDWARE_TAS_SYNC_MODE,
     });
   }
 
@@ -129,12 +141,48 @@
     return frames;
   }
 
+  function reverseByteBits(value) {
+    let source = Number(value) & 0xff;
+    let reversed = 0;
+    for (let index = 0; index < 8; index += 1) {
+      reversed = (reversed << 1) | (source & 1);
+      source >>>= 1;
+    }
+    return reversed;
+  }
+
+  function parseR08Bytes(bytes) {
+    const normalizedBytes = normalizeBytes(bytes);
+    if (normalizedBytes.length === 0) {
+      throw new Error("R08 stream is empty.");
+    }
+    if (normalizedBytes.length % TAS_CONTROLLER_PORT_COUNT !== 0) {
+      throw new Error("R08 stream has an incomplete two-controller record.");
+    }
+
+    const frames = [];
+    for (let index = 0; index < normalizedBytes.length; index += TAS_CONTROLLER_PORT_COUNT) {
+      const port1Mask = reverseByteBits(normalizedBytes[index]);
+      const port2Mask = reverseByteBits(normalizedBytes[index + 1]);
+      frames.push({
+        frame: index / TAS_CONTROLLER_PORT_COUNT,
+        buttons: maskToButtons(port1Mask),
+        player1: maskToButtons(port1Mask),
+        player2: maskToButtons(port2Mask),
+        raw: `p1=0x${byteToHex(port1Mask)} p2=0x${byteToHex(port2Mask)}`,
+      });
+    }
+
+    return frames;
+  }
+
   function parseResult(frames, options = {}) {
     return {
       frames,
       format: options.format || "unknown",
       label: options.label || "TAS file",
       fileName: options.fileName || "",
+      syncMode: options.syncMode || HARDWARE_TAS_SYNC_MODE,
       warnings: options.warnings || [],
     };
   }
@@ -576,6 +624,7 @@
     FM2_GAMEPAD_COLUMNS,
     HARDWARE_TAS_MAX_START_DELAY_POLLS,
     HARDWARE_TAS_SYNC_MODE,
+    HARDWARE_TAS_SYNC_MODES,
     TAS_INPUTS,
     TAS_CHUNK_FRAME_LIMIT,
     TAS_CONTROLLER_PORT_COUNT,
@@ -598,11 +647,13 @@
     parseFm2Frames,
     parseFm2GamepadField,
     parseRawMaskBytes,
+    parseR08Bytes,
     parseTwoControllerMaskBytes,
     parseTas,
     parseTasFileBytes,
     parseTasText,
     parseTextFrame,
+    reverseByteBits,
     tasMaskHasInput,
     tasMaskPortValue,
     tasMasksFromWire,

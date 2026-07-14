@@ -754,6 +754,12 @@ h2 {
   font-weight: 800;
 }
 
+#playbackStatus,
+#fileName {
+  font-size: 0.88rem;
+  line-height: 1.25;
+}
+
 .inline-number {
   display: flex;
   align-items: center;
@@ -775,6 +781,35 @@ h2 {
 .inline-number span {
   color: var(--muted);
   font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.playback-status-value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sync-mode-control {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.sync-mode-control.hidden {
+  display: none;
+}
+
+.sync-mode-select {
+  width: 132px;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 2px 3px;
+  color: var(--ink);
+  background: #ffffff;
+  font-size: 0.78rem;
   font-weight: 900;
 }
 
@@ -856,6 +891,16 @@ h2 {
   .file-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .playback-panel .section-heading {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .playback-panel .file-actions {
+    display: flex;
+    width: auto;
   }
 
   .log-actions {

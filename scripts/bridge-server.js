@@ -12,6 +12,7 @@ const path = require("node:path");
 const {
   HARDWARE_TAS_MAX_START_DELAY_POLLS,
   HARDWARE_TAS_SYNC_MODE,
+  HARDWARE_TAS_SYNC_MODES,
   NES_BUTTONS,
   TAS_CHUNK_FRAME_LIMIT,
   formatTasChunk,
@@ -377,8 +378,8 @@ class SerialBridge {
     }
 
     const syncMode = message?.syncMode || HARDWARE_TAS_SYNC_MODE;
-    if (syncMode !== HARDWARE_TAS_SYNC_MODE) {
-      throw new Error("TAS upload sync mode must be poll.");
+    if (!HARDWARE_TAS_SYNC_MODES.includes(syncMode)) {
+      throw new Error("TAS upload sync mode must be poll or latch.");
     }
 
     const skipPolls = normalizeTasRunSkipPolls(
@@ -886,7 +887,7 @@ class SerialBridge {
       const traceLog = reason === "tas-trace";
       const outputDir = traceLog ? path.join(this.logDir, TRACE_LOG_DIR_NAME) : this.logDir;
       const fileName = traceLog
-        ? traceLogFileName(metadata.tdmaskFileName || metadata.tasFileName || this.activeTasRun?.fileName, timestamp)
+        ? traceLogFileName(metadata.tasFileName || metadata.tdmaskFileName || this.activeTasRun?.fileName, timestamp)
         : eventLogFileName(reason, timestamp);
       const filePath = path.join(outputDir, fileName);
       const outputText = traceLog
@@ -965,12 +966,13 @@ class SerialBridge {
     const filePath = path.join(outputDir, fileName);
     const metadata = {
       timestamp: timestamp.toISOString(),
-      tdmaskFileName: run.fileName,
+      tasFileName: run.fileName,
       bridgeRunId: run.id,
       skipPolls: run.skipPolls || 0,
       originalPolls: run.originalFrameCount || run.frameCount,
       effectivePolls: run.frameCount,
       portCount: run.portCount || 1,
+      syncMode: run.syncMode || HARDWARE_TAS_SYNC_MODE,
       traceStart: dump.requestedStart,
       traceNext: dump.next,
       traceCount: dump.rows.length,
@@ -1093,7 +1095,7 @@ class SerialBridge {
         await fsp.mkdir(outputDir, { recursive: true });
         const headerLines = [
           "# tasdeck trace stream v1",
-          `# tdmask_file: ${run.fileName}`,
+          `# tas_file: ${run.fileName}`,
           `# bridge_run_id: ${run.id}`,
           `# effective_polls: ${run.frameCount}`,
           `# started: ${startedAt.toISOString()}`,
@@ -2172,8 +2174,8 @@ function padTimestampPart(value, length = 2) {
 
 function sanitizeTraceBaseName(fileName) {
   const rawBase = path.basename(String(fileName || "unknown").trim() || "unknown");
-  const withoutTdmask = rawBase.replace(/\.tdmask$/i, "");
-  const withoutExtension = withoutTdmask === rawBase ? path.parse(rawBase).name : withoutTdmask;
+  const withoutTasExtension = rawBase.replace(/\.(?:tdmask|r08)$/i, "");
+  const withoutExtension = withoutTasExtension === rawBase ? path.parse(rawBase).name : withoutTasExtension;
   const safe = withoutExtension
     .replace(/[^a-zA-Z0-9._,-]+/g, "_")
     .replace(/^_+|_+$/g, "");
@@ -2202,11 +2204,12 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
   return [
     "TASDeck Trace",
     `timestamp: ${metadata.timestamp || timestamp.toISOString()}`,
-    `tdmask_file: ${metadata.tdmaskFileName || metadata.tasFileName || run?.fileName || "unknown"}`,
+    `tas_file: ${metadata.tasFileName || metadata.tdmaskFileName || run?.fileName || "unknown"}`,
     `bridge_run_id: ${metadata.bridgeRunId ?? run?.id ?? ""}`,
     `client_run_id: ${run?.clientRunId ?? ""}`,
     `skip_polls: ${metadata.skipPolls ?? run?.skipPolls ?? 0}`,
     `delay_polls: ${metadata.delayPolls ?? ""}`,
+    `sync_mode: ${metadata.syncMode ?? run?.syncMode ?? HARDWARE_TAS_SYNC_MODE}`,
     `port_count: ${metadata.portCount ?? run?.portCount ?? ""}`,
     `original_polls: ${metadata.originalPolls ?? run?.originalFrameCount ?? ""}`,
     `effective_polls: ${metadata.effectivePolls ?? run?.frameCount ?? ""}`,

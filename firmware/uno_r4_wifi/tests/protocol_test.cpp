@@ -98,7 +98,8 @@ void testTasProtocolCommands() {
 
   assert(parseCommand("TAS_BEGIN 81 latch 12000", command));
   assert(command.type == CommandType::TasBegin);
-  assert(command.syncMode == TasSyncMode::Poll);
+  assert(command.syncMode == TasSyncMode::Latch);
+  assert(std::strcmp(tasSyncModeName(command.syncMode), "latch") == 0);
   assert(command.latchWindowMicros == 12000);
 
   assert(parseCommand("TAS_CHUNK 0 3 010080 82", command));
@@ -480,6 +481,189 @@ void testTasPlaybackStartDelayCountsLatchWindows() {
 
   assert(playback.onLatchEdge(93000, nextMask) == TasPlaybackResult::Complete);
   assert(playback.complete());
+}
+
+void testTasLatchPlaybackAdvancesWithoutEightClockRead() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x01, 0x02};
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(2, TasSyncMode::Latch, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(1) == TasPlaybackResult::Ok);
+
+  // This exercises a single blank-latch of start delay: latch mode consumes the
+  // delay on that latch without requiring an eight-clock controller read. Note
+  // the wire-level meaning of TAStm32 --blank 1 is not settled here: its
+  // uploader appears to serve an implicit reset-buffer blank plus the explicit
+  // queued blank, so the equivalent TASDeck delay may be more than one.
+  assert(playback.onLatchEdge(10000, nextMask) == TasPlaybackResult::Waiting);
+  assert(nextMask == 0x00);
+  assert(playback.startDelayRemaining() == 0);
+  playback.noteLatchObserved();
+
+  // The gap after the blank latch pre-positions R08 record 0 for the next
+  // strobe, even though the previous train may have contained only 7 clocks.
+  assert(playback.onWindowExpired(18000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x01);
+  assert(playback.currentFrame() == 0);
+
+  assert(playback.onLatchEdge(26600, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x01);
+  playback.noteLatchObserved();
+  assert(playback.onWindowExpired(34600, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.currentFrame() == 1);
+}
+
+void testTasLatchPlaybackHonorsStartDelays() {
+  const uint8_t masks[] = {0x01, 0x02};
+
+  for (uint32_t delay = 0; delay <= 2; ++delay) {
+    NesTasPlayback playback;
+    uint8_t nextMask = 0xff;
+    uint32_t nowMicros = 10000;
+
+    assert(playback.begin(2, TasSyncMode::Latch, 8000) == TasPlaybackResult::Ok);
+    assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+    assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+    assert(playback.start(delay) == TasPlaybackResult::Ok);
+
+    for (uint32_t blank = 0; blank < delay; ++blank) {
+      assert(playback.onLatchEdge(nowMicros, nextMask) == TasPlaybackResult::Waiting);
+      assert(nextMask == 0x00);
+      assert(playback.startDelayRemaining() == delay - blank - 1);
+      playback.noteLatchObserved();
+
+      // A reread in the same window must not consume another delay unit.
+      assert(playback.onLatchEdge(nowMicros + 120, nextMask) == TasPlaybackResult::Waiting);
+      assert(playback.startDelayRemaining() == delay - blank - 1);
+      nowMicros += 16600;
+    }
+
+    assert(playback.onLatchEdge(nowMicros, nextMask) == TasPlaybackResult::Ok);
+    assert(nextMask == 0x01);
+    assert(playback.started());
+    assert(playback.currentFrame() == 0);
+  }
+}
+
+void testTasLatchPlaybackGroupsSameWindowRereads() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x01, 0x02, 0x04};
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(3, TasSyncMode::Latch, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 3) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  assert(playback.onLatchEdge(10000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x01);
+  playback.noteLatchObserved();
+
+  assert(playback.onLatchEdge(10120, nextMask) == TasPlaybackResult::Waiting);
+  assert(nextMask == 0x01);
+  assert(playback.currentFrame() == 0);
+
+  assert(playback.onLatchEdge(26600, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.currentFrame() == 1);
+}
+
+void testTasLatchPlaybackDiffersFromPollModeAfterShortRead() {
+  const uint8_t masks[] = {0x01, 0x02};
+  NesTasPlayback latchPlayback;
+  NesTasPlayback pollPlayback;
+  uint8_t latchMask = 0xff;
+  uint8_t pollMask = 0xff;
+
+  assert(latchPlayback.begin(2, TasSyncMode::Latch, 8000) == TasPlaybackResult::Ok);
+  assert(pollPlayback.begin(2, TasSyncMode::Poll, 8000) == TasPlaybackResult::Ok);
+  assert(latchPlayback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(pollPlayback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(latchPlayback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(pollPlayback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(latchPlayback.start(0) == TasPlaybackResult::Ok);
+  assert(pollPlayback.start(0) == TasPlaybackResult::Ok);
+
+  assert(latchPlayback.onLatchEdge(10000, latchMask) == TasPlaybackResult::Ok);
+  assert(pollPlayback.onLatchEdge(10000, pollMask) == TasPlaybackResult::Ok);
+  latchPlayback.noteLatchObserved();
+
+  // Model a short train by withholding notePollCompleted(). Latch mode still
+  // advances, while completed-read mode holds the previously served mask.
+  assert(latchPlayback.onLatchEdge(26600, latchMask) == TasPlaybackResult::Ok);
+  assert(latchMask == 0x02);
+  assert(latchPlayback.currentFrame() == 1);
+  assert(pollPlayback.onLatchEdge(26600, pollMask) == TasPlaybackResult::Waiting);
+  assert(pollMask == 0x01);
+  assert(pollPlayback.currentFrame() == 0);
+}
+
+void testTasLatchPlaybackCompletesAndReportsUnderrun() {
+  {
+    NesTasPlayback playback;
+    const uint8_t masks[] = {0x01, 0x02};
+    uint8_t nextMask = 0xff;
+
+    assert(playback.begin(2, TasSyncMode::Latch, 8000) == TasPlaybackResult::Ok);
+    assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+    assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+    assert(playback.start(0) == TasPlaybackResult::Ok);
+    assert(playback.onLatchEdge(10000, nextMask) == TasPlaybackResult::Ok);
+    playback.noteLatchObserved();
+    assert(playback.onLatchEdge(26600, nextMask) == TasPlaybackResult::Ok);
+    playback.noteLatchObserved();
+    assert(playback.onLatchEdge(43200, nextMask) == TasPlaybackResult::Complete);
+    assert(nextMask == 0x00);
+    assert(playback.complete());
+  }
+
+  NesTasPlayback playback;
+  uint8_t chunk[tasdeck::kTasChunkFrameLimit] = {};
+  uint32_t startIndex = 0;
+  uint8_t nextMask = 0xff;
+  uint32_t nowMicros = 100000;
+
+  assert(playback.begin(200, TasSyncMode::Latch, 8000) == TasPlaybackResult::Ok);
+  for (int chunkIndex = 0; chunkIndex < 4; ++chunkIndex) {
+    assert(playback.pushChunk(startIndex, chunk, tasdeck::kTasChunkFrameLimit) == TasPlaybackResult::Ok);
+    startIndex += tasdeck::kTasChunkFrameLimit;
+  }
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  for (uint32_t frame = 0; frame < startIndex; ++frame) {
+    assert(playback.onLatchEdge(nowMicros, nextMask) == TasPlaybackResult::Ok);
+    playback.noteLatchObserved();
+    nowMicros += 16600;
+  }
+
+  assert(playback.onLatchEdge(nowMicros, nextMask) == TasPlaybackResult::Underrun);
+  assert(nextMask == 0x00);
+  assert(playback.hasError());
+}
+
+void testTasLatchPlaybackServesTwoControllerMasks() {
+  NesTasPlayback playback;
+  const TasFrameMasks masks[] = {{0x01, 0x02}, {0x80, 0x40}};
+  TasFrameMasks nextMasks = {};
+
+  assert(playback.begin(2, TasSyncMode::Latch, 2, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  assert(playback.onLatchEdge(10000, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x01);
+  assert(nextMasks.port2 == 0x02);
+  playback.noteLatchObserved();
+
+  assert(playback.onLatchEdge(26600, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x80);
+  assert(nextMasks.port2 == 0x40);
+  assert(playback.currentFrame() == 1);
 }
 
 void testTasPlaybackHandlesTimestampWraparound() {
@@ -972,6 +1156,12 @@ int main() {
   testTasPlaybackIgnoresStrobesWithoutCompletedReads();
   testTasPlaybackStartMidTrainWaitsForNextWindow();
   testTasPlaybackStartDelayCountsLatchWindows();
+  testTasLatchPlaybackAdvancesWithoutEightClockRead();
+  testTasLatchPlaybackHonorsStartDelays();
+  testTasLatchPlaybackGroupsSameWindowRereads();
+  testTasLatchPlaybackDiffersFromPollModeAfterShortRead();
+  testTasLatchPlaybackCompletesAndReportsUnderrun();
+  testTasLatchPlaybackServesTwoControllerMasks();
   testTasPlaybackHandlesTimestampWraparound();
   testTasPlaybackPreAdvancesAtWindowExpiry();
   testTasPlaybackHandlesKq5DoubleReadAndFrames();

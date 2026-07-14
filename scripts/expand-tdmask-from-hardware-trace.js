@@ -27,6 +27,33 @@ const BUTTON_BITS = {
 const FM2_GAMEPAD_COLUMNS = ["right", "left", "down", "up", "start", "select", "b", "a"];
 const DEFAULT_START_FRAME = 30;
 const DEFAULT_TOLERANCE_FRAMES = 0.65;
+const TD2P_MAGIC = Buffer.from("TD2P");
+const TD2P_HEADER_LENGTH = 8;
+
+// The core diff/insertion logic works on a flat per-frame P1 mask array. Modern
+// .tdmask files are TD2P: an 8-byte header then two interleaved bytes (P1, P2)
+// per frame. Split that here so the rest of the tool is format-agnostic, and
+// re-wrap on output. A header-less buffer is treated as the legacy single-port
+// stream (one byte per frame).
+function readTdmask(buffer) {
+  const isTd2p =
+    buffer.length >= TD2P_HEADER_LENGTH && buffer.subarray(0, 4).equals(TD2P_MAGIC);
+  if (!isTd2p) {
+    return { portCount: 1, header: null, p1: Array.from(buffer), p2: null };
+  }
+
+  const payload = buffer.subarray(TD2P_HEADER_LENGTH);
+  if (payload.length % 2 !== 0) {
+    fail("TD2P tdmask payload has an incomplete two-controller frame");
+  }
+  const p1 = [];
+  const p2 = [];
+  for (let index = 0; index < payload.length; index += 2) {
+    p1.push(payload[index]);
+    p2.push(payload[index + 1]);
+  }
+  return { portCount: 2, header: Buffer.from(buffer.subarray(0, TD2P_HEADER_LENGTH)), p1, p2 };
+}
 
 function usage() {
   console.error(
@@ -94,7 +121,16 @@ function parseExporterTrace(tracePath, masks) {
 
   const lines = fs.readFileSync(tracePath, "utf8").split(/\r?\n/).filter((line) => line.length > 0);
   const header = lines.shift();
-  if (!header || !header.startsWith("poll_index,movie_frame,")) {
+  // Two exporter trace layouts carry the same "poll index -> movie frame + mask"
+  // data: the FM2/FCEUX exporter (poll_index,movie_frame,...,mask@col3) and the
+  // bk2 converter (frame_index,source_frame,mask1_hex@col2,...). Both list one
+  // sequential row per polled frame, so only the mask column differs.
+  let maskColumn;
+  if (header && header.startsWith("poll_index,movie_frame,")) {
+    maskColumn = 3;
+  } else if (header && header.startsWith("frame_index,source_frame,")) {
+    maskColumn = 2;
+  } else {
     fail(`unexpected exporter trace CSV header in ${tracePath}`);
   }
 
@@ -104,7 +140,7 @@ function parseExporterTrace(tracePath, masks) {
     const columns = line.split(",");
     const pollIndex = Number(columns[0]);
     const movieFrame = Number(columns[1]);
-    const mask = parseHexByte(columns[3]);
+    const mask = parseHexByte(columns[maskColumn]);
     if (!Number.isInteger(pollIndex) || pollIndex !== lineIndex || !Number.isInteger(movieFrame) || mask === null) {
       fail(`unexpected exporter trace row ${lineIndex + 2} in ${tracePath}: ${line}`);
     }
@@ -172,7 +208,7 @@ function parseHardwareStream(streamPath) {
   return rows;
 }
 
-function parseFm2Masks(fm2Path) {
+function parseFm2Masks(fm2Path, portColumn = 2) {
   if (!fs.existsSync(fm2Path)) {
     fail(`FM2 file not found: ${fm2Path}`);
   }
@@ -183,7 +219,8 @@ function parseFm2Masks(fm2Path) {
       continue;
     }
 
-    const gamepadField = line.split("|")[2] || "";
+    // split("|")[2] is the P1 gamepad field; [3] is P2.
+    const gamepadField = line.split("|")[portColumn] || "";
     masks.push(fm2GamepadMask(gamepadField));
   }
 
@@ -277,36 +314,53 @@ function findInsertions(firstRows, exporterFrames, framePeriodMicros, startFrame
   return insertions;
 }
 
-function buildExpandedMask(masks, exporterFrames, fm2Masks, insertions) {
+function buildExpandedMask(parsed, exporterFrames, fm2, insertions) {
+  const { portCount, header, p1: masks, p2 } = parsed;
   const insertionsByFrame = new Map();
   for (const insertion of insertions) {
     insertionsByFrame.set(insertion.beforeFrame, insertion);
   }
 
-  const output = [];
+  const outP1 = [];
+  const outP2 = [];
   const outputFrames = [];
+  const emit = (mask1, mask2, frameMeta) => {
+    outP1.push(mask1);
+    outP2.push(mask2);
+    outputFrames.push(frameMeta);
+  };
+
   for (let frame = 0; frame < masks.length; frame += 1) {
     const insertion = insertionsByFrame.get(frame);
     if (insertion) {
       for (let movieFrame = insertion.firstInsertedMovieFrame; movieFrame < insertion.currentMovieFrame; movieFrame += 1) {
-        if (movieFrame < 0 || movieFrame >= fm2Masks.length) {
+        if (movieFrame < 0 || movieFrame >= fm2.p1.length) {
           fail(`FM2 frame ${movieFrame} needed for insertion before .tdmask frame ${frame}, but FM2 is too short`);
         }
-        output.push(fm2Masks[movieFrame]);
-        outputFrames.push({
-          movieFrame,
-          mask: fm2Masks[movieFrame],
-        });
+        emit(fm2.p1[movieFrame], fm2.p2[movieFrame] || 0, { movieFrame, mask: fm2.p1[movieFrame] });
       }
     }
 
-    output.push(masks[frame]);
-    outputFrames.push(exporterFrames[frame]);
+    emit(masks[frame], p2 ? p2[frame] : 0, exporterFrames[frame]);
+  }
+
+  let buffer;
+  if (portCount >= 2) {
+    const payload = Buffer.alloc(outP1.length * 2);
+    for (let index = 0; index < outP1.length; index += 1) {
+      payload[index * 2] = outP1[index];
+      payload[index * 2 + 1] = outP2[index];
+    }
+    buffer = Buffer.concat([header, payload]);
+  } else {
+    buffer = Buffer.from(outP1);
   }
 
   return {
-    buffer: Buffer.from(output),
+    buffer,
     frames: outputFrames,
+    frameCount: outP1.length,
+    addedFrames: outP1.length - masks.length,
   };
 }
 
@@ -370,14 +424,15 @@ function main() {
     fail(`tdmask not found: ${options.tdmaskPath}`);
   }
 
-  const tdmask = fs.readFileSync(options.tdmaskPath);
-  const exporterFrames = parseExporterTrace(`${options.tdmaskPath}.trace.csv`, tdmask);
+  const parsed = readTdmask(fs.readFileSync(options.tdmaskPath));
+  const masks = parsed.p1;
+  const exporterFrames = parseExporterTrace(`${options.tdmaskPath}.trace.csv`, masks);
   const hardwareRows = parseHardwareStream(options.streamPath);
   const firstRows = firstHardwareRowsByFrame(hardwareRows);
   const framePeriodMicros = estimateFramePeriodMicros(firstRows, exporterFrames);
   const insertions = findInsertions(firstRows, exporterFrames, framePeriodMicros, options.startFrame);
 
-  console.log(`${path.basename(options.tdmaskPath)}: ${tdmask.length} frame mask(s)`);
+  console.log(`${path.basename(options.tdmaskPath)}: ${masks.length} frame mask(s) (${parsed.portCount}-port)`);
   console.log(`${path.basename(options.streamPath)}: ${hardwareRows.length} hardware poll row(s)`);
   console.log(`estimated hardware frame period: ${framePeriodMicros} us`);
   printInsertionSummary(insertions);
@@ -392,16 +447,23 @@ function main() {
     fail("output path must not overwrite the input .tdmask");
   }
 
-  const fm2Masks = parseFm2Masks(fm2Path);
-  const output = buildExpandedMask(tdmask, exporterFrames, fm2Masks, insertions);
+  const fm2 = {
+    p1: parseFm2Masks(fm2Path, 2),
+    p2: parseFm2Masks(fm2Path, 3),
+  };
+  const output = buildExpandedMask(parsed, exporterFrames, fm2, insertions);
   fs.writeFileSync(outputPath, output.buffer);
   const tracePath = writeExpandedTraceCsv(outputPath, output.frames);
-  console.log(`wrote ${outputPath} (${output.buffer.length} frame mask(s), +${output.buffer.length - tdmask.length})`);
+  console.log(`wrote ${outputPath} (${output.frameCount} frame mask(s), +${output.addedFrames})`);
   console.log(`wrote ${tracePath}`);
   console.log(
     `inserted masks: ${insertions.map((insertion) => String(insertion.missingFrames)).join(" + ")} = ` +
-      `${output.buffer.length - tdmask.length}`,
+      `${output.addedFrames}`,
   );
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { readTdmask, buildExpandedMask, parseFm2Masks, fm2GamepadMask };

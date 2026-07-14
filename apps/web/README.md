@@ -59,22 +59,25 @@ NES port; switching ports releases any currently held on-screen buttons first. K
 the common NES emulator mapping: arrow keys for the D-pad, `Z` for `B`, `X` for `A`, `Enter` for
 `Start`, and `Shift` for `Select`.
 
-Hardware TAS playback expects a pre-generated `.tdmask` stream for real NES runs. Current exports use
-the versioned `TD2P` two-controller stream format so player-2 FM2/BK2 data is uploaded and traced with
-player 1. The header records format version 1 and two ports even when every player-2 byte is zero.
-The web UI accepts only versioned `TD2P` `.tdmask` files for real-console uploads.
+Hardware TAS playback accepts versioned `TD2P` `.tdmask` streams and raw `.r08` replay files. TD2P
+stores interleaved port-1 and port-2 masks in TASDeck button-bit order; its header records format
+version 1 and two ports even when every player-2 byte is zero. R08 is header-less; TASDeck reads it
+as two controller bytes per record in NES serial bit order (reversed while importing) under the
+replay-device convention and its assumptions documented in the
+[hardware TAS workflow guide](../../docs/hardware-tas-workflow.md#r08-format).
 
-The TAS panel includes two poll-alignment controls:
+`.tdmask` always uses completed-read advancement. `.r08` defaults to completed reads and exposes an
+inline picker in the Status field for completed-read or accepted-latch advancement. The picker is
+hidden for `.tdmask` loads. The TAS panel also exposes two alignment controls:
 
-- `Start delay`: waits for this many completed NES controller reads after `Start` before poll 0 is
-  released at a latch boundary.
+- `Start delay`: waits before mask 0 and counts blank windows in the selected synchronization mode.
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
 
 The NES event log keeps the newest 120 browser-visible events. `Copy` copies the visible log to the
 clipboard. `Trace` asks the firmware for the latest TAS poll trace, logs compact rows and anomaly
 summaries, and asks the middleware to save the full event log under `logs/trace/` with a
-`<timestamp>_<tdmask-base>.trace` filename. Firmware trace rows include the active port plus
+`<timestamp>_<tas-file-base>.trace` filename. Firmware trace rows include the active port plus
 line/mask fields from the port data line held through each controller read pulse. The current
 firmware and web UI capture 512 completed polls per trace request.
 

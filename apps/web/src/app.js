@@ -1,5 +1,6 @@
 const {
   HARDWARE_TAS_MAX_START_DELAY_POLLS,
+  HARDWARE_TAS_SYNC_MODE,
   normalizeTasMasks,
   parseTasFileBytes,
   tasMaskHasInput,
@@ -45,6 +46,7 @@ const state = {
     fileName: "None",
     frames: [],
     masks: [],
+    syncMode: HARDWARE_TAS_SYNC_MODE,
     syncDelayPolls: 0,
     syncSkipPolls: 0,
     validation: null,
@@ -84,8 +86,10 @@ const elements = {
   stopButton: document.querySelector("#stopButton"),
   progressFill: document.querySelector("#progressFill"),
   progressText: document.querySelector("#progressText"),
-  playbackStatus: document.querySelector("#playbackStatus"),
+  playbackStatusText: document.querySelector("#playbackStatusText"),
   fileName: document.querySelector("#fileName"),
+  syncModeField: document.querySelector("#syncModeField"),
+  syncMode: document.querySelector("#syncMode"),
   syncDelayPolls: document.querySelector("#syncDelayPolls"),
   syncSkipPolls: document.querySelector("#syncSkipPolls"),
   currentFrame: document.querySelector("#currentFrame"),
@@ -358,7 +362,7 @@ class NetworkBridgeTransport {
     return true;
   }
 
-  sendTasUpload(fileName, masks, clientRunId, skipPolls = 0) {
+  sendTasUpload(fileName, masks, clientRunId, skipPolls = 0, syncMode = HARDWARE_TAS_SYNC_MODE) {
     const normalizedMasks = normalizeTasMasks(Array.isArray(masks) ? masks : []);
     const portCount = tasMasksPortCount(normalizedMasks);
     const normalizedSkipPolls = Number.isSafeInteger(Number(skipPolls)) ? Math.max(0, Number(skipPolls)) : 0;
@@ -367,6 +371,7 @@ class NetworkBridgeTransport {
         type: "tas_upload",
         fileName,
         clientRunId,
+        syncMode,
         skipPolls: normalizedSkipPolls,
         portCount,
         frameCount: normalizedMasks.length,
@@ -1043,6 +1048,8 @@ function loadTasFromParseResult(fileName, parseResult) {
   state.tas.fileName = fileName;
   state.tas.frames = frames;
   state.tas.masks = validation.masks;
+  state.tas.syncMode = parseResult?.syncMode === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  elements.syncMode.value = state.tas.syncMode;
   state.tas.syncDelayPolls = 0;
   state.tas.syncSkipPolls = 0;
   elements.syncDelayPolls.value = "0";
@@ -1086,7 +1093,11 @@ function loadTasFromParseResult(fileName, parseResult) {
 }
 
 function loadedTasLogMessage(fileName, parseResult, validation) {
-  const unit = parseResult?.format === "raw-mask" || parseResult?.format === "raw-mask-v2" ? "frame mask" : "frame";
+  const unit = parseResult?.format === "r08"
+    ? "record"
+    : parseResult?.format === "raw-mask" || parseResult?.format === "raw-mask-v2"
+      ? "frame mask"
+      : "frame";
   const unitPlural = validation.frameCount === 1 ? unit : `${unit}s`;
   const inputPlural = validation.inputFrameCount === 1 ? unit : `${unit}s`;
   const warningText = parseResult?.warnings?.length ? ` Warning: ${parseResult.warnings[0]}` : "";
@@ -1095,9 +1106,12 @@ function loadedTasLogMessage(fileName, parseResult, validation) {
 }
 
 function loadedTasStatusMessage(parseResult, validation) {
+  if (parseResult?.format === "r08") {
+    return `Ready · R08 · ${validation.frameCount} record${validation.frameCount === 1 ? "" : "s"}`;
+  }
+
   if (parseResult?.format === "raw-mask" || parseResult?.format === "raw-mask-v2") {
-    const portText = tasMasksPortCount(validation.masks) > 1 ? "two-controller " : "";
-    return `Loaded console-ready ${portText}TASDeck mask stream: ${validation.frameCount} frame mask${validation.frameCount === 1 ? "" : "s"}. Hardware playback advances one mask per NES latch window.`;
+    return `Ready · TD2P · ${validation.frameCount} mask${validation.frameCount === 1 ? "" : "s"} · completed reads`;
   }
 
   if (parseResult?.format === "fm2") {
@@ -1229,6 +1243,7 @@ function hardwareTasFileKey() {
     state.tas.fileName,
     state.tas.masks.length,
     state.tas.syncSkipPolls,
+    state.tas.syncMode,
     tasMasksPortCount(state.tas.masks),
     tasRunChecksum(state.tas.masks, tasMasksPortCount(state.tas.masks)),
   ].join(":");
@@ -1256,7 +1271,13 @@ async function ensureHardwareTasUploaded(runId) {
   updatePlaybackInfo();
 
   const uploadPromise = networkTransport
-    .sendTasUpload(state.tas.fileName, state.tas.masks, runId, state.tas.syncSkipPolls)
+    .sendTasUpload(
+      state.tas.fileName,
+      state.tas.masks,
+      runId,
+      state.tas.syncSkipPolls,
+      state.tas.syncMode,
+    )
     .then((status) => {
       if (!hardwareRunIsCurrent(runId)) {
         return status;
@@ -1749,8 +1770,13 @@ function updatePlaybackInfo() {
       ? `${current} / ${total} played, ${state.tas.streamedFrames} sent`
       : `${current} / ${total} frames`;
   const statusMessage = playbackStatusMessage();
-  elements.playbackStatus.textContent = statusMessage || playbackLabel();
+  elements.playbackStatusText.textContent = statusMessage || playbackLabel();
   elements.fileName.textContent = state.tas.fileName;
+  elements.syncModeField.classList.toggle(
+    "hidden",
+    state.tas.fileFormat !== "r08" || !state.tas.validation?.valid,
+  );
+  elements.syncMode.value = state.tas.syncMode;
   elements.currentFrame.textContent =
     state.tas.status === "invalid"
       ? state.tas.hardwareMessage
@@ -1763,9 +1789,12 @@ function updatePlaybackInfo() {
   elements.pauseButton.disabled = !canPause;
   elements.stopButton.disabled = total === 0 || state.tas.status === "invalid";
   elements.dumpTrace.disabled = !networkTransport.isConnected();
-  elements.syncSkipPolls.disabled = ["uploading", "arming", "armed", "playing", "streaming", "paused"].includes(
+  const syncControlsDisabled = ["uploading", "arming", "armed", "playing", "streaming", "paused"].includes(
     state.tas.status,
   );
+  elements.syncDelayPolls.disabled = syncControlsDisabled;
+  elements.syncSkipPolls.disabled = syncControlsDisabled;
+  elements.syncMode.disabled = syncControlsDisabled;
 }
 
 function formatTasFrameInput(frame) {
@@ -1804,6 +1833,7 @@ function bindPlayback() {
   elements.playButton.addEventListener("click", playTas);
   elements.pauseButton.addEventListener("click", pauseTas);
   elements.stopButton.addEventListener("click", stopPlayback);
+  elements.syncMode.addEventListener("change", handleSyncModeChange);
   elements.syncDelayPolls.addEventListener("change", handleSyncDelayChange);
   elements.syncDelayPolls.addEventListener("input", handleSyncDelayChange);
   elements.syncSkipPolls.addEventListener("change", handleSyncSkipChange);
@@ -1860,7 +1890,6 @@ async function dumpHardwareTrace() {
 function traceEventLogMetadata(trace = {}) {
   return {
     timestamp: new Date().toISOString(),
-    tdmaskFileName: state.tas.fileName,
     tasFileName: state.tas.fileName,
     fileFormat: state.tas.fileFormat,
     fileFormatLabel: state.tas.fileFormatLabel,
@@ -1869,6 +1898,7 @@ function traceEventLogMetadata(trace = {}) {
     portCount: tasMasksPortCount(state.tas.masks),
     skipPolls: state.tas.syncSkipPolls,
     delayPolls: state.tas.syncDelayPolls,
+    syncMode: state.tas.syncMode,
     hardwareRunId: state.tas.hardwareRunId,
     bridgeRunId: state.tas.hardwareBridgeRunId,
     traceStart: trace.start,
@@ -1890,6 +1920,19 @@ function handleSyncDelayChange() {
   if (String(normalized) !== elements.syncDelayPolls.value) {
     elements.syncDelayPolls.value = String(normalized);
   }
+}
+
+function handleSyncModeChange() {
+  if (state.tas.fileFormat !== "r08") {
+    elements.syncMode.value = HARDWARE_TAS_SYNC_MODE;
+    return;
+  }
+
+  state.tas.syncMode = elements.syncMode.value === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  state.tas.hardwareFileKey = "";
+  state.tas.hardwareUploadPromise = null;
+  state.tas.hardwareMessage = loadedTasStatusMessage({ format: "r08" }, state.tas.validation);
+  updatePlaybackInfo();
 }
 
 function handleSyncSkipChange() {

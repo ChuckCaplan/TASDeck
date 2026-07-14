@@ -39,9 +39,10 @@ Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on
 Press `Connect` in the web app to open the Arduino USB bridge.
 
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
-port 1 or port 2, and plays pre-generated `.tdmask` streams converted from `.fm2` or `.bk2`
-TAS inputs, synchronized to the NES controller latch signal. The event log can capture firmware
-traces for diagnosing playback alignment and hardware timing.
+port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES.
+`.tdmask` advances after completed controller reads. `.r08` defaults to the same poll mode and
+exposes a Sync Mode picker for choosing accepted-latch advancement when a replay requires it. The
+event log can capture firmware traces for diagnosing playback alignment and hardware timing.
 
 Keyboard input uses common NES emulator mapping:
 
@@ -68,7 +69,7 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 - [Installation](INSTALL.md) — complete first-time setup, prerequisites, wiring, firmware upload,
   and initial verification.
 - [Hardware TAS playback and troubleshooting](docs/hardware-tas-workflow.md) — understand the
-  `.tdmask` format and perform advanced trace-based desync diagnosis.
+  `.tdmask` and `.r08` formats and perform advanced trace-based desync diagnosis.
 - [Firmware guide](firmware/uno_r4_wifi/README.md) — pin assignments, serial protocol, firmware
   behavior, compilation, upload, and diagnostic builds.
 - [Web app guide](apps/web/README.md) — browser controls, middleware connection, TAS playback

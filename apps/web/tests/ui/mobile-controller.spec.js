@@ -98,6 +98,17 @@ async function controllerFaceplateRect(page) {
   });
 }
 
+test("groups playback offsets in one grid row", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+
+  const startDelay = await elementRect(page, ".info-grid > div:has(#syncDelayPolls)");
+  const skipFirst = await elementRect(page, ".info-grid > div:has(#syncSkipPolls)");
+
+  expect(skipFirst.y).toBeCloseTo(startDelay.y, 0);
+  expect(skipFirst.width).toBeCloseTo(startDelay.width, 0);
+});
+
 test.describe("iPhone portrait controller", () => {
   test.use({
     deviceScaleFactor: iPhone.deviceScaleFactor,
@@ -122,6 +133,11 @@ test.describe("iPhone portrait controller", () => {
     const shortcutNote = await elementRect(page, ".shortcut-note");
     const eventConsole = await elementRect(page, ".event-console");
     const clearButton = await elementRect(page, "#clearLog");
+    const playbackHeading = await elementRect(
+      page,
+      ".playback-panel .section-heading > div:first-child",
+    );
+    const openButton = await elementRect(page, ".playback-panel .file-picker");
 
     expect(bodyWidth).toBeLessThanOrEqual(viewport.width + 1);
     expect(panel.height).toBeLessThan(80);
@@ -134,6 +150,9 @@ test.describe("iPhone portrait controller", () => {
     expect(portTwoButton.x + portTwoButton.width).toBeLessThanOrEqual(faceplate.right);
     expect(menuLabels.y + menuLabels.height).toBeLessThanOrEqual(menuPocket.y + 1);
     expect(controller.width).toBeGreaterThan(viewport.width * 0.9);
+    expect(openButton.x).toBeGreaterThan(playbackHeading.x + playbackHeading.width);
+    expect(openButton.y).toBeLessThan(playbackHeading.y + playbackHeading.height);
+    expect(openButton.y + openButton.height).toBeGreaterThan(playbackHeading.y);
     await expect(page.locator(".device-state")).toBeVisible();
     await expect(page.locator(".shortcut-note")).toContainText("Keyboard:");
     await expect(page.locator(".playback-panel")).toBeVisible();

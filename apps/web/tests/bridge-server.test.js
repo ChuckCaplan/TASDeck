@@ -173,7 +173,7 @@ test("saves browser event log snapshots", async () => {
       reason: "tas trace",
       metadata: {
         timestamp: "2026-07-03T20:39:34.149Z",
-        tdmaskFileName: "lordtom,maru,tompav2-smb3-warps.tdmask",
+        tasFileName: "lordtom,maru,tompav2-smb3-warps.tdmask",
         originalPolls: 72254,
         effectivePolls: 72252,
         skipPolls: 2,
@@ -193,7 +193,7 @@ test("saves browser event log snapshots", async () => {
 
     const saved = await fsp.readFile(path.join(logDir, "trace", decoded.fileName), "utf8");
     assert.match(saved, /^TASDeck Trace\n/);
-    assert.match(saved, /tdmask_file: lordtom,maru,tompav2-smb3-warps\.tdmask\n/);
+    assert.match(saved, /tas_file: lordtom,maru,tompav2-smb3-warps\.tdmask\n/);
     assert.match(saved, /skip_polls: 2\n/);
     assert.match(saved, /effective_polls: 72252\n/);
     assert.match(saved, /\n\nNES Event Log\nLatest 2 \/ 120\n\n001 playback\nTAS trace captured 2 rows\n$/);
@@ -340,6 +340,10 @@ test("formats TAS serial commands from bridge messages", () => {
   assert.equal(
     bridge.commandForTasMessage({ type: "tas_begin", frameCount: 81, syncMode: "poll", portCount: 2 }),
     "TAS_BEGIN 81 poll 2",
+  );
+  assert.equal(
+    bridge.commandForTasMessage({ type: "tas_begin", frameCount: 81, syncMode: "latch" }),
+    "TAS_BEGIN 81 latch",
   );
   assert.equal(
     bridge.commandForTasMessage({
@@ -831,6 +835,46 @@ test("stores validated TAS uploads on the bridge", () => {
   assert.equal(decoded.port_count, 1);
   assert.equal(decoded.sync, "poll");
   assert.equal(decoded.file_name, "run.fm2");
+});
+
+test("bridge-owned TAS arm preserves latch synchronization", async () => {
+  const bridge = new SerialBridge();
+  const writes = [];
+  const client = {
+    heldButtons: new Set(),
+    socket: { destroyed: false, write() {} },
+  };
+  const masks = [0x01, 0x00, 0x80];
+
+  bridge.handle = {
+    async write(command) {
+      writes.push(command);
+      const trimmed = command.trim();
+      if (trimmed === "TAS_BEGIN 3 latch") {
+        bridge.handleSerialBytes(Buffer.from("OK tas_begin active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=512 ports=1 sync=latch error=ok\n"));
+      } else if (trimmed.startsWith("TAS_CHUNK")) {
+        bridge.handleSerialBytes(Buffer.from("OK tas_chunk active=1 ready=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=latch error=ok\n"));
+      } else if (trimmed === "TAS_END") {
+        bridge.handleSerialBytes(Buffer.from("OK tas_end active=1 ready=1 receiving_complete=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=latch error=ok\n"));
+      }
+    },
+  };
+  bridge.portPath = "/dev/cu.usbmodem-test";
+  bridge.serialReady = true;
+
+  bridge.handleClientTasMessage(client, {
+    type: "tas_upload",
+    fileName: "run.tdmask",
+    frameCount: masks.length,
+    inputFrameCount: 2,
+    syncMode: "latch",
+    masks,
+    checksum: tasRunChecksum(masks),
+  });
+  assert.equal(bridge.activeTasRun.syncMode, "latch");
+
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.equal(writes[0], "TAS_BEGIN 3 latch\n");
 });
 
 test("bridge-owned TAS upload streams two-controller masks", async () => {

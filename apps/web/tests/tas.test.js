@@ -9,10 +9,12 @@ const {
   normalizeButtons,
   normalizeTasMasks,
   parseRawMaskBytes,
+  parseR08Bytes,
   parseTwoControllerMaskBytes,
   parseTas,
   parseTasFileBytes,
   parseTasText,
+  reverseByteBits,
   TAS_CHUNK_FRAME_LIMIT,
   TWO_CONTROLLER_MASK_HEADER,
   TWO_CONTROLLER_MASK_MAGIC,
@@ -185,6 +187,7 @@ test("parses two-controller .tdmask uploads with TD2P header", () => {
   const result = parseTasFileBytes("movie.tdmask", bytes.buffer);
 
   assert.equal(result.format, "raw-mask-v2");
+  assert.equal(result.syncMode, "poll");
   assert.equal(TWO_CONTROLLER_MASK_VERSION, 1);
   assert.equal(result.label, "TASDeck two-controller mask stream");
   assert.deepEqual(result.frames, [
@@ -196,6 +199,48 @@ test("parses two-controller .tdmask uploads with TD2P header", () => {
     { p1: 0x01, p2: 0x02 },
     { p1: 0x00, p2: 0x08 },
   ]);
+});
+
+test("parses paired R08 records with reversed controller-bit order", () => {
+  const bytes = Uint8Array.from([
+    0x80, // P1 A -> TASDeck bit 0
+    0x40, // P2 B -> TASDeck bit 1
+    0x01, // P1 Right -> TASDeck bit 7
+    0x00,
+  ]);
+  const result = parseTasFileBytes("movie.R08", bytes);
+
+  assert.equal(result.format, "r08");
+  assert.equal(result.label, "R08 two-controller stream");
+  assert.equal(result.syncMode, "poll");
+  assert.deepEqual(result.frames, [
+    { frame: 0, buttons: ["a"], player1: ["a"], player2: ["b"], raw: "p1=0x01 p2=0x02" },
+    { frame: 1, buttons: ["right"], player1: ["right"], player2: [], raw: "p1=0x80 p2=0x00" },
+  ]);
+  assert.deepEqual(parseR08Bytes(bytes), result.frames);
+  assert.deepEqual(tasFramesToMasks(result.frames), [
+    { p1: 0x01, p2: 0x02 },
+    { p1: 0x80, p2: 0x00 },
+  ]);
+  assert.equal(tasMasksPortCount(tasFramesToMasks(result.frames)), 2);
+});
+
+test("reverses every R08 controller bit and preserves an idle second port", () => {
+  for (let bit = 0; bit < 8; bit += 1) {
+    assert.equal(reverseByteBits(1 << bit), 1 << (7 - bit));
+  }
+
+  const masks = tasFramesToMasks(parseTasFileBytes("one-player.r08", Uint8Array.from([0x80, 0x00])).frames);
+  assert.equal(tasMasksPortCount(masks), 2);
+  assert.deepEqual(masks, [{ p1: 0x01, p2: 0x00 }]);
+});
+
+test("rejects empty and incomplete R08 streams", () => {
+  assert.throws(() => parseTasFileBytes("empty.r08", new Uint8Array()), /R08 stream is empty/);
+  assert.throws(
+    () => parseTasFileBytes("incomplete.r08", Uint8Array.from([0x80, 0x00, 0x40])),
+    /incomplete two-controller record/,
+  );
 });
 
 test("preserves an explicitly two-controller stream when player two is idle", () => {
@@ -232,10 +277,10 @@ test("rejects incomplete or unsupported TD2P headers", () => {
   );
 });
 
-test("rejects uploads without the .tdmask extension", () => {
+test("rejects uploads without a supported hardware-stream extension", () => {
   assert.throws(
     () => parseTasFileBytes("movie.fm2", TWO_CONTROLLER_MASK_HEADER),
-    /only accepts \.tdmask files/,
+    /only accepts \.tdmask and \.r08 files/,
   );
 });
 

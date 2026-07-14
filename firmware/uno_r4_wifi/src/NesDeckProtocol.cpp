@@ -110,8 +110,12 @@ Action parseAction(const char* token) {
 }
 
 TasSyncMode parseTasSyncMode(const char* token) {
-  if (equalsIgnoreCase(token, "poll") || equalsIgnoreCase(token, "latch")) {
+  if (equalsIgnoreCase(token, "poll")) {
     return TasSyncMode::Poll;
+  }
+
+  if (equalsIgnoreCase(token, "latch")) {
+    return TasSyncMode::Latch;
   }
 
   return TasSyncMode::Unknown;
@@ -582,6 +586,8 @@ const char* tasSyncModeName(TasSyncMode syncMode) {
   switch (syncMode) {
     case TasSyncMode::Poll:
       return "poll";
+    case TasSyncMode::Latch:
+      return "latch";
     case TasSyncMode::Unknown:
     default:
       return "unknown";

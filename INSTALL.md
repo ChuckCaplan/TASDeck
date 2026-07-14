@@ -1,7 +1,7 @@
 # Installation
 
 This guide walks through a full TASDeck setup: computer tooling, Arduino firmware, NES controller
-port wiring, `.tdmask` byte-stream generation, and real-console playback. The tested hardware target
+port wiring, `.tdmask` byte-stream generation, `.r08` import, and real-console playback. The tested hardware target
 is an Arduino UNO R4 WiFi, but TASDeck uses it as a USB serial board only. The Arduino Wi-Fi radio is
 not used by this project.
 
@@ -172,11 +172,12 @@ ARDUINO_PORT=/dev/cu.usbmodemXXXX npm run upload:firmware
 Close Arduino Serial Monitor before running TASDeck. Only one process can own the Arduino serial
 port at a time.
 
-## Create A `.tdmask` Byte Stream
+## Prepare A TAS File
 
-Hardware playback uses a `.tdmask` byte stream, not raw browser-timed button diffs. Generate it from
-the ROM and matching FM2 movie with FCEUX. The current exporter writes a versioned two-controller
-`TD2P` stream; port 2 bytes are zero when the movie has no player-2 input.
+Hardware playback accepts a raw `.r08` replay or a `.tdmask` byte stream. An R08 can be loaded
+directly. To use an FM2 movie, generate TD2P from the ROM and matching movie with FCEUX. The current
+exporter writes a versioned two-controller stream; port 2 bytes are zero when the movie has no
+player-2 input.
 
 ```sh
 scripts/convert-fm2-to-tasdeck-mask.sh \
@@ -259,12 +260,13 @@ log `blocked` entries rather than silently dropping them.
 
 1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the FM2 movie.
 2. Press `Connect` if the Arduino bridge is not already connected.
-3. In TASDeck, choose the generated `.tdmask` file.
+3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. TASDeck automatically selects
+   latch-window synchronization for `.r08` and completed-read synchronization for `.tdmask`.
 4. Set `Start delay` or `Skip first` only if the run needs poll alignment tuning. `Start delay`
    waits after the console sync point before releasing the first poll. `Skip first` discards masks
    from the front of the stream before arming. Ideally this should not be needed.
 5. Wait for TASDeck to parse and preview the file. Once both the Arduino bridge and a valid file are
-   ready, TASDeck uploads the `.tdmask` stream to the bridge while manual controls stay active.
+   ready, TASDeck uploads the TAS stream to the bridge while manual controls stay active.
 6. Press `Play` a single time to prebuffer and arm the Arduino. When the status is armed and the playback button
    changes to `Start`, press `Start` at the exact console sync point expected by the movie.
 
@@ -280,7 +282,7 @@ During hardware TAS playback, the Arduino advances through the byte stream from 
 holds each frame byte across repeated controller polls. Browser timers do not set the real-console
 timing.
 
-Your .tdmask converted from .fm2 TAS should now be playing on your real NES.
+Your `.r08` replay or `.tdmask` converted from FM2 should now be playing on your real NES.
 
 ## Troubleshooting
 

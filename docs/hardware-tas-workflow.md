@@ -1,7 +1,7 @@
 # Hardware TAS Playback And Troubleshooting
 
 This guide covers the details beyond the first-time setup in [Installation](../INSTALL.md): the
-`.tdmask` format, console synchronization, and advanced trace-based desync diagnosis. For
+`.tdmask` and `.r08` formats, console synchronization, and advanced trace-based desync diagnosis. For
 controller-port wiring, the serial protocol, and firmware diagnostics, see the [firmware
 guide](../firmware/uno_r4_wifi/README.md).
 
@@ -33,6 +33,31 @@ Streams begin with an eight-byte header and contain interleaved port 1 and port 
 
 The versioned header identifies a two-port stream even when every port-2 mask is zero. `.tdmask` is
 currently specific to TASDeck.
+
+## `.r08` Format
+
+TASDeck also imports raw R08 replay files directly. R08 is header-less: the bytes carry no ROM
+identity, reset timing, controller count, or indication of whether each record is a whole frame or a
+single latch. TASDeck therefore reads every `.r08` under the NES replay-device convention that the
+public verification files use (for example the
+[alyosha-tas](https://github.com/alyosha-tas/NES_replay_files) corpus):
+
+- **Two bytes per record, port 1 then port 2.** One-player runs still carry a port-2 byte of `0x00`.
+  Because there is no header, TASDeck cannot distinguish a genuine single-controller stream that
+  stores one byte per record from a two-controller stream, and assumes two. An odd-length file is
+  rejected, but an even-length single-controller file would be misread, splitting its frames across
+  the two ports. Load only two-byte replay-device R08 files.
+- **NES serial bit order, Right through A**, which TASDeck reverses into its internal A-through-Right
+  mask order while loading.
+- **Selectable synchronization.** Because R08 cannot say whether its records are frames or latches,
+  TASDeck defaults to completed-read poll mode and exposes a `Sync Mode` picker. Select accepted-latch
+  mode for replay files that expect one record per accepted latch (see
+  [Console Synchronization](#console-synchronization)).
+
+These are conventions the file cannot prove, not guarantees. The self-describing successor format
+[TASD](https://tasd.io/) records console, port count, and frame-versus-latch semantics in a header,
+much as `.tdmask` carries a versioned `TD2P` header; `.r08` carries none of it, so correct playback
+depends on the file matching this convention.
 
 ## Generate A Stream
 
@@ -73,10 +98,10 @@ or startup path can change lag and controller polling enough to desynchronize th
 
 ## Console Synchronization
 
-The `.tdmask` supplies controller values; the NES latch signal supplies playback timing. Firmware
-holds the same mask across controller rereads within a latch window and advances only after a window
-that contained a completed controller read. This prevents boot strobes and same-frame rereads from
-consuming additional masks.
+A `.tdmask` export always advances only after a window containing a completed eight-clock controller
+read, and its sync mode is not user-selectable. A raw `.r08` replay defaults to that completed-read
+poll mode. When an R08 file is loaded, the `Sync Mode` picker can instead select latch mode, which
+advances after each accepted latch even when the game reads fewer than eight bits.
 
 This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt a controller read,
 causing the game to reread until two consecutive values match. Serving a new mask for every poll
@@ -85,11 +110,11 @@ would drift the stream, while serving one mask per latch window gives each rerea
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
-- Use `Start delay` to wait a fixed number of completed controller-read windows before releasing
-  frame 0.
+- Use `Start delay` to wait before releasing record 0. It counts blank windows in the selected sync
+  mode; `.tdmask` always uses completed-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
 
-For a power-on movie, upload the `.tdmask` and press `Play` once to arm it. While the NES is off or
+For a power-on movie, load the `.tdmask` or `.r08` and press `Play` once to arm it. While the NES is off or
 held in reset, press `Start` in TASDeck, then power on or release reset so the first controller read
 receives frame 0.
 
@@ -120,7 +145,7 @@ sequence and timestamp.
 Trace filenames use local time and its UTC offset:
 
 ```txt
-<local_timestamp_with_utc_offset>_<tdmask_filename_without_.tdmask>.trace
+<local_timestamp_with_utc_offset>_<tas_filename_without_extension>.trace
 ```
 
 The trace header records details such as the TAS filename, bridge run ID, original and effective
