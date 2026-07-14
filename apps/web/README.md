@@ -66,11 +66,11 @@ as two controller bytes per record in NES serial bit order (reversed while impor
 replay-device convention and its assumptions documented in the
 [hardware TAS workflow guide](../../docs/hardware-tas-workflow.md#r08-format).
 
-The file format selects synchronization automatically: `.tdmask` uses completed-read advancement,
-while `.r08` uses latch-window advancement. The TAS panel exposes two alignment controls:
+`.tdmask` always uses completed-read advancement. `.r08` defaults to completed reads and exposes an
+inline picker in the Status field for completed-read or accepted-latch advancement. The picker is
+hidden for `.tdmask` loads. The TAS panel also exposes two alignment controls:
 
-- `Start delay`: waits before mask 0; for R08 it counts blank latch windows, while for TD2P it counts
-  completed controller-read windows.
+- `Start delay`: waits before mask 0 and counts blank windows in the selected synchronization mode.
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
 

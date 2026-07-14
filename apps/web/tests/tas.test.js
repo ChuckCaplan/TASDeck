@@ -211,8 +211,8 @@ test("parses paired R08 records with reversed controller-bit order", () => {
   const result = parseTasFileBytes("movie.R08", bytes);
 
   assert.equal(result.format, "r08");
-  assert.equal(result.label, "R08 two-controller latch stream");
-  assert.equal(result.syncMode, "latch");
+  assert.equal(result.label, "R08 two-controller stream");
+  assert.equal(result.syncMode, "poll");
   assert.deepEqual(result.frames, [
     { frame: 0, buttons: ["a"], player1: ["a"], player2: ["b"], raw: "p1=0x01 p2=0x02" },
     { frame: 1, buttons: ["right"], player1: ["right"], player2: [], raw: "p1=0x80 p2=0x00" },

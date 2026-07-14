@@ -119,7 +119,16 @@
           <dl class="info-grid">
             <div>
               <dt>Status</dt>
-              <dd id="playbackStatus">No file loaded</dd>
+              <dd id="playbackStatus" class="playback-status-value">
+                <span id="playbackStatusText">No file loaded</span>
+                <label id="syncModeField" class="sync-mode-control hidden" for="syncMode">
+                  <span class="visually-hidden">Sync Mode</span>
+                  <select id="syncMode" class="sync-mode-select">
+                    <option value="poll">completed reads</option>
+                    <option value="latch">per accepted latch</option>
+                  </select>
+                </label>
+              </dd>
             </div>
             <div>
               <dt>File</dt>

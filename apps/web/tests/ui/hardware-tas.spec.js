@@ -342,9 +342,10 @@ test.describe("hardware TAS streaming UI", () => {
       buffer: tdmaskBuffer(Array.from({ length: 28779 }, (_, index) => (index === 0 ? 0x01 : 0x00))),
     });
 
-    await expect(page.locator("#playbackStatus")).toHaveText(
+    await expect(page.locator("#playbackStatusText")).toHaveText(
       "Ready · TD2P · 28779 masks · completed reads",
     );
+    await expect(page.locator("#syncModeField")).toBeHidden();
     const tdmaskLayout = await page.locator(".layout-grid").boundingBox();
     const tdmaskShortcuts = await page.locator(".shortcut-note").boundingBox();
     const tdmaskGap =
@@ -356,9 +357,12 @@ test.describe("hardware TAS streaming UI", () => {
       mimeType: "application/octet-stream",
       buffer: Buffer.from([0x80, 0x00, 0x00, 0x00]),
     });
-    await expect(page.locator("#playbackStatus")).toHaveText(
-      "Ready · R08 · 2 records · latch windows",
-    );
+    await expect(page.locator("#playbackStatusText")).toHaveText("Ready · R08 · 2 records");
+    await expect(page.locator("#syncModeField")).toBeVisible();
+    await expect(page.locator(".file-actions #syncMode")).toHaveCount(0);
+    await expect(page.locator("#playbackStatus #syncMode")).toBeVisible();
+    await expect(page.locator("#syncMode")).toHaveValue("poll");
+    await expect(page.locator("#syncMode option:checked")).toHaveText("completed reads");
     const r08Layout = await page.locator(".layout-grid").boundingBox();
     const r08Shortcuts = await page.locator(".shortcut-note").boundingBox();
     const r08Gap = r08Layout.y + r08Layout.height - (r08Shortcuts.y + r08Shortcuts.height);
@@ -438,7 +442,7 @@ test.describe("hardware TAS streaming UI", () => {
     expect(upload.frameCount).toBe(12);
   });
 
-  test("parses and uploads R08 records with automatic latch synchronization", async ({ page }) => {
+  test("parses and uploads R08 records with poll synchronization by default", async ({ page }) => {
     await installFakeBridge(page);
     await connectFakeNetworkBridge(page);
 
@@ -452,11 +456,35 @@ test.describe("hardware TAS streaming UI", () => {
     const upload = await page.evaluate(() =>
       window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").at(-1),
     );
-    expect(upload.syncMode).toBe("latch");
+    expect(upload.syncMode).toBe("poll");
     expect(upload.portCount).toBe(2);
     expect(upload.frameCount).toBe(2);
     expect(upload.masks).toEqual([0x01, 0x02, 0x80, 0x00]);
-    await expect(page.locator("#currentFrame")).toContainText("R08 two-controller latch stream");
+    await expect(page.locator("#currentFrame")).toContainText("R08 two-controller stream");
+  });
+
+  test("lets R08 loads use latch synchronization", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+
+    await page.setInputFiles("#tasFile", {
+      name: "movie.r08",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from([0x80, 0x40, 0x01, 0x00]),
+    });
+
+    await expect(page.locator("#syncMode")).toBeEnabled();
+    await page.locator("#syncMode").selectOption("latch");
+    await expect(page.locator("#playbackStatusText")).toHaveText("Ready · R08 · 2 records");
+    await expect(page.locator("#syncMode option:checked")).toHaveText("per accepted latch");
+    await page.click("#playButton");
+    await expect.poll(async () =>
+      page.evaluate(() => window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").length),
+    ).toBe(2);
+    const upload = await page.evaluate(() =>
+      window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").at(-1),
+    );
+    expect(upload.syncMode).toBe("latch");
   });
 
   test("play arms the Arduino, then Start begins playback", async ({ page }) => {

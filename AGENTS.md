@@ -163,14 +163,14 @@ firmware: nothing on the serial/command path may mask interrupts long enough to 
 ISRs, which is also why the playback frame ring uses free-running
 single-producer/single-consumer indices and status snapshots read fields without `noInterrupts()`.
 
-`Start delay` is sent to firmware as `TAS_START <delay_frames>` and waits that many latch windows
-before releasing frame 0. `Skip first` is bridge-owned; the middleware slices that many masks
-from the front of the uploaded stream before sending chunks to the Arduino.
+`Start delay` is sent to firmware as `TAS_START <delay_frames>` and waits that many windows in the
+selected synchronization mode before releasing frame 0. `Skip first` is bridge-owned; the middleware
+slices that many masks from the front of the uploaded stream before sending chunks to the Arduino.
 
 The UI accepts versioned `TD2P` `.tdmask` files with interleaved port 1 / port 2 bytes and raw R08
 files with two bytes per record. TD2P bytes use A, B, Select, Start, Up, Down, Left, Right bit order;
-R08 bytes are reversed from their NES serial order during import. File format selects sync mode:
-`.tdmask` uses completed reads and `.r08` uses latch windows.
+R08 bytes are reversed from their NES serial order during import. `.tdmask` always uses completed-read
+poll mode. `.r08` defaults to poll mode and exposes a UI picker for completed reads or accepted latches.
 
 Hardware TAS playback uses the upload/chunk protocol with pre-generated mask bytes. Do not send
 browser-timed TAS button diffs to the real hardware bridge.
@@ -260,8 +260,8 @@ hardware-flow changes:
   versioned header, and empty or odd-length R08 files are rejected.
 - A generated versioned `TD2P` `.tdmask` file loads as a two-controller console-ready mask stream
   and uploads after Arduino USB is connected, including when all port 2 bytes are zero.
-- A raw `.r08` file loads as a two-controller latch stream, reverses each controller byte, and
-  uploads in latch sync mode without a user-selectable sync control.
+- A raw `.r08` file loads as a two-controller stream, reverses each controller byte, defaults to poll
+  sync mode, and exposes a selector that can switch the upload to latch mode.
 - The `Start delay` and `Skip first` controls stay editable before arming and disabled during active
   hardware playback.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.

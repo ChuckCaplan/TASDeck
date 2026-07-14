@@ -49,9 +49,10 @@ public verification files use (for example the
   the two ports. Load only two-byte replay-device R08 files.
 - **NES serial bit order, Right through A**, which TASDeck reverses into its internal A-through-Right
   mask order while loading.
-- **Latch-window synchronization.** Because R08 cannot say whether its records are frames or latches,
-  TASDeck advances one record per accepted latch window, matching how replay devices consume the
-  format (see [Console Synchronization](#console-synchronization)).
+- **Selectable synchronization.** Because R08 cannot say whether its records are frames or latches,
+  TASDeck defaults to completed-read poll mode and exposes a `Sync Mode` picker. Select accepted-latch
+  mode for replay files that expect one record per accepted latch (see
+  [Console Synchronization](#console-synchronization)).
 
 These are conventions the file cannot prove, not guarantees. The self-describing successor format
 [TASD](https://tasd.io/) records console, port count, and frame-versus-latch semantics in a header,
@@ -81,10 +82,10 @@ or startup path can change lag and controller polling enough to desynchronize th
 
 ## Console Synchronization
 
-The file extension selects synchronization automatically. A `.tdmask` export advances only after a
-window containing a completed eight-clock controller read. A raw `.r08` replay advances after each
-accepted latch window even when the game reads fewer than eight bits. The bridge and firmware still
-carry the explicit mode internally, but there is no UI selector that can mismatch it with the file.
+A `.tdmask` export always advances only after a window containing a completed eight-clock controller
+read, and its sync mode is not user-selectable. A raw `.r08` replay defaults to that completed-read
+poll mode. When an R08 file is loaded, the `Sync Mode` picker can instead select latch mode, which
+advances after each accepted latch even when the game reads fewer than eight bits.
 
 This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt a controller read,
 causing the game to reread until two consecutive values match. Serving a new mask for every poll
@@ -93,8 +94,8 @@ would drift the stream, while serving one mask per latch window gives each rerea
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
-- Use `Start delay` to wait before releasing record 0. For `.r08` it counts blank latch windows; for
-  `.tdmask` it counts completed controller-read windows.
+- Use `Start delay` to wait before releasing record 0. It counts blank windows in the selected sync
+  mode; `.tdmask` always uses completed-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
 
 For a power-on movie, load the `.tdmask` or `.r08` and press `Play` once to arm it. While the NES is off or

@@ -86,8 +86,10 @@ const elements = {
   stopButton: document.querySelector("#stopButton"),
   progressFill: document.querySelector("#progressFill"),
   progressText: document.querySelector("#progressText"),
-  playbackStatus: document.querySelector("#playbackStatus"),
+  playbackStatusText: document.querySelector("#playbackStatusText"),
   fileName: document.querySelector("#fileName"),
+  syncModeField: document.querySelector("#syncModeField"),
+  syncMode: document.querySelector("#syncMode"),
   syncDelayPolls: document.querySelector("#syncDelayPolls"),
   syncSkipPolls: document.querySelector("#syncSkipPolls"),
   currentFrame: document.querySelector("#currentFrame"),
@@ -1047,6 +1049,7 @@ function loadTasFromParseResult(fileName, parseResult) {
   state.tas.frames = frames;
   state.tas.masks = validation.masks;
   state.tas.syncMode = parseResult?.syncMode === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  elements.syncMode.value = state.tas.syncMode;
   state.tas.syncDelayPolls = 0;
   state.tas.syncSkipPolls = 0;
   elements.syncDelayPolls.value = "0";
@@ -1104,7 +1107,7 @@ function loadedTasLogMessage(fileName, parseResult, validation) {
 
 function loadedTasStatusMessage(parseResult, validation) {
   if (parseResult?.format === "r08") {
-    return `Ready · R08 · ${validation.frameCount} record${validation.frameCount === 1 ? "" : "s"} · latch windows`;
+    return `Ready · R08 · ${validation.frameCount} record${validation.frameCount === 1 ? "" : "s"}`;
   }
 
   if (parseResult?.format === "raw-mask" || parseResult?.format === "raw-mask-v2") {
@@ -1767,8 +1770,13 @@ function updatePlaybackInfo() {
       ? `${current} / ${total} played, ${state.tas.streamedFrames} sent`
       : `${current} / ${total} frames`;
   const statusMessage = playbackStatusMessage();
-  elements.playbackStatus.textContent = statusMessage || playbackLabel();
+  elements.playbackStatusText.textContent = statusMessage || playbackLabel();
   elements.fileName.textContent = state.tas.fileName;
+  elements.syncModeField.classList.toggle(
+    "hidden",
+    state.tas.fileFormat !== "r08" || !state.tas.validation?.valid,
+  );
+  elements.syncMode.value = state.tas.syncMode;
   elements.currentFrame.textContent =
     state.tas.status === "invalid"
       ? state.tas.hardwareMessage
@@ -1786,6 +1794,7 @@ function updatePlaybackInfo() {
   );
   elements.syncDelayPolls.disabled = syncControlsDisabled;
   elements.syncSkipPolls.disabled = syncControlsDisabled;
+  elements.syncMode.disabled = syncControlsDisabled;
 }
 
 function formatTasFrameInput(frame) {
@@ -1824,6 +1833,7 @@ function bindPlayback() {
   elements.playButton.addEventListener("click", playTas);
   elements.pauseButton.addEventListener("click", pauseTas);
   elements.stopButton.addEventListener("click", stopPlayback);
+  elements.syncMode.addEventListener("change", handleSyncModeChange);
   elements.syncDelayPolls.addEventListener("change", handleSyncDelayChange);
   elements.syncDelayPolls.addEventListener("input", handleSyncDelayChange);
   elements.syncSkipPolls.addEventListener("change", handleSyncSkipChange);
@@ -1910,6 +1920,19 @@ function handleSyncDelayChange() {
   if (String(normalized) !== elements.syncDelayPolls.value) {
     elements.syncDelayPolls.value = String(normalized);
   }
+}
+
+function handleSyncModeChange() {
+  if (state.tas.fileFormat !== "r08") {
+    elements.syncMode.value = HARDWARE_TAS_SYNC_MODE;
+    return;
+  }
+
+  state.tas.syncMode = elements.syncMode.value === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  state.tas.hardwareFileKey = "";
+  state.tas.hardwareUploadPromise = null;
+  state.tas.hardwareMessage = loadedTasStatusMessage({ format: "r08" }, state.tas.validation);
+  updatePlaybackInfo();
 }
 
 function handleSyncSkipChange() {

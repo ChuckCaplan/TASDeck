@@ -84,9 +84,9 @@
     if (extension === ".r08") {
       return parseResult(parseR08Bytes(normalizedBytes), {
         format: "r08",
-        label: "R08 two-controller latch stream",
+        label: "R08 two-controller stream",
         fileName,
-        syncMode: "latch",
+        syncMode: HARDWARE_TAS_SYNC_MODE,
       });
     }
 

@@ -784,6 +784,35 @@ h2 {
   font-weight: 900;
 }
 
+.playback-status-value {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sync-mode-control {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.sync-mode-control.hidden {
+  display: none;
+}
+
+.sync-mode-select {
+  width: 132px;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 2px 3px;
+  color: var(--ink);
+  background: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
 .current-frame {
   margin-top: 12px;
   border: 1px solid var(--line);

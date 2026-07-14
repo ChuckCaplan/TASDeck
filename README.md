@@ -40,9 +40,9 @@ Press `Connect` in the web app to open the Arduino USB bridge.
 
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
 port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES.
-The file format selects the synchronization behavior automatically: `.tdmask` advances after
-completed controller reads, while `.r08` advances by accepted latch windows. The event log can
-capture firmware traces for diagnosing playback alignment and hardware timing.
+`.tdmask` advances after completed controller reads. `.r08` defaults to the same poll mode and
+exposes a Sync Mode picker for choosing accepted-latch advancement when a replay requires it. The
+event log can capture firmware traces for diagnosing playback alignment and hardware timing.
 
 Keyboard input uses common NES emulator mapping:
 
