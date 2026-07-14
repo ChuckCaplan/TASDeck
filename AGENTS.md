@@ -76,9 +76,11 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `apps/web/tests/expand-tdmask-from-hardware-trace.test.js`: Hardware-trace expansion tests.
 - `apps/web/tests/ui/*.spec.js`: Playwright UI regression tests.
 - `playwright.config.js`: Playwright web-server and browser test configuration.
-- `docs/hardware-tas-workflow.md`: FM2-to-`.tdmask` hardware playback workflow.
+- `docs/hardware-tas-workflow.md`: FM2/BK2-to-`.tdmask` hardware playback workflow.
 - `scripts/convert-fm2-to-tasdeck-mask.sh`: FCEUX wrapper for producing `.tdmask` files.
 - `scripts/fceux-export-tasdeck-mask.lua`: FCEUX Lua exporter for lag-stripped mask streams.
+- `scripts/convert-bk2-to-tasdeck-mask.sh`: Git Bash BizHawk BK2 converter for Windows.
+- `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
   continuous hardware trace, the sibling exporter trace, and the source FM2.
 - `firmware/uno_r4_wifi/uno_r4_wifi.ino`: Arduino UNO R4 WiFi serial bridge sketch.
@@ -267,7 +269,8 @@ hardware-flow changes:
 
 ## Current Limitations
 
-- The web UI does not accept raw FM2 files; convert the FM2 plus its matching ROM to `.tdmask` first.
+- The web UI does not accept raw FM2 or BK2 files; convert the movie plus its
+  matching ROM to `.tdmask` first.
 - Hardware TAS timing depends on the game latching the controller in a short burst once per frame
   and lagging on the same frames as the emulator. Games whose controller reads within one frame are
   spread wider than the latch window, or that intentionally use different values for reads within

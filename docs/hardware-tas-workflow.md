@@ -36,8 +36,8 @@ currently specific to TASDeck.
 
 ## Generate A Stream
 
-Use the same ROM targeted by the FM2 movie. The converter locates FCEUX through `FCEUX_BIN`, on
-`PATH`, or at `/opt/homebrew/bin/fceux`:
+Use the same ROM targeted by the movie. On macOS, the FM2 converter locates FCEUX through
+`FCEUX_BIN`, on `PATH`, or at `/opt/homebrew/bin/fceux`:
 
 ```sh
 scripts/convert-fm2-to-tasdeck-mask.sh \
@@ -46,11 +46,27 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
   "movie.tdmask"
 ```
 
-The output path is optional. The converter also creates `<output>.trace.csv`, with one row per
-completed emulator poll. Rows include the movie frame, poll and strobe indices, active port,
-controller masks, observed controller byte when available, and mismatch counters. The `.tdmask`
-contains one mask pair per polled movie frame even when the CSV contains several polls for that
-frame.
+On Windows, use the BizHawk converter for an NES `.bk2` movie. Put `EmuHawk.exe` on `PATH` and run it
+from Git Bash:
+
+```sh
+scripts/convert-bk2-to-tasdeck-mask.sh \
+  "movie.bk2" \
+  "game.nes" \
+  "movie.tdmask"
+```
+
+BizHawk can be overridden when needed, for example with
+`BIZHAWK_BIN=/c/BizHawk/EmuHawk.exe`.
+
+The output path is optional. The converter also accepts the movie and ROM arguments in the opposite
+order. For `.bk2`, it restarts the movie at frame 0 in BizHawk, writes both controller masks for each
+non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings required by the
+movie in the BizHawk installation used for the export.
+
+Each converter also creates `<output>.trace.csv`. The FCEUX trace has one row per completed emulator
+poll and includes poll-level diagnostic fields. The BizHawk trace maps each emitted mask pair to its
+source BK2 movie frame.
 
 The ROM, movie, and initial console state must match. A different ROM revision, header, save state,
 or startup path can change lag and controller polling enough to desynchronize the run.
