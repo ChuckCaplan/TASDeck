@@ -16,7 +16,7 @@ with the controller ports wired directly to the Arduino's pins.
 
 ![Main TASDeck browser interface with controller, playback controls, connection status, and event log](docs/images/TASDeck.png)
 
-### Arduino UNO R4 WiFi (Two Controllers Connected)
+### Arduino UNO R4 WiFi (Two Controller Ports Connected)
 
 <img src="docs/images/arduino.jpg" alt="Arduino UNO R4 WiFi wired to the NES controller ports for TASDeck" width="600">
 
