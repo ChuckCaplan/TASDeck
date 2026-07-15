@@ -16,10 +16,6 @@ with the controller ports wired directly to the Arduino's pins.
 
 ![Main TASDeck browser interface with controller, playback controls, connection status, and event log](docs/images/TASDeck.png)
 
-### iPhone Landscape Layout
-
-![TASDeck touch controller in Chrome on an iPhone in landscape orientation](docs/images/iPhone.png)
-
 ### Arduino UNO R4 WiFi (Two Controllers Connected)
 
 <img src="docs/images/arduino.jpg" alt="Arduino UNO R4 WiFi wired to the NES controller ports for TASDeck" width="600">
