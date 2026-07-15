@@ -20,7 +20,7 @@ with the controller ports wired directly to the Arduino's pins.
 
 ![TASDeck touch controller in Chrome on an iPhone in landscape orientation](docs/images/iPhone.png)
 
-### Arduino UNO R4 WiFi
+### Arduino UNO R4 WiFi (Two Controllers Connected)
 
 <img src="docs/images/arduino.jpg" alt="Arduino UNO R4 WiFi wired to the NES controller ports for TASDeck" width="600">
 
@@ -39,9 +39,10 @@ Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on
 Press `Connect` in the web app to open the Arduino USB bridge.
 
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
-port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES.
-`.tdmask` advances after completed controller reads. `.r08` defaults to the same poll mode and
-exposes a Sync Mode picker for choosing accepted-latch advancement when a replay requires it. The
+port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. A
+`.tdmask` is generated from an `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movie using the converter
+scripts in `scripts/` (see the [Installation guide](INSTALL.md)); an `.r08` can be played
+directly with no conversion. The
 event log can capture firmware traces for diagnosing playback alignment and hardware timing.
 
 Keyboard input uses common NES emulator mapping:
@@ -81,19 +82,22 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 
 The following runs have completed successfully on real NES hardware with TASDeck:
 
-| Game and run | Time | Link | Hardware |
-| --- | ---: | --- | --- |
-| Super Mario Bros. — "warps" by HappyLee | 04:57.31 | [1715M](https://tasvideos.org/1715M) | EverDrive N8 Pro |
-| Super Mario Bros. — "warpless" by HappyLee & Mars608 | 18:36.78 | [3728M](https://tasvideos.org/3728M) | EverDrive N8 Pro |
-| Super Mario Bros. — "Playaround" | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | EverDrive N8 Pro |
-| Super Mario Bros. 2 (FDS / Japan) — "warps, Mario" by HappyLee | 08:04.83 | [3348M](https://tasvideos.org/3348M) | EverDrive N8 Pro |
-| Super Mario Bros. 2 — "warps" by Aglar & andrewg | 07:41.16 | [1724M](https://tasvideos.org/1724M) | EverDrive N8 Pro |
-| Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa | 10:24.338 | [3922M](https://tasvideos.org/3922M) | Real cartridge |
-| Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | EverDrive N8 Pro |
-| Tetris — "maximum score" by r57shell & Archanfel | 02:53.13 | [4853M](https://tasvideos.org/4853M) | EverDrive N8 Pro |
-| The Legend of Zelda — Baxter & jprofit22 | 22:38.13 | [1685M](https://tasvideos.org/1685M) | EverDrive N8 Pro |
-| Ghosts 'n Goblins - Arc & Koh1fds | 08:07.55 | [3173M](https://tasvideos.org/3173M) | EverDrive N8 Pro |
-| Disney's The Little Mermaid - McBobX | 06:41.32 | [3298M](https://tasvideos.org/3298M) | EverDrive N8 Pro |
+| Game and run | Time | Link | Original Format | Hardware |
+| --- | ---: | --- | --- | --- |
+| Super Mario Bros. — "warps" by HappyLee | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro |
+| Super Mario Bros. — "warpless" by HappyLee & Mars608 | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro |
+| Super Mario Bros. — "Playaround" | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro |
+| Super Mario Bros. — "maximum score" |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.r08` | EverDrive N8 Pro |
+| Super Mario Bros. 2 (FDS / Japan) — "warps, Mario" by HappyLee | 08:04.83 | [3348M](https://tasvideos.org/3348M) | `.fm2` | EverDrive N8 Pro |
+| Super Mario Bros. 2 — "warps" by Aglar & andrewg | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro |
+| Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
+| Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | EverDrive N8 Pro |
+| Tetris — "maximum score" by r57shell & Archanfel | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
+| Pac-Man (Tengen) |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.bk2` | EverDrive N8 Pro |
+| Donkey Kong |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.bk2`, `.r08` | EverDrive N8 Pro |
+| The Legend of Zelda — Baxter & jprofit22 | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
+| Ghosts 'n Goblins - Arc & Koh1fds | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
+| Disney's The Little Mermaid - McBobX | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
 
 ## Background
 

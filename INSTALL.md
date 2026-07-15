@@ -6,8 +6,11 @@ is an Arduino UNO R4 WiFi, but TASDeck uses it as a USB serial board only. The A
 not used by this project.
 
 Following the full workflow lets a matching NES TAS movie drive a real NES through the console
-controller ports. With the correct ROM, FM2 movie, power-on state, and cartridge or EverDrive setup,
+controller ports. With the correct ROM, TAS movie, power-on state, and cartridge or EverDrive setup,
 this is the path for running one-controller and two-controller TAS movies on real NES hardware.
+
+TASDeck plays a raw `.r08` replay natively, and plays `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movies
+after converting them to a `.tdmask` byte stream with the included converter scripts.
 
 ## Hardware
 
@@ -18,7 +21,8 @@ Required:
 - USB cable for the Arduino.
 - Computer running TASDeck.
 - One or two NES controller extension cords, depending on whether you want port 2 support.
-- `.fm2` TAS movie file, often times downloaded from [TASVideos](https://tasvideos.org/)
+- A TAS input file: a raw `.r08` replay, or an `.fm2` (FCEUX) or `.bk2` (BizHawk) movie, often
+  downloaded from [TASVideos](https://tasvideos.org/)
 - Legally obtained NES ROM that matches the TAS movie.
 - Matching NES cartridge or Everdrive N8 Pro to play the ROM on a real NES.
 
@@ -174,10 +178,12 @@ port at a time.
 
 ## Prepare A TAS File
 
-Hardware playback accepts a raw `.r08` replay or a `.tdmask` byte stream. An R08 can be loaded
-directly. To use an FM2 movie, generate TD2P from the ROM and matching movie with FCEUX. The current
-exporter writes a versioned two-controller stream; port 2 bytes are zero when the movie has no
-player-2 input.
+Hardware playback accepts a raw `.r08` replay or a `.tdmask` byte stream. An `.r08` is loaded
+directly with no conversion. An `.fm2` (FCEUX) or `.bk2` (BizHawk) movie is first converted to a
+`.tdmask` with the converter scripts below. The exporter writes a versioned two-controller stream;
+port 2 bytes are zero when the movie has no player-2 input.
+
+To convert an FM2 movie, generate the TD2P stream from the ROM and matching movie with FCEUX:
 
 ```sh
 scripts/convert-fm2-to-tasdeck-mask.sh \
@@ -258,10 +264,11 @@ log `blocked` entries rather than silently dropping them.
 
 ## Upload And Run The TAS
 
-1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the FM2 movie.
+1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the TAS movie.
 2. Press `Connect` if the Arduino bridge is not already connected.
-3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. TASDeck automatically selects
-   latch-window synchronization for `.r08` and completed-read synchronization for `.tdmask`.
+3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. Both default to completed-read
+   (poll) synchronization. `.tdmask` is locked to poll mode, while `.r08` also exposes a `Sync Mode`
+   picker so you can switch it to accepted-latch mode if a replay needs it.
 4. Set `Start delay` or `Skip first` only if the run needs poll alignment tuning. `Start delay`
    waits after the console sync point before releasing the first poll. `Skip first` discards masks
    from the front of the stream before arming. Ideally this should not be needed.
@@ -282,7 +289,8 @@ During hardware TAS playback, the Arduino advances through the byte stream from 
 holds each frame byte across repeated controller polls. Browser timers do not set the real-console
 timing.
 
-Your `.r08` replay or `.tdmask` converted from FM2 should now be playing on your real NES.
+Your `.r08` replay, or your `.tdmask` converted from an FM2 or BK2 movie, should now be playing on
+your real NES.
 
 ## Troubleshooting
 
@@ -294,7 +302,7 @@ Your `.r08` replay or `.tdmask` converted from FM2 should now be playing on your
   table.
 - If no port 2 controller input is detected, re-check `GND`, `D8`, and `D7`. Port 2 does not need a
   separate latch connection; it uses the shared latch signal received on `D2` through port 1.
-- If the TAS desyncs, confirm the ROM identity, FM2 movie, power-on state, and EverDrive or cartridge
+- If the TAS desyncs, confirm the ROM identity, TAS movie, power-on state, and EverDrive or cartridge
   startup behavior match the movie exactly. Use `Trace` in the NES event log for a recent firmware
   trace snapshot, and use `Start delay` and `Skip first` to diagnose poll alignment. For a continuous
   run trace, start with
