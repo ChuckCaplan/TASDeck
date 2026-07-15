@@ -23,7 +23,7 @@ TasPlaybackResult NesTasPlayback::begin(uint32_t frameCount, TasSyncMode syncMod
     frameCount == 0 ||
     portCount == 0 ||
     portCount > kNesControllerPortCount ||
-    (syncMode != TasSyncMode::Poll && syncMode != TasSyncMode::Latch) ||
+    (syncMode != TasSyncMode::Poll && syncMode != TasSyncMode::Latch && syncMode != TasSyncMode::Strobe) ||
     latchWindowMicros < kTasMinLatchWindowMicros ||
     latchWindowMicros > kTasMaxLatchWindowMicros) {
     setError(TasPlaybackResult::Invalid);
@@ -141,6 +141,44 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
     return TasPlaybackResult::Inactive;
   }
 
+  if (syncMode_ == TasSyncMode::Strobe) {
+    // Per-strobe playback intentionally has no window or completed-read
+    // accounting. Every accepted latch is a playback event, even when two
+    // edges share a timestamp or the preceding read was bare or torn.
+    hasLatched_ = true;
+    lastLatchMicros_ = nowMicros;
+
+    TasPlaybackResult result = TasPlaybackResult::Waiting;
+    if (!started_) {
+      if (!startRequested_ || !readyToStart()) {
+        lastEdgeKind_ = TasEdgeKind::NotStartedWait;
+        return result;
+      }
+
+      if (startDelayRemaining_ > 0) {
+        startDelayRemaining_ -= 1;
+        lastEdgeKind_ = TasEdgeKind::DelayWait;
+        return result;
+      }
+
+      started_ = true;
+      currentFrame_ = 0;
+      currentMasks_ = popFrame();
+      stageNextMask();
+      nextMasks = currentMasks_;
+      result = TasPlaybackResult::Ok;
+      lastEdgeKind_ = TasEdgeKind::Started;
+    } else {
+      result = advanceFrame(nextMasks);
+      lastEdgeKind_ = result == TasPlaybackResult::Ok
+        ? TasEdgeKind::AdvancedAtEdge
+        : TasEdgeKind::Ended;
+    }
+
+    lastWindowResult_ = result;
+    return result;
+  }
+
   // Signed comparison: the subtraction stays correct across micros()
   // wraparound, and a backwards time step — micros() read from a priority-0
   // ISR can transiently report +1 ms when it races the 1 kHz tick — becomes a
@@ -211,7 +249,7 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
 }
 
 bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
-  if (!active() || preAdvanced_) {
+  if (syncMode_ == TasSyncMode::Strobe || !active() || preAdvanced_) {
     return false;
   }
 
@@ -319,7 +357,7 @@ void NesTasPlayback::stageNextMask() {
 }
 
 void NesTasPlayback::notePollCompleted(uint8_t controllerPort) {
-  if (controllerPort == 0 || controllerPort > portCount_) {
+  if (syncMode_ == TasSyncMode::Strobe || controllerPort == 0 || controllerPort > portCount_) {
     return;
   }
 
@@ -338,7 +376,15 @@ bool NesTasPlayback::willAdvanceOnEdge() const {
   // holds the current mask, and a ready start or started, polled window serves
   // the staged mask. Reads one byte-sized field at a time so it is safe from
   // the latch ISR.
-  if (!active() || preAdvanced_) {
+  if (!active()) {
+    return false;
+  }
+
+  if (syncMode_ == TasSyncMode::Strobe) {
+    return started_ || (startRequested_ && readyToStart() && startDelayRemaining_ == 0);
+  }
+
+  if (preAdvanced_) {
     return false;
   }
 

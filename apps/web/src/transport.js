@@ -4,7 +4,7 @@
     (typeof module !== "undefined" && module.require ? module.require("./tas.js") : {});
   const TAS_SOURCE_PREFIX = "tas:";
   const HARDWARE_TAS_SYNC_MODE = tasApi.HARDWARE_TAS_SYNC_MODE || "poll";
-  const HARDWARE_TAS_SYNC_MODES = new Set(tasApi.HARDWARE_TAS_SYNC_MODES || ["poll", "latch"]);
+  const HARDWARE_TAS_SYNC_MODES = new Set(tasApi.HARDWARE_TAS_SYNC_MODES || ["poll", "latch", "strobe"]);
   const HARDWARE_TAS_MAX_START_DELAY_POLLS = tasApi.HARDWARE_TAS_MAX_START_DELAY_POLLS || 3600;
   const TAS_CONTROLLER_PORT_COUNT = tasApi.TAS_CONTROLLER_PORT_COUNT || 2;
   const HARDWARE_BUTTONS = new Set(["a", "b", "select", "start", "up", "down", "left", "right"]);

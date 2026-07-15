@@ -15,6 +15,7 @@ const {
   parseTasFileBytes,
   parseTasText,
   reverseByteBits,
+  HARDWARE_TAS_SYNC_MODES,
   TAS_CHUNK_FRAME_LIMIT,
   TWO_CONTROLLER_MASK_HEADER,
   TWO_CONTROLLER_MASK_MAGIC,
@@ -25,6 +26,10 @@ const {
   tasRunChecksum,
   validateTasFrames,
 } = require("../src/tas.js");
+
+test("exposes all hardware TAS synchronization modes", () => {
+  assert.deepEqual(HARDWARE_TAS_SYNC_MODES, ["poll", "latch", "strobe"]);
+});
 
 test("parses JSON frame arrays and normalizes aliases", () => {
   const frames = parseTas(

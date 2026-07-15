@@ -346,6 +346,10 @@ test("formats TAS serial commands from bridge messages", () => {
     "TAS_BEGIN 81 latch",
   );
   assert.equal(
+    bridge.commandForTasMessage({ type: "tas_begin", frameCount: 81, syncMode: "strobe", portCount: 2 }),
+    "TAS_BEGIN 81 strobe 2",
+  );
+  assert.equal(
     bridge.commandForTasMessage({
       type: "tas_begin",
       frameCount: 81,
@@ -637,7 +641,7 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
     stopped: false,
     paused: false,
     uploadEnded: true,
-    firmwareStatus: { trace_frozen: 0 },
+    firmwareStatus: { trace_frozen: 0, bare_strobes: 7, torn_strobes: 3 },
     traceStreamTask: null,
   };
   bridge.activeTasRun = run;
@@ -654,7 +658,7 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
   assert.match(contents, /sequence,timestampMicros,tasFrame/);
   assert.match(contents, /^0,100,0,2,16,8,01,00,01,8,ok,01,03(?:,.*)?$/m);
   assert.match(contents, /^2,300,2,6,48,8,80,00,80,8,ok,80,02(?:,.*)?$/m);
-  assert.match(contents, /# end: rows=3 gaps=0/);
+  assert.match(contents, /# end: rows=3 gaps=0 bare_strobes=7 torn_strobes=3/);
   await fsp.rm(logDir, { recursive: true, force: true });
 });
 
@@ -700,7 +704,7 @@ test("auto-saves frozen TAS trace rows and rearms firmware capture", async () =>
         if (trimmed === "TAS_TRACE_RESUME") {
           bridge.handleSerialBytes(
             Buffer.from(
-              "OK tas_trace_resume active=1 ready=1 started=1 complete=0 current=9 total=3 received=3 buffered=2 capacity=512 error=ok anomaly_count=0 anomaly_seq=0 anomaly_kind=0 trace_frozen=0\n",
+              "OK tas_trace_resume active=1 ready=1 started=1 complete=0 current=9 total=3 received=3 buffered=2 capacity=512 error=ok bare_strobes=5 torn_strobes=2 anomaly_count=0 anomaly_seq=0 anomaly_kind=0 trace_frozen=0\n",
             ),
           );
         }
@@ -739,6 +743,8 @@ test("auto-saves frozen TAS trace rows and rearms firmware capture", async () =>
       anomaly_count: 1,
       anomaly_seq: 10,
       anomaly_kind: 2,
+      bare_strobes: 5,
+      torn_strobes: 2,
       trace_frozen: 1,
     },
     "tas_status",
@@ -749,12 +755,16 @@ test("auto-saves frozen TAS trace rows and rearms firmware capture", async () =>
   assert.deepEqual(writes, ["TAS_TRACE 1\n", "TAS_TRACE 2 10\n", "TAS_TRACE_RESUME\n"]);
   assert.equal(run.firmwareStatus.trace_frozen, 0);
   assert.equal(run.firmwareStatus.anomaly_count, 0);
+  assert.equal(run.firmwareStatus.bare_strobes, 5);
+  assert.equal(run.firmwareStatus.torn_strobes, 2);
   const files = await fsp.readdir(path.join(logDir, "trace"));
   assert.equal(files.length, 1);
   assert.match(files[0], /_run\.trace$/);
   const saved = await fsp.readFile(path.join(logDir, "trace", files[0]), "utf8");
   assert.match(saved, /auto_trace_dump: 1\n/);
   assert.match(saved, /trigger_anomaly_seq: 10\n/);
+  assert.match(saved, /firmware_bare_strobes: 5\n/);
+  assert.match(saved, /firmware_torn_strobes: 2\n/);
   assert.match(saved, /sequence,timestampMicros,tasFrame,latchCount,clockCount/);
   assert.match(saved, /10,100,8,2,16,8,01,00,01,8,ok,01,12/);
 
@@ -875,6 +885,51 @@ test("bridge-owned TAS arm preserves latch synchronization", async () => {
 
   await bridge.handleClientTasMessage(client, { type: "tas_arm" });
   assert.equal(writes[0], "TAS_BEGIN 3 latch\n");
+});
+
+test("bridge-owned TAS arm preserves strobe synchronization and counters", async () => {
+  const bridge = new SerialBridge();
+  const writes = [];
+  const client = {
+    heldButtons: new Set(),
+    socket: { destroyed: false, write() {} },
+  };
+  const masks = [0x01, 0x00, 0x80];
+
+  bridge.handle = {
+    async write(command) {
+      writes.push(command);
+      const trimmed = command.trim();
+      if (trimmed === "TAS_BEGIN 3 strobe") {
+        bridge.handleSerialBytes(Buffer.from("OK tas_begin active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=512 ports=1 sync=strobe bare_strobes=0 torn_strobes=0 error=ok\n"));
+      } else if (trimmed.startsWith("TAS_CHUNK")) {
+        bridge.handleSerialBytes(Buffer.from("OK tas_chunk active=1 ready=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=strobe error=ok\n"));
+      } else if (trimmed === "TAS_END") {
+        bridge.handleSerialBytes(Buffer.from("OK tas_end active=1 ready=1 receiving_complete=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=strobe bare_strobes=4 torn_strobes=2 error=ok\n"));
+      }
+    },
+  };
+  bridge.portPath = "/dev/cu.usbmodem-test";
+  bridge.serialReady = true;
+
+  bridge.handleClientTasMessage(client, {
+    type: "tas_upload",
+    fileName: "run.r08",
+    frameCount: masks.length,
+    inputFrameCount: 2,
+    syncMode: "strobe",
+    masks,
+    checksum: tasRunChecksum(masks),
+  });
+
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.equal(bridge.activeTasRun.syncMode, "strobe");
+  assert.equal(writes[0], "TAS_BEGIN 3 strobe\n");
+
+  const payload = bridge.tasStatusPayload("tas_status", bridge.activeTasRun);
+  assert.equal(payload.sync, "strobe");
+  assert.equal(payload.bare_strobes, 4);
+  assert.equal(payload.torn_strobes, 2);
 });
 
 test("bridge-owned TAS upload streams two-controller masks", async () => {

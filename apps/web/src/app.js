@@ -1,6 +1,7 @@
 const {
   HARDWARE_TAS_MAX_START_DELAY_POLLS,
   HARDWARE_TAS_SYNC_MODE,
+  HARDWARE_TAS_SYNC_MODES,
   normalizeTasMasks,
   parseTasFileBytes,
   tasMaskHasInput,
@@ -24,7 +25,7 @@ const TAS_TRACE_EXPECTED_CLOCK_DELTA = 8;
 const TAS_TRACE_EXPECTED_LATCH_DELTA = 4;
 const TAS_TRACE_ANOMALY_LOG_LIMIT = 5;
 const HARDWARE_TAS_PAUSE_MESSAGE =
-  "Hardware TAS playback already buffered on the Arduino will continue. This only pauses/stops sending more polls from the bridge.";
+  "Hardware TAS playback already buffered on the Arduino will continue. This only pauses/stops sending more TAS chunks from the bridge.";
 const KEYBOARD_BUTTONS = new Map([
   ["ArrowUp", "up"],
   ["ArrowDown", "down"],
@@ -91,7 +92,9 @@ const elements = {
   syncModeField: document.querySelector("#syncModeField"),
   syncMode: document.querySelector("#syncMode"),
   syncDelayPolls: document.querySelector("#syncDelayPolls"),
+  syncDelayUnit: document.querySelector("#syncDelayUnit"),
   syncSkipPolls: document.querySelector("#syncSkipPolls"),
+  syncSkipUnit: document.querySelector("#syncSkipUnit"),
   currentFrame: document.querySelector("#currentFrame"),
   dumpTrace: document.querySelector("#dumpTrace"),
   eventLog: document.querySelector("#eventLog"),
@@ -1048,7 +1051,7 @@ function loadTasFromParseResult(fileName, parseResult) {
   state.tas.fileName = fileName;
   state.tas.frames = frames;
   state.tas.masks = validation.masks;
-  state.tas.syncMode = parseResult?.syncMode === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  state.tas.syncMode = normalizeHardwareTasSyncMode(parseResult?.syncMode);
   elements.syncMode.value = state.tas.syncMode;
   state.tas.syncDelayPolls = 0;
   state.tas.syncSkipPolls = 0;
@@ -1335,7 +1338,7 @@ async function prepareHardwareTas(runId) {
 function startArmedHardwareTas() {
   const runId = state.tas.hardwareRunId;
   state.tas.status = "streaming";
-  state.tas.hardwareMessage = "Starting Arduino TAS playback at the next NES latch window.";
+  state.tas.hardwareMessage = `Starting Arduino TAS playback at the next ${hardwareTasSyncPoint()}.`;
   updatePlaybackInfo();
 
   continueHardwareTas(runId).catch((error) => {
@@ -1372,7 +1375,7 @@ async function continueHardwareTas(runId) {
 function applyHardwareArmedState(status) {
   state.tas.status = "armed";
   state.tas.hardwareMessage =
-    "Arduino armed. Press Start at the exact console sync point; frame 0 will be applied at the next NES latch window.";
+    `Arduino armed. Press Start at the exact console sync point; frame 0 will be applied at the next ${hardwareTasSyncPoint()}.`;
   updateHardwareStatusFromFirmware(status, { quiet: true });
 }
 
@@ -1449,14 +1452,14 @@ function updateHardwareStatusFromFirmware(status, options = {}) {
     state.tas.hardwareMessage = "TAS uploaded to the bridge. Manual controls stay active until Play arms the Arduino.";
   } else if (bridgeState === "arming") {
     state.tas.status = "arming";
-    state.tas.hardwareMessage = `Bridge is prebuffering the Arduino: ${received} / ${total} frames sent.`;
+    state.tas.hardwareMessage = `Bridge is prebuffering the Arduino: ${received} / ${total} ${hardwareTasRecordUnit()} sent.`;
   } else if (bridgeState === "armed") {
     state.tas.status = "armed";
     state.tas.hardwareMessage =
-      "Arduino armed. Press Start at the exact console sync point; frame 0 will be applied at the next NES latch window.";
+      `Arduino armed. Press Start at the exact console sync point; frame 0 will be applied at the next ${hardwareTasSyncPoint()}.`;
   } else if (bridgeState === "streaming") {
     state.tas.status = "playing";
-    state.tas.hardwareMessage = `Bridge streaming to Arduino: buffer ${buffered}${capacity ? ` / ${capacity}` : ""} frames; ${received} / ${total} sent.`;
+    state.tas.hardwareMessage = `Bridge streaming to Arduino: buffer ${buffered}${capacity ? ` / ${capacity}` : ""} ${hardwareTasRecordUnit()}; ${received} / ${total} sent.`;
   } else if (bridgeState === "paused") {
     state.tas.status = "paused";
     state.tas.hardwareMessage = HARDWARE_TAS_PAUSE_MESSAGE;
@@ -1464,7 +1467,7 @@ function updateHardwareStatusFromFirmware(status, options = {}) {
     state.tas.status = stoppedStatusForLoadedTas();
     state.tas.hardwareMessage = HARDWARE_TAS_PAUSE_MESSAGE;
   } else if (state.tas.status === "streaming" || state.tas.status === "playing") {
-    state.tas.hardwareMessage = `Arduino buffer ${buffered}${capacity ? ` / ${capacity}` : ""} frames; streamed ${state.tas.streamedFrames} / ${state.tas.frames.length}.`;
+    state.tas.hardwareMessage = `Arduino buffer ${buffered}${capacity ? ` / ${capacity}` : ""} ${hardwareTasRecordUnit()}; streamed ${state.tas.streamedFrames} / ${state.tas.frames.length}.`;
   }
 
   updatePlaybackInfo();
@@ -1477,7 +1480,7 @@ function handleHardwareTrace(message) {
   window.__lastTasTraceAnomalies = anomalies;
   writeLog({
     type: "playback",
-    message: `TAS trace captured ${rows.length} row${rows.length === 1 ? "" : "s"} from poll ${message.start ?? "-"} to ${message.next ?? "-"}`,
+    message: `TAS trace captured ${rows.length} row${rows.length === 1 ? "" : "s"} from sequence ${message.start ?? "-"} to ${message.next ?? "-"}`,
     sentAt: new Date().toISOString(),
   });
 
@@ -1539,22 +1542,28 @@ function findTasTraceAnomalies(rows) {
     const globalPrevious = rows[index - 1] || null;
     const port = traceNumber(current.port) || 1;
     const previous = previousByPort.get(port) || null;
+    const diag = traceNumber(current.diag);
+    const isStrobeEdgeRow = diag !== null && (diag & 0x20) !== 0;
     const sequenceDelta = globalPrevious ? traceDelta(globalPrevious.sequence, current.sequence) : null;
-    const latchDelta = previous ? traceDelta(previous.latchCount, current.latchCount) : null;
-    const clockDelta = previous ? traceDelta(previous.clockCount, current.clockCount) : null;
-    const clocksSinceLatch = traceNumber(current.clocksSinceLatch);
+    const latchDelta = !isStrobeEdgeRow && previous ? traceDelta(previous.latchCount, current.latchCount) : null;
+    const clockDelta = !isStrobeEdgeRow && previous ? traceDelta(previous.clockCount, current.clockCount) : null;
+    const clocksSinceLatch = isStrobeEdgeRow ? null : traceNumber(current.clocksSinceLatch);
     const polledMask = traceNumber(current.polledMask);
     const clockedMask = traceNumber(current.clockedMask);
     const clockedMaskMismatch =
-      polledMask !== null && clockedMask !== null && polledMask !== clockedMask;
+      !isStrobeEdgeRow && polledMask !== null && clockedMask !== null && polledMask !== clockedMask;
     const result = String(current.result || "unknown").toLowerCase();
+    const edgeKind = diag === null ? null : (diag >> 1) & 0x07;
+    const resultMismatch = isStrobeEdgeRow
+      ? !strobeEdgeResultMatchesKind(edgeKind, result)
+      : result !== "ok";
     const hasAnomaly =
       (sequenceDelta !== null && sequenceDelta !== 1) ||
       (clockDelta !== null && clockDelta !== TAS_TRACE_EXPECTED_CLOCK_DELTA) ||
       (latchDelta !== null && (latchDelta > TAS_TRACE_EXPECTED_LATCH_DELTA || latchDelta < 0)) ||
       (clocksSinceLatch !== null && clocksSinceLatch !== TAS_TRACE_EXPECTED_CLOCK_DELTA) ||
       clockedMaskMismatch ||
-      result !== "ok";
+      resultMismatch;
 
     if (hasAnomaly) {
       anomalies.push({
@@ -1568,7 +1577,10 @@ function findTasTraceAnomalies(rows) {
         polledMask,
         clockedMask,
         clockedMaskMismatch,
+        edgeKind,
+        isStrobeEdgeRow,
         result,
+        resultMismatch,
       });
     }
 
@@ -1576,6 +1588,24 @@ function findTasTraceAnomalies(rows) {
   }
 
   return anomalies;
+}
+
+function strobeEdgeResultMatchesKind(edgeKind, result) {
+  if (result === "underrun") {
+    return false;
+  }
+
+  if (edgeKind === 6) {
+    return result === "waiting";
+  }
+  if (edgeKind === 2 || edgeKind === 4) {
+    return result === "ok";
+  }
+  if (edgeKind === 7) {
+    return result === "complete";
+  }
+
+  return false;
 }
 
 function formatSignedInteger(value) {
@@ -1610,7 +1640,7 @@ function formatTraceAnomaly(anomaly) {
     parts.push(`line=${formatMask(anomaly.clockedMask)}`);
     parts.push(`mask=${formatMask(anomaly.polledMask)}`);
   }
-  if (anomaly.result !== "ok") {
+  if (anomaly.resultMismatch) {
     parts.push(`result=${anomaly.result}`);
   }
 
@@ -1768,7 +1798,7 @@ function updatePlaybackInfo() {
   elements.progressText.textContent =
     state.tas.streamedFrames > 0
       ? `${current} / ${total} played, ${state.tas.streamedFrames} sent`
-      : `${current} / ${total} frames`;
+      : `${current} / ${total} ${hardwareTasRecordUnit()}`;
   const statusMessage = playbackStatusMessage();
   elements.playbackStatusText.textContent = statusMessage || playbackLabel();
   elements.fileName.textContent = state.tas.fileName;
@@ -1777,6 +1807,8 @@ function updatePlaybackInfo() {
     state.tas.fileFormat !== "r08" || !state.tas.validation?.valid,
   );
   elements.syncMode.value = state.tas.syncMode;
+  elements.syncDelayUnit.textContent = state.tas.syncMode === "strobe" ? "strobes" : "windows";
+  elements.syncSkipUnit.textContent = state.tas.syncMode === "strobe" ? "records" : "frames";
   elements.currentFrame.textContent =
     state.tas.status === "invalid"
       ? state.tas.hardwareMessage
@@ -1928,11 +1960,23 @@ function handleSyncModeChange() {
     return;
   }
 
-  state.tas.syncMode = elements.syncMode.value === "latch" ? "latch" : HARDWARE_TAS_SYNC_MODE;
+  state.tas.syncMode = normalizeHardwareTasSyncMode(elements.syncMode.value);
   state.tas.hardwareFileKey = "";
   state.tas.hardwareUploadPromise = null;
   state.tas.hardwareMessage = loadedTasStatusMessage({ format: "r08" }, state.tas.validation);
   updatePlaybackInfo();
+}
+
+function normalizeHardwareTasSyncMode(value) {
+  return HARDWARE_TAS_SYNC_MODES.includes(value) ? value : HARDWARE_TAS_SYNC_MODE;
+}
+
+function hardwareTasSyncPoint() {
+  return state.tas.syncMode === "strobe" ? "latch strobe" : "NES latch window";
+}
+
+function hardwareTasRecordUnit() {
+  return state.tas.fileFormat === "r08" ? "records" : "frames";
 }
 
 function handleSyncSkipChange() {

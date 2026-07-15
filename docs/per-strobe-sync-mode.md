@@ -1,6 +1,6 @@
 # Per-strobe sync mode specification
 
-Status: FROZEN — implementation-ready per external review sign-off, v1. Not yet implemented.
+Status: FROZEN v1 — rollout phase 1 implemented; console validation and the later default flip remain pending.
 Date: 2026-07-15 (revised same day: resolved four implementation-blocking ambiguities from external
 review — completion edge accounting, edge-row marking, trace-capture throughput, strobe counter
 semantics — plus start-delay staging text, effective refill throughput, and mode-aware UI copy.

@@ -54,6 +54,7 @@ enum class TasSyncMode {
   Unknown,
   Poll,
   Latch,
+  Strobe,
 };
 
 struct TasFrameMasks {

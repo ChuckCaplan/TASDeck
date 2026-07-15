@@ -29,7 +29,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v46";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v47";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -54,7 +54,7 @@ constexpr uint16_t kTasTraceCapacity = 512;
 constexpr float kTasServiceTimerHz = 1000.0f;
 constexpr uint8_t kTasServiceTimerPriority = 12;
 
-// After an anomaly, keep recording this many completed polls of context and
+// After an anomaly, keep recording this many trace rows of context and
 // then freeze the trace ring so the event survives until the next capture,
 // no matter how much later the Trace button is pressed. With two active ports,
 // rows are recorded per port read, so the time represented by 240 rows depends
@@ -92,7 +92,8 @@ struct TasTraceEntry {
   uint8_t result = static_cast<uint8_t>(TasPlaybackResult::Ok);
   // bit 0: data line was LOW at the rising strobe edge of this poll's train
   // (i.e. the served mask's A bit was already on the wire before the console
-  // could sample it). bits 1-3: TasEdgeKind of the window-opening edge.
+  // could sample it). bits 1-3: TasEdgeKind of the window-opening edge. Bit 4
+  // marks an anomaly, and bit 5 identifies a strobe-edge row.
   uint8_t diag = 0;
   // Rows are per-port: every field above reflects the port that completed the
   // poll, so two-port runs correlate ports by sequence/timestamp instead of
@@ -116,6 +117,10 @@ volatile unsigned long controller2ClockCount = 0;
 volatile uint32_t controllerLastLatchMicros = 0;
 volatile uint8_t controllerClocksSinceLatch = 0;
 volatile uint8_t controller2ClocksSinceLatch = 0;
+volatile uint8_t controllerCompletedClockedMask = 0;
+volatile uint8_t controller2CompletedClockedMask = 0;
+volatile bool controllerCompletedPollSinceLatch = false;
+volatile bool controller2CompletedPollSinceLatch = false;
 volatile uint8_t controllerDiagLineLowAtLatch = 0;
 volatile uint8_t controller2DiagLineLowAtLatch = 0;
 volatile uint8_t controllerDiagWindowKind = 0;
@@ -132,11 +137,14 @@ volatile uint32_t tasAnomalyCount = 0;
 volatile uint32_t tasAnomalySequence = 0;
 volatile uint8_t tasAnomalyKind = 0;
 volatile uint8_t tasAnomalyPendingMark = 0;
+volatile uint32_t tasBareStrobeCount = 0;
+volatile uint32_t tasTornStrobeCount = 0;
 NesTasPlayback tasPlayback;
 FspTimer tasServiceTimer;
 
-// The trace writer runs in the NES clock ISR while trace pages are read from
-// the main loop. A timestamp of zero marks a slot while it is being replaced;
+// Each run has one trace-writer context: the clock ISRs in windowed modes or
+// the latch ISR in strobe mode. Trace pages are read from the main loop. A
+// timestamp of zero marks a slot while it is being replaced;
 // the real timestamp is published last. This lets the loop retry a preempted
 // copy without ever masking the latency-sensitive NES pin interrupts.
 inline void tasTraceCompilerBarrier() {
@@ -192,6 +200,7 @@ void applyButtonCommandToOutput(const Command& command);
 void resetTasTrace();
 void resumeTasTrace();
 void noteTasAnomaly(uint8_t kind);
+void recordTasTraceEntry(const TasTraceEntry& source);
 void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask);
 void restoreDiagnosticForcedMask();
 void raiseNesPinInterruptPriority();
@@ -254,7 +263,7 @@ void printStartupBanner() {
   Serial.println(kLatchEdgeMode);
   Serial.print("NES clock shift edge: ");
   Serial.println(kClockEdgeMode);
-  Serial.println("Protocol: PING | STATUS | BUTTON [1|2] <button> <down|up> | TAS_BEGIN <frames> poll [ports] [window_us] | TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum> | TAS_START [delay_frames] | TAS_CANCEL | TAS_END | TAS_STATUS | TAS_TRACE [count] [start] | TAS_TRACE_RESUME");
+  Serial.println("Protocol: PING | STATUS | BUTTON [1|2] <button> <down|up> | TAS_BEGIN <frames> poll|latch|strobe [ports] [window_us] | TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum> | TAS_START [delay_frames] | TAS_CANCEL | TAS_END | TAS_STATUS | TAS_TRACE [count] [start] | TAS_TRACE_RESUME");
   Serial.println("NES pins: P1 latch D2 clock D3 data D6, P2 latch D12 clock D8 data D7");
   if (kDiagnosticForcedMask != 0) {
     Serial.print("DIAGNOSTIC: forced controller mask 0x");
@@ -564,6 +573,8 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
   unsigned long latchCountSnapshot = 0;
   unsigned long clockCountSnapshot = 0;
   unsigned long clock2CountSnapshot = 0;
+  uint32_t bareStrobesSnapshot = 0;
+  uint32_t tornStrobesSnapshot = 0;
   TasPlaybackResult errorSnapshot = TasPlaybackResult::Ok;
 
   // Unmasked snapshot: see formatStatusResponse. The bridge polls TAS_STATUS
@@ -596,12 +607,14 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
   latchCountSnapshot = controllerLatchCount;
   clockCountSnapshot = controllerClockCount;
   clock2CountSnapshot = controller2ClockCount;
+  bareStrobesSnapshot = tasBareStrobeCount;
+  tornStrobesSnapshot = tasTornStrobeCount;
   errorSnapshot = tasPlayback.error();
 
   snprintf(
     response,
     responseLength,
-    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u",
+    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u",
     commandName,
     kFirmwareId,
     kLatchEdgeMode,
@@ -635,6 +648,8 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
     latchCountSnapshot,
     clockCountSnapshot,
     clock2CountSnapshot,
+    static_cast<unsigned long>(bareStrobesSnapshot),
+    static_cast<unsigned long>(tornStrobesSnapshot),
     tasPlaybackResultName(errorSnapshot),
     static_cast<unsigned long>(tasAnomalyCount),
     static_cast<unsigned long>(tasAnomalySequence),
@@ -864,6 +879,15 @@ bool processTasCommand(const Command& command, char* response, size_t responseLe
       controller2LatchedMask = 0;
       controller2ShiftIndex = tasdeck::kNesButtonCount;
       refreshControllerOutput();
+      if (
+        tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe &&
+        command.startDelayPolls == 0 &&
+        !tasPlayback.started()) {
+        // Strobe mode has no expiry service to release frame 0 before the
+        // console's first latch. Put its first-bit levels on both data pins
+        // now while command dispatch already has interrupts masked.
+        writeDataPinsForMasks(tasPlayback.stagedNextMasks());
+      }
     }
     interrupts();
   } else if (command.type == CommandType::TasCancel) {
@@ -982,12 +1006,18 @@ void resetTasTrace() {
   controllerDiagWindowKind = 0;
   controllerPollsInWindow = 0;
   controller2PollsInWindow = 0;
+  controllerCompletedClockedMask = 0;
+  controller2CompletedClockedMask = 0;
+  controllerCompletedPollSinceLatch = false;
+  controller2CompletedPollSinceLatch = false;
   tasTraceFrozen = false;
   tasTraceFreezeCountdown = 0;
   tasAnomalyCount = 0;
   tasAnomalySequence = 0;
   tasAnomalyKind = 0;
   tasAnomalyPendingMark = 0;
+  tasBareStrobeCount = 0;
+  tasTornStrobeCount = 0;
 }
 
 void resumeTasTrace() {
@@ -1021,37 +1051,33 @@ void noteTasAnomaly(uint8_t kind) {
   }
 }
 
-void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask) {
+void recordTasTraceEntry(const TasTraceEntry& source) {
   if (tasTraceFrozen) {
     return;
   }
 
   const uint16_t index = tasTraceHead;
   TasTraceEntry& entry = tasTrace[index];
-  const uint32_t timestampMicros = micros();
   entry.timestampMicros = 0;
   tasTraceCompilerBarrier();
-  entry.tasFrame = tasFrame;
-  entry.latchCount = controllerLatchCount;
-  entry.clockCount = port == 2 ? controller2ClockCount : controllerClockCount;
-  entry.clocksSinceLatch = port == 2 ? controller2ClocksSinceLatch : controllerClocksSinceLatch;
-  entry.polledMask = polledMask;
-  entry.nextMask = port == 2 ? controller2PressedMask : controllerPressedMask;
-  entry.latchedMask = port == 2 ? controller2LatchedMask : controllerLatchedMask;
-  entry.shiftIndex = port == 2 ? controller2ShiftIndex : controllerShiftIndex;
-  entry.result = static_cast<uint8_t>(result);
-  entry.clockedMask = clockedMask;
-  entry.diag = static_cast<uint8_t>(
-    ((port == 2 ? controller2DiagLineLowAtLatch : controllerDiagLineLowAtLatch) & 0x01) |
-    (controllerDiagWindowKind << 1) |
-    (tasAnomalyPendingMark != 0 ? 0x10 : 0));
-  entry.port = port;
+  entry.tasFrame = source.tasFrame;
+  entry.latchCount = source.latchCount;
+  entry.clockCount = source.clockCount;
+  entry.clocksSinceLatch = source.clocksSinceLatch;
+  entry.polledMask = source.polledMask;
+  entry.nextMask = source.nextMask;
+  entry.latchedMask = source.latchedMask;
+  entry.shiftIndex = source.shiftIndex;
+  entry.result = source.result;
+  entry.clockedMask = source.clockedMask;
+  entry.diag = static_cast<uint8_t>(source.diag | (tasAnomalyPendingMark != 0 ? 0x10 : 0));
+  entry.port = source.port;
   tasAnomalyPendingMark = 0;
 
   tasTraceCompilerBarrier();
   // micros() returning zero is only plausible at boot, before TAS playback,
   // but keep zero reserved as the in-progress marker regardless.
-  entry.timestampMicros = timestampMicros == 0 ? 1 : timestampMicros;
+  entry.timestampMicros = source.timestampMicros == 0 ? 1 : source.timestampMicros;
   tasTraceCompilerBarrier();
   tasTraceHead = static_cast<uint16_t>((tasTraceHead + 1) % kTasTraceCapacity);
   if (tasTraceCount < kTasTraceCapacity) {
@@ -1065,6 +1091,26 @@ void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, u
       tasTraceFrozen = true;
     }
   }
+}
+
+void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask) {
+  TasTraceEntry entry = {};
+  entry.timestampMicros = micros();
+  entry.tasFrame = tasFrame;
+  entry.latchCount = controllerLatchCount;
+  entry.clockCount = port == 2 ? controller2ClockCount : controllerClockCount;
+  entry.clocksSinceLatch = port == 2 ? controller2ClocksSinceLatch : controllerClocksSinceLatch;
+  entry.polledMask = polledMask;
+  entry.nextMask = port == 2 ? controller2PressedMask : controllerPressedMask;
+  entry.latchedMask = port == 2 ? controller2LatchedMask : controllerLatchedMask;
+  entry.shiftIndex = port == 2 ? controller2ShiftIndex : controllerShiftIndex;
+  entry.result = static_cast<uint8_t>(result);
+  entry.clockedMask = clockedMask;
+  entry.diag = static_cast<uint8_t>(
+    ((port == 2 ? controller2DiagLineLowAtLatch : controllerDiagLineLowAtLatch) & 0x01) |
+    (controllerDiagWindowKind << 1));
+  entry.port = port;
+  recordTasTraceEntry(entry);
 }
 
 void restoreDiagnosticForcedMask() {
@@ -1268,7 +1314,10 @@ void handleLatchEdge() {
   const uint16_t pinsAtEntry = R_PORT1->PIDR;
   const uint32_t previousLatchMicros = controllerLastLatchMicros;
   const uint32_t latchMicros = micros();
-  const bool sameHardwareWindow = latchWithinCurrentWindow(latchMicros, previousLatchMicros);
+  const bool strobeMode = tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe;
+  const bool sameHardwareWindow = strobeMode
+    ? false
+    : latchWithinCurrentWindow(latchMicros, previousLatchMicros);
   tasdeck::TasFrameMasks firstBitMasks = {
     controllerPressedMask,
     controller2PressedMask,
@@ -1287,10 +1336,22 @@ void handleLatchEdge() {
   controllerDiagLineLowAtLatch = (pinsAtEntry & kPort1DataBit) == 0 ? 1 : 0;
   controller2DiagLineLowAtLatch = (pinsAtEntry & kPort2DataBit) == 0 ? 1 : 0;
 
+  // Strobe-edge traces describe the inter-strobe interval that just ended.
+  // Capture every field before the reset below; the priority-0 latch ISR is
+  // the sole trace writer in strobe mode.
+  const uint8_t clocksAtStrobe = controllerClocksSinceLatch;
+  const uint8_t clocks2AtStrobe = controller2ClocksSinceLatch;
+  const uint32_t clockCountAtStrobe = controllerClockCount;
+  const uint32_t clock2CountAtStrobe = controller2ClockCount;
   // A strobe should only ever find the shift register idle (8) or freshly
   // latched (0); 1..7 means the previous train ended short — a clock edge was
   // lost and the console just read a duplicated bit.
   const uint8_t shiftAtStrobe = controllerShiftIndex;
+  const uint8_t clockedAtStrobe = controllerCompletedPollSinceLatch
+    ? controllerCompletedClockedMask
+    : (shiftAtStrobe >= 1 && shiftAtStrobe <= tasdeck::kNesButtonCount
+        ? controllerClockedMask
+        : 0);
   if (
     tasOutputEnabled &&
     tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
@@ -1299,6 +1360,11 @@ void handleLatchEdge() {
     noteTasAnomaly(kTasAnomalyTornTrain);
   }
   const uint8_t shift2AtStrobe = controller2ShiftIndex;
+  const uint8_t clocked2AtStrobe = controller2CompletedPollSinceLatch
+    ? controller2CompletedClockedMask
+    : (shift2AtStrobe >= 1 && shift2AtStrobe <= tasdeck::kNesButtonCount
+        ? controller2ClockedMask
+        : 0);
   if (
     tasOutputEnabled &&
     tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
@@ -1307,23 +1373,41 @@ void handleLatchEdge() {
     noteTasAnomaly(kTasAnomalyTornTrain);
   }
 
+  if (tasOutputEnabled && strobeMode && controllerLatchCount > 0) {
+    if (clocksAtStrobe == 0) {
+      tasBareStrobeCount += 1;
+    }
+    if (shiftAtStrobe >= 1 && shiftAtStrobe < tasdeck::kNesButtonCount) {
+      tasTornStrobeCount += 1;
+    }
+    if (
+      tasPlayback.portCount() >= tasdeck::kNesControllerPortCount &&
+      shift2AtStrobe >= 1 &&
+      shift2AtStrobe < tasdeck::kNesButtonCount) {
+      tasTornStrobeCount += 1;
+    }
+  }
+
   controllerLatchCount += 1;
   controllerClocksSinceLatch = 0;
   controllerClockedMask = 0;
   controller2ClocksSinceLatch = 0;
   controller2ClockedMask = 0;
+  controllerCompletedClockedMask = 0;
+  controller2CompletedClockedMask = 0;
+  controllerCompletedPollSinceLatch = false;
+  controller2CompletedPollSinceLatch = false;
   controllerLastLatchMicros = latchMicros;
 
-  // Latch edges drive playback. Edges separated by less than the latch window
-  // belong to the same console frame and re-serve the current mask, so games
-  // that strobe and read several times per frame (SMB3, Tetris) consume
-  // exactly one mask per frame no matter how many re-reads happen. The edge
-  // tracker runs from TAS_BEGIN (before TAS_START it never changes the output)
-  // so arming mid-frame holds frame 0 until the next frame boundary.
+  // Latch edges drive playback. Windowed modes coalesce nearby edges into one
+  // console frame; strobe mode deliberately treats every edge as a new event.
+  // The edge tracker runs from TAS_BEGIN (before TAS_START it never changes
+  // the output) so arming a windowed run mid-frame still waits for a boundary.
   if (kDiagnosticForcedMask == 0 && tasPlayback.active()) {
     if (!sameHardwareWindow) {
       controllerPollsInWindow = 0;
       controller2PollsInWindow = 0;
+      const bool traceActiveBefore = tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
       tasdeck::TasFrameMasks nextMasks = {
         controllerPressedMask,
         controller2PressedMask,
@@ -1361,6 +1445,44 @@ void handleLatchEdge() {
         const uint8_t expected2Low = (controller2PressedMask & 0x01) != 0 ? 1 : 0;
         if (controller2DiagLineLowAtLatch != expected2Low) {
           noteTasAnomaly(kTasAnomalyLineMismatch);
+        }
+      }
+
+      const bool traceActiveAfter = tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
+      if (strobeMode && (traceActiveBefore || traceActiveAfter)) {
+        TasTraceEntry edgeEntry = {};
+        edgeEntry.timestampMicros = latchMicros;
+        edgeEntry.tasFrame = tasPlayback.currentFrame();
+        edgeEntry.latchCount = controllerLatchCount;
+        edgeEntry.clockCount = clockCountAtStrobe;
+        edgeEntry.clocksSinceLatch = clocksAtStrobe;
+        edgeEntry.polledMask = controllerPressedMask;
+        edgeEntry.nextMask = controllerPressedMask;
+        edgeEntry.latchedMask = controllerPressedMask;
+        edgeEntry.shiftIndex = shiftAtStrobe;
+        edgeEntry.result = static_cast<uint8_t>(result);
+        edgeEntry.clockedMask = clockedAtStrobe;
+        edgeEntry.diag = static_cast<uint8_t>(
+          (controllerDiagLineLowAtLatch & 0x01) |
+          (controllerDiagWindowKind << 1) |
+          0x20);
+        edgeEntry.port = 1;
+        recordTasTraceEntry(edgeEntry);
+
+        if (tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
+          edgeEntry.clockCount = clock2CountAtStrobe;
+          edgeEntry.clocksSinceLatch = clocks2AtStrobe;
+          edgeEntry.polledMask = controller2PressedMask;
+          edgeEntry.nextMask = controller2PressedMask;
+          edgeEntry.latchedMask = controller2PressedMask;
+          edgeEntry.shiftIndex = shift2AtStrobe;
+          edgeEntry.clockedMask = clocked2AtStrobe;
+          edgeEntry.diag = static_cast<uint8_t>(
+            (controller2DiagLineLowAtLatch & 0x01) |
+            (controllerDiagWindowKind << 1) |
+            0x20);
+          edgeEntry.port = 2;
+          recordTasTraceEntry(edgeEntry);
         }
       }
     }
@@ -1407,8 +1529,15 @@ void handlePort1Clock() {
   // After the 8th shift the line pre-positions bit 0 (A) for the next strobe
   // (see dataLineHigh); same-frame re-polls arrive ~120 microseconds later
   // and must not race the latch ISR for the first bit.
+  uint8_t betweenPollMask = controllerPressedMask;
+  if (
+    controllerShiftIndex >= tasdeck::kNesButtonCount &&
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe &&
+    tasPlayback.willAdvanceOnEdge()) {
+    betweenPollMask = tasPlayback.stagedNextMask();
+  }
   const bool high = controllerShiftIndex >= tasdeck::kNesButtonCount
-    ? (controllerPressedMask & 0x01) == 0
+    ? (betweenPollMask & 0x01) == 0
     : (controllerLatchedMask & static_cast<uint8_t>(1 << controllerShiftIndex)) == 0;
 
   if (high) {
@@ -1418,11 +1547,11 @@ void handlePort1Clock() {
   }
 
   if (completedPoll) {
-    // Completed 8-clock reads gate playback: a latch window must contain one
-    // before the next window advances, so bare boot strobes and latch noise
-    // never consume masks. They are also recorded so traces still show every
-    // poll the console performed, tagged with the frame index and the result
-    // of the frame's latch-window decision.
+    controllerCompletedClockedMask = controllerClockedMask;
+    controllerCompletedPollSinceLatch = true;
+    // Completed 8-clock reads gate poll-mode playback. Windowed traces record
+    // them; strobe traces retain the reconstruction for the next edge row and
+    // suppress this writer so the higher-priority latch ISR is the sole writer.
     tasPlayback.notePollCompleted(1);
     if (controllerPollsInWindow < 0xff) {
       controllerPollsInWindow += 1;
@@ -1442,7 +1571,7 @@ void handlePort1Clock() {
       }
     }
     const bool traceActive = tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
-    if (traceActive) {
+    if (traceActive && tasPlayback.syncMode() != tasdeck::TasSyncMode::Strobe) {
       recordTasTrace(
         tasPlayback.lastWindowResult(),
         tasPlayback.currentFrame(),
@@ -1482,8 +1611,15 @@ void handlePort2Clock() {
     completedPoll = controller2ShiftIndex >= tasdeck::kNesButtonCount;
   }
 
+  uint8_t betweenPollMask = controller2PressedMask;
+  if (
+    controller2ShiftIndex >= tasdeck::kNesButtonCount &&
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe &&
+    tasPlayback.willAdvanceOnEdge()) {
+    betweenPollMask = tasPlayback.stagedNextMasks().port2;
+  }
   const bool high = controller2ShiftIndex >= tasdeck::kNesButtonCount
-    ? (controller2PressedMask & 0x01) == 0
+    ? (betweenPollMask & 0x01) == 0
     : (controller2LatchedMask & static_cast<uint8_t>(1 << controller2ShiftIndex)) == 0;
 
   if (high) {
@@ -1493,6 +1629,8 @@ void handlePort2Clock() {
   }
 
   if (completedPoll) {
+    controller2CompletedClockedMask = controller2ClockedMask;
+    controller2CompletedPollSinceLatch = true;
     // Legacy one-port streams were exported from $4016 reads only. Ignore
     // port 2 poll credit and diagnostics for those runs so a connected second
     // port cannot change their frame-advance behavior. TD2P uploads retain
@@ -1513,7 +1651,7 @@ void handlePort2Clock() {
         }
       }
       const bool traceActive = tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
-      if (traceActive) {
+      if (traceActive && tasPlayback.syncMode() != tasdeck::TasSyncMode::Strobe) {
         recordTasTrace(
           tasPlayback.lastWindowResult(),
           tasPlayback.currentFrame(),

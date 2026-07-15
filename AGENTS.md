@@ -141,16 +141,18 @@ Keyboard controls use the common NES emulator mapping:
 
 Hardware TAS playback uploads a parsed mask stream to the bridge, then the bridge streams chunks to
 the Arduino. The Arduino advances through masks according to NES controller latch timing rather than
-a browser timer: latch edges closer together than the latch window (default 8 ms) are the same
+a browser timer. In the windowed `poll` and `latch` modes, latch edges closer together than the latch window (default 8 ms) are the same
 console frame and re-serve the current mask; expiry after a wider gap advances to the next mask, but
 only when the previous window contained a completed 8-clock read (bare boot strobes and latch noise
-never consume masks). The next latch then serves the pre-positioned mask. Streams start with the
+never consume masks) in `poll` mode. `latch` mode grants advancement credit to every accepted window
+without requiring a completed read. In `strobe` mode every accepted latch edge consumes one record,
+with no window coalescing or completed-read gate. The next latch then serves the pre-positioned mask. Streams start with the
 versioned `TD2P 01 02 0D 0A` header and store interleaved port 1 / port 2 bytes per movie frame that
 polls either controller. Lag frames are
 omitted, so games that read the controllers a variable number of times per frame (SMB3, Tetris under
 DPCM DMA read corruption) stay in sync.
 
-The normal advance happens when a 1 kHz hardware-timer service detects that the window expired and
+The normal windowed-mode advance happens when a 1 kHz hardware-timer service detects that the window expired and
 calls `onWindowExpired`; the main loop also services expiry as a best effort. It does not normally
 wait for the next latch ISR: the console samples the first bit (A) only a few microseconds after the
 strobe edge, sooner than the latch ISR can update the data line, so the next mask's bit 0 must already
@@ -165,14 +167,16 @@ firmware: nothing on the serial/command path may mask interrupts long enough to 
 ISRs, which is also why the playback frame ring uses free-running
 single-producer/single-consumer indices and status snapshots read fields without `noInterrupts()`.
 
-`Start delay` is sent to firmware as `TAS_START <delay_frames>` and waits that many windows in the
-selected synchronization mode before releasing frame 0. `Skip first` is bridge-owned; the middleware
+`Start delay` is sent to firmware as `TAS_START <delay_frames>` and waits that many windows in a
+windowed mode or that many accepted edges in `strobe` mode before releasing record 0. `Skip first` is bridge-owned; the middleware
 slices that many masks from the front of the uploaded stream before sending chunks to the Arduino.
 
 The UI accepts versioned `TD2P` `.tdmask` files with interleaved port 1 / port 2 bytes and raw R08
 files with two bytes per record. TD2P bytes use A, B, Select, Start, Up, Down, Left, Right bit order;
 R08 bytes are reversed from their NES serial order during import. `.tdmask` always uses completed-read
 poll mode. `.r08` defaults to poll mode and exposes a UI picker for completed reads or accepted latches.
+The picker also offers per-strobe playback, which matches default TAStm32 `.r08` semantics by
+consuming one two-port record on every accepted latch edge.
 
 Hardware TAS playback uses the upload/chunk protocol with pre-generated mask bytes. Do not send
 browser-timed TAS button diffs to the real hardware bridge.
@@ -188,7 +192,7 @@ The firmware parser accepts newline-terminated serial commands at `115200` baud:
 PING
 STATUS
 BUTTON [1|2] <a|b|select|start|up|down|left|right> <down|up>
-TAS_BEGIN <frames> poll [ports] [window_us]
+TAS_BEGIN <frames> <poll|latch|strobe> [ports] [window_us]
 TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum>
 TAS_START [delay_frames]
 TAS_CANCEL
@@ -198,7 +202,8 @@ TAS_TRACE [count] [start]
 TAS_TRACE_RESUME
 ```
 
-Firmware `TAS_TRACE` returns up to 12 rows per response from a 512-entry completed-poll ring. The
+Firmware `TAS_TRACE` returns up to 12 rows per response from a 512-entry trace ring. Windowed runs
+write completed-poll rows; strobe runs write one edge row per active port and suppress poll rows. The
 middleware pages this into the full trace window requested by the web UI.
 
 Keep the parser in `NesDeckProtocol.*` and controller state in `NesControllerState.*` independent
@@ -263,7 +268,7 @@ hardware-flow changes:
 - A generated versioned `TD2P` `.tdmask` file loads as a two-controller console-ready mask stream
   and uploads after Arduino USB is connected, including when all port 2 bytes are zero.
 - A raw `.r08` file loads as a two-controller stream, reverses each controller byte, defaults to poll
-  sync mode, and exposes a selector that can switch the upload to latch mode.
+  sync mode, and exposes a selector that can switch the upload to latch or per-strobe mode.
 - The `Start delay` and `Skip first` controls stay editable before arming and disabled during active
   hardware playback.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.
@@ -275,7 +280,6 @@ hardware-flow changes:
 
 - The web UI does not accept raw FM2 or BK2 files; convert the movie plus its
   matching ROM to `.tdmask` first.
-- Hardware TAS timing depends on the game latching the controller in a short burst once per frame
-  and lagging on the same frames as the emulator. Games whose controller reads within one frame are
-  spread wider than the latch window, or that intentionally use different values for reads within
-  one frame, would need a smaller window or a different playback strategy.
+- Frame-model `.tdmask` playback depends on console and emulator lag/poll behavior matching closely.
+  Per-strobe `.r08` playback handles multiple consumed reads within one frame, but it cannot recover
+  when the console accepts a different number of strobes than the replay encodes.

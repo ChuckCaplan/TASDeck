@@ -104,6 +104,10 @@ test("formats hardware TAS protocol commands", () => {
     "TAS_BEGIN 120 latch",
   );
   assert.equal(
+    tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 120, syncMode: "strobe", portCount: 2 }),
+    "TAS_BEGIN 120 strobe 2",
+  );
+  assert.equal(
     tasChunkToBridgeCommand({
       type: "tas_chunk",
       startIndex: 0,

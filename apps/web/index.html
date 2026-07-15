@@ -126,6 +126,7 @@
                   <select id="syncMode" class="sync-mode-select">
                     <option value="poll">completed reads</option>
                     <option value="latch">per accepted latch</option>
+                    <option value="strobe">per strobe (r08 replay)</option>
                   </select>
                 </label>
               </dd>
@@ -139,7 +140,7 @@
               <dd>
                 <label class="inline-number">
                   <input id="syncDelayPolls" type="number" min="0" max="3600" step="1" value="0" inputmode="numeric" />
-                  <span>windows</span>
+                  <span id="syncDelayUnit">windows</span>
                 </label>
               </dd>
             </div>
@@ -148,7 +149,7 @@
               <dd>
                 <label class="inline-number">
                   <input id="syncSkipPolls" type="number" min="0" step="1" value="0" inputmode="numeric" />
-                  <span>frames</span>
+                  <span id="syncSkipUnit">frames</span>
                 </label>
               </dd>
             </div>
