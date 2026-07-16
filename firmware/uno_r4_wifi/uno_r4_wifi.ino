@@ -14,6 +14,15 @@
 #define TASDECK_ISR_DEBUG_PIN -1
 #endif
 
+// The NES pin ISR bodies execute from RAM (.code_in_ram is the FSP linker
+// script's sanctioned RAM-code section, copied out of flash by startup with
+// the rest of .data). Zero-wait-state fetches cut the strobe fast path's
+// cycle cost versus flash, and that entry-to-release span must beat the
+// console's second post-strobe read (Golf: 7.8 µs). TAStm32 runs its latch
+// handler from RAM for the same reason (.ramcode). Verify placement after a
+// build: the three handlers must land at 0x2000xxxx in the .map.
+#define TASDECK_RAM_ISR __attribute__((section(".code_in_ram")))
+
 using tasdeck::Command;
 using tasdeck::CommandType;
 using tasdeck::NesTasPlayback;
@@ -43,7 +52,12 @@ constexpr size_t kResponseBufferLength = 1536;
 // Per-port rows (28 bytes vs the v40-v42 mirror layout's 32) buy this depth
 // back inside the exact RAM footprint that linked as 448 mirror entries;
 // 560 entries overflow the linker's 8 KB heap + 1 KB stack reservation.
-constexpr uint16_t kTasTraceCapacity = 512;
+// Revision 7 cedes 128 rows (3.6 KB) to the RAM-resident NES pin ISRs
+// (.code_in_ram, ~2.6 KB): the strobe fast path's entry-to-release span must
+// beat Golf's 7.8 µs second read, and flash wait states priced that budget
+// at 0.75 cycles/byte. 384 rows still hold seconds of history at every
+// observed row rate, and the anomaly freeze preserves evidence regardless.
+constexpr uint16_t kTasTraceCapacity = 384;
 
 // The loop-side pre-advance is best-effort: a blocking USB CDC write can stall
 // the main loop for tens of milliseconds (measured: every bridge exchange cost
@@ -147,10 +161,27 @@ volatile int8_t nesPort2ClockIrqSlot = -1;
 // True while strobe-mode NVIC priorities are applied (clocks 0, latch 1).
 // Gates the clock ISRs' software strobe-first ordering check.
 volatile bool nesStrobePrioritiesActive = false;
-// Latch ISR body duration in CPU cycles (DWT->CYCCNT, 48 cycles = 1 µs),
-// excluding NVIC/core dispatch overhead. Reported via TAS_STATUS.
+// Set when playback ends on its own (Complete/Underrun) while strobe
+// priorities are installed; loop() restores the windowed layout. Deferred to
+// main context because completion surfaces inside the latch ISR (which must
+// not rewrite its own active IRQ's priority) and inside the service-timer
+// ISR. Cleared by applyNesPinInterruptPriorities, so TAS_BEGIN/TAS_CANCEL
+// always supersede a pending restore.
+volatile bool nesStrobePriorityRestorePending = false;
+// Latch ISR residency in CPU cycles (DWT->CYCCNT, 48 cycles = 1 µs): entry to
+// return, excluding NVIC/core dispatch. In strobe mode the higher-priority
+// clock ISRs preempt the tail and their time is included, so this reads as
+// "time the latch context occupied" — the head counters below carry the
+// deadline-facing number.
 volatile uint32_t tasLatchIsrLastCycles = 0;
 volatile uint32_t tasLatchIsrMaxCycles = 0;
+// Strobe fast-path critical span: ISR entry to PRIMASK release (dispatch
+// still excluded), the stretch that must clear before the console's second
+// post-strobe read (Golf: 7.8 µs after the edge). Steady-state (PreAdvanced)
+// edges only. A clock preempting the unmasked pre-head lands in this number
+// too, so per-frame spikes flag the pre-head race in-band.
+volatile uint32_t tasLatchHeadLastCycles = 0;
+volatile uint32_t tasLatchHeadMaxCycles = 0;
 NesTasPlayback tasPlayback;
 FspTimer tasServiceTimer;
 
@@ -255,12 +286,14 @@ void applyButtonCommandToOutput(const Command& command);
 void resetTasTrace();
 void resumeTasTrace();
 void noteTasAnomaly(uint8_t kind);
+void noteTasAnomalyMasked(uint8_t kind);
 void drainStrobeEdgeTraceEvents();
 void recordTasTraceEntry(const TasTraceEntry& source);
 void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask);
 void restoreDiagnosticForcedMask();
 void raiseNesPinInterruptPriority();
 void applyNesPinInterruptPriorities(bool strobeMode);
+void serviceStrobePriorityRestore();
 void serviceLatchPendBeforeClock();
 void refreshControllerOutput();
 void writeDataPins();
@@ -313,6 +346,7 @@ void setup() {
 
 void loop() {
   serviceTasWindowExpiry();
+  serviceStrobePriorityRestore();
   processSerialInput();
 }
 
@@ -423,6 +457,24 @@ void applyNesPinInterruptPriorities(bool strobeMode) {
     NVIC_SetPriority(static_cast<IRQn_Type>(nesPort2ClockIrqSlot), clockPriority);
   }
   nesStrobePrioritiesActive = strobeMode;
+  nesStrobePriorityRestorePending = false;
+}
+
+// Runs from loop(). Completion cannot restore the windowed priorities where
+// it is detected: the latch ISR must not change its own active IRQ's
+// priority, and the expiry service also runs at service-timer priority. Only
+// the two completion sites set the flag, so the armed gap between TAS_BEGIN
+// and TAS_START (output disabled, strobe priorities intentional) never
+// triggers a restore.
+void serviceStrobePriorityRestore() {
+  if (!nesStrobePriorityRestorePending) {
+    return;
+  }
+  noInterrupts();
+  if (nesStrobePriorityRestorePending) {
+    applyNesPinInterruptPriorities(false);
+  }
+  interrupts();
 }
 
 void setupDiagnosticPins() {
@@ -706,7 +758,7 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
   snprintf(
     response,
     responseLength,
-    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu",
+    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu",
     commandName,
     kFirmwareId,
     kLatchEdgeMode,
@@ -748,7 +800,9 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
     tasAnomalyKind,
     tasTraceFrozen ? 1 : 0,
     static_cast<unsigned long>(tasLatchIsrLastCycles),
-    static_cast<unsigned long>(tasLatchIsrMaxCycles));
+    static_cast<unsigned long>(tasLatchIsrMaxCycles),
+    static_cast<unsigned long>(tasLatchHeadLastCycles),
+    static_cast<unsigned long>(tasLatchHeadMaxCycles));
 }
 
 void formatTasChunkResponse(char* response, size_t responseLength) {
@@ -1114,6 +1168,8 @@ void resetTasTrace() {
   tasTornStrobeCount = 0;
   tasLatchIsrLastCycles = 0;
   tasLatchIsrMaxCycles = 0;
+  tasLatchHeadLastCycles = 0;
+  tasLatchHeadMaxCycles = 0;
 }
 
 void resumeTasTrace() {
@@ -1145,6 +1201,17 @@ void noteTasAnomaly(uint8_t kind) {
   if (freezeWorthy && !tasTraceFrozen && tasTraceFreezeCountdown == 0) {
     tasTraceFreezeCountdown = kTasTraceFreezeContextPolls;
   }
+}
+
+// For anomaly notes from the strobe fast path's preemptible tail: the
+// counters are shared with the clock ISRs, which outrank the latch there, so
+// the rare note itself masks interrupts. Never needed from windowed paths or
+// masked sections — call noteTasAnomaly directly in those.
+void noteTasAnomalyMasked(uint8_t kind) {
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  noteTasAnomaly(kind);
+  __set_PRIMASK(primask);
 }
 
 void recordTasTraceEntry(const TasTraceEntry& source) {
@@ -1311,6 +1378,9 @@ void serviceTasWindowExpiry() {
     controller2PressedMask = nextMasks.port2;
     if (result != TasPlaybackResult::Ok) {
       tasOutputEnabled = false;
+      if (nesStrobePrioritiesActive) {
+        nesStrobePriorityRestorePending = true;
+      }
     }
     // Re-latch, do not just rewrite the pin. Games that read controller 2
     // (SMB3) pulse the shared strobe line without clocking port 1, leaving
@@ -1453,7 +1523,10 @@ void handlePort1Latch() {
 // Pre-reset snapshot of the inter-strobe interval that just ended, shared by
 // the strobe fast path and the general edge path. Plain fields, no default
 // initializers: the general path declares one unconditionally, and windowed
-// edges must not pay for zeroing state only strobe mode reads.
+// edges must not pay for zeroing state only strobe mode reads. The clocked
+// masks start as raw register copies; resolveStrobeEdgeClockedMasks folds
+// them into the per-train reconstruction outside the fast path's critical
+// head.
 struct TasStrobeEdgeCapture {
   uint8_t clocksSinceLatch;
   uint8_t clocks2SinceLatch;
@@ -1463,12 +1536,20 @@ struct TasStrobeEdgeCapture {
   uint8_t shift2Index;
   uint8_t clockedMask;
   uint8_t clocked2Mask;
+  uint8_t completedClockedMask;
+  uint8_t completed2ClockedMask;
+  bool completedPollSinceLatch;
+  bool completed2PollSinceLatch;
 };
 
-// Reads the pre-reset edge state and maintains the bare/torn counters. Must
-// run before the latch bookkeeping resets clock/shift state, and only in
-// strobe mode (the v47 regression came from running this on windowed edges).
-inline TasStrobeEdgeCapture captureAndCountStrobeEdge() {
+// Raw pre-reset copies only. This runs inside the strobe fast path's PRIMASK
+// head — the resets that follow destroy these values — so it must stay
+// straight-line loads and stores; every byte here extends the masked stretch
+// that must release before the console's second post-strobe read. Analysis
+// belongs in resolveStrobeEdgeClockedMasks/countStrobeEdge on the way out.
+// Strobe mode only (the v47 regression came from running edge capture on
+// windowed paths).
+inline TasStrobeEdgeCapture captureStrobeEdgeRaw() {
   TasStrobeEdgeCapture capture;
   capture.clocksSinceLatch = controllerClocksSinceLatch;
   capture.clocks2SinceLatch = controller2ClocksSinceLatch;
@@ -1476,49 +1557,94 @@ inline TasStrobeEdgeCapture captureAndCountStrobeEdge() {
   capture.clock2Count = controller2ClockCount;
   capture.shiftIndex = controllerShiftIndex;
   capture.shift2Index = controller2ShiftIndex;
-  capture.clockedMask = controllerCompletedPollSinceLatch
-    ? controllerCompletedClockedMask
-    : (capture.shiftIndex >= 1 && capture.shiftIndex <= tasdeck::kNesButtonCount
-        ? controllerClockedMask
-        : 0);
-  capture.clocked2Mask = controller2CompletedPollSinceLatch
-    ? controller2CompletedClockedMask
-    : (capture.shift2Index >= 1 && capture.shift2Index <= tasdeck::kNesButtonCount
-        ? controller2ClockedMask
-        : 0);
-  if (tasOutputEnabled && controllerLatchCount > 0) {
-    if (capture.clocksSinceLatch == 0) {
-      tasBareStrobeCount += 1;
-    }
-    if (capture.shiftIndex >= 1 && capture.shiftIndex < tasdeck::kNesButtonCount) {
-      tasTornStrobeCount += 1;
-    }
-    if (
-      capture.shift2Index >= 1 &&
-      capture.shift2Index < tasdeck::kNesButtonCount &&
-      tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
-      tasTornStrobeCount += 1;
-    }
+  capture.clockedMask = controllerClockedMask;
+  capture.clocked2Mask = controller2ClockedMask;
+  capture.completedClockedMask = controllerCompletedClockedMask;
+  capture.completed2ClockedMask = controller2CompletedClockedMask;
+  capture.completedPollSinceLatch = controllerCompletedPollSinceLatch;
+  capture.completed2PollSinceLatch = controller2CompletedPollSinceLatch;
+  return capture;
+}
+
+// Folds the raw register copies into the clocked-mask reconstruction the
+// trace rows report: a completed 8-clock read wins, otherwise a mid-train
+// mask counts only if the train actually started.
+inline void resolveStrobeEdgeClockedMasks(TasStrobeEdgeCapture& capture) {
+  if (capture.completedPollSinceLatch) {
+    capture.clockedMask = capture.completedClockedMask;
+  } else if (
+    capture.shiftIndex < 1 || capture.shiftIndex > tasdeck::kNesButtonCount) {
+    capture.clockedMask = 0;
   }
+  if (capture.completed2PollSinceLatch) {
+    capture.clocked2Mask = capture.completed2ClockedMask;
+  } else if (
+    capture.shift2Index < 1 || capture.shift2Index > tasdeck::kNesButtonCount) {
+    capture.clocked2Mask = 0;
+  }
+}
+
+// Bare/torn accounting for a captured edge. Fast-path edges run this in the
+// preemptible tail: the counters are written only from latch-edge context,
+// and the worst a nested inline edge (a clock ISR retiring a pended latch
+// over this tail) can do is lose one diagnostic count — gameplay state is
+// untouched. latchCountAtEdge is the pre-increment latch count: the first
+// edge of a run has no prior interval and is exempt.
+inline void countStrobeEdge(
+  const TasStrobeEdgeCapture& capture, uint32_t latchCountAtEdge) {
+  if (!tasOutputEnabled || latchCountAtEdge == 0) {
+    return;
+  }
+  if (capture.clocksSinceLatch == 0) {
+    tasBareStrobeCount += 1;
+  }
+  if (capture.shiftIndex >= 1 && capture.shiftIndex < tasdeck::kNesButtonCount) {
+    tasTornStrobeCount += 1;
+  }
+  if (
+    capture.shift2Index >= 1 &&
+    capture.shift2Index < tasdeck::kNesButtonCount &&
+    tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
+    tasTornStrobeCount += 1;
+  }
+}
+
+// General-path strobe edges hold PRIMASK end to end, so capture, resolution,
+// and counting run together there.
+inline TasStrobeEdgeCapture captureAndCountStrobeEdge() {
+  TasStrobeEdgeCapture capture = captureStrobeEdgeRaw();
+  resolveStrobeEdgeClockedMasks(capture);
+  countStrobeEdge(capture, controllerLatchCount);
   return capture;
 }
 
 // Stages one compact strobe-edge event for the 1 kHz service timer to expand
 // into per-port trace rows mid-gap (see TasStrobeEdgeEvent). Reads the
-// post-commit pressed masks and line-low diags from their globals.
+// post-commit pressed masks and line-low diags from their globals. The slot
+// index is reserved under PRIMASK because the fast path stages from its
+// preemptible tail, where a clock ISR can retire a pended latch edge inline
+// (serviceLatchPendBeforeClock) and stage a second event mid-call; with the
+// reservation atomic, each staging fills its own slot. Fills stay unmasked:
+// the consumer runs at service-timer priority and can never preempt latch or
+// clock context, so a bumped tail with an in-flight fill is never read early.
 inline void stageStrobeEdgeEvent(
   uint32_t timestampMicros,
   uint32_t tasFrame,
   uint8_t result,
   uint8_t windowKind,
   const TasStrobeEdgeCapture& capture) {
+  const uint32_t stagePrimask = __get_PRIMASK();
+  __disable_irq();
   const uint8_t stagingTail = tasStrobeEdgeEventTail;
   if (
     static_cast<uint8_t>(stagingTail - tasStrobeEdgeEventHead) >=
     kTasStrobeEdgeEventCapacity) {
     tasStrobeEdgeEventDropCount += 1;
+    __set_PRIMASK(stagePrimask);
     return;
   }
+  tasStrobeEdgeEventTail = static_cast<uint8_t>(stagingTail + 1);
+  __set_PRIMASK(stagePrimask);
   TasStrobeEdgeEvent& event =
     tasStrobeEdgeEvents[stagingTail % kTasStrobeEdgeEventCapacity];
   event.timestampMicros = timestampMicros;
@@ -1539,12 +1665,12 @@ inline void stageStrobeEdgeEvent(
   event.windowKind = windowKind;
   event.result = result;
   tasTraceCompilerBarrier();
-  tasStrobeEdgeEventTail = static_cast<uint8_t>(stagingTail + 1);
 }
 
-// Latch ISR body duration, excluding core dispatch. Keeping the max visible
-// in TAS_STATUS turns "is the ISR budget blown?" into a number in every
-// capture instead of a per-game desync hunt.
+// Latch ISR residency, excluding core dispatch: entry to return. Not a head
+// budget — in strobe mode the clock ISRs preempt the tail and their time is
+// included. Keeping the max visible in TAS_STATUS turns "is the ISR budget
+// blown?" into a number in every capture instead of a per-game desync hunt.
 inline void recordLatchIsrCycles(uint32_t cyclesAtEntry) {
   const uint32_t elapsed = DWT->CYCCNT - cyclesAtEntry;
   tasLatchIsrLastCycles = elapsed;
@@ -1553,7 +1679,19 @@ inline void recordLatchIsrCycles(uint32_t cyclesAtEntry) {
   }
 }
 
-void handleLatchEdge() {
+// Strobe fast-path critical span: ISR entry to PRIMASK release. The caller
+// reads DWT->CYCCNT before releasing PRIMASK (one load inside the head) and
+// runs this bookkeeping in the preemptible tail, so the head budget itself
+// stays untouched. Neither this nor the residency counter sees core dispatch;
+// scope D2-edge to the TASDECK_ISR_DEBUG_PIN rise for that.
+inline void recordLatchHeadCycles(uint32_t elapsed) {
+  tasLatchHeadLastCycles = elapsed;
+  if (elapsed > tasLatchHeadMaxCycles) {
+    tasLatchHeadMaxCycles = elapsed;
+  }
+}
+
+TASDECK_RAM_ISR void handleLatchEdge() {
   const uint32_t cyclesAtEntry = DWT->CYCCNT;
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
@@ -1566,30 +1704,20 @@ void handleLatchEdge() {
   const tasdeck::TasSyncMode syncMode = tasPlayback.syncMode();
   const bool strobeMode = syncMode == tasdeck::TasSyncMode::Strobe;
 
-  // Strobe-edge traces describe the inter-strobe interval that just ended.
-  // Capture runs before any reset below, and deliberately OUTSIDE the
-  // critical head: the wire is quiescent between the previous frame's last
-  // read and this strobe, so nothing mutates the counters here, and every
-  // instruction moved out of the head releases it sooner. This capture must
-  // stay off the windowed paths (the v47 regression came from running it on
-  // every edge).
-  TasStrobeEdgeCapture strobeCapture;
-  if (strobeMode) {
-    controllerDiagLineLowAtLatch = (pinsAtEntry & kPort1DataBit) == 0 ? 1 : 0;
-    controller2DiagLineLowAtLatch = (pinsAtEntry & kPort2DataBit) == 0 ? 1 : 0;
-    strobeCapture = captureAndCountStrobeEdge();
-  }
-
   // Strobe steady-state fast path. In strobe mode the clocks outrank this
-  // ISR (see applyNesPinInterruptPriorities), so the console's post-strobe
-  // reads preempt everything outside the PRIMASK head instead of merging in
-  // the clock IRQ's single NVIC pending bit while this ISR runs. The head
-  // covers only what the clock ISRs read or write — the playback mask
-  // commit, the shift/counter resets, and the shared anomaly counters — and
-  // must release before the console's second post-strobe read (Golf: 2.2 µs
-  // after the first). micros() and the latch-timestamp note stay outside:
-  // the timestamp gates only the expiry-service holdoff, which runs at timer
-  // priority and can never preempt this ISR. In windowed modes (latch at
+  // ISR (see applyNesPinInterruptPriorities); the console's post-strobe reads
+  // preempt the unmasked stretches, and reads arriving during the PRIMASK
+  // head pend in each clock IRQ's single NVIC bit — TWO same-port reads
+  // pending there merge into one shift, so the head must release before the
+  // console's second post-strobe read, and the served first bit must be on
+  // the wire before the first (the mid-gap pre-advance guarantees that).
+  // v50 measured entry-to-release at 367 cycles (7.65 µs) with the edge
+  // analysis run before the head, and Golf's 5.6/7.8 µs title read pair
+  // merged on every frame. The head is therefore stripped to the state the
+  // clock ISRs touch: mask commit, pin write, raw pre-reset snapshot (its
+  // inputs are destroyed by the resets), resets. Torn/bare accounting,
+  // clocked-mask resolution, line diags, anomaly compares, micros(), and
+  // staging all run in the preemptible tail. In windowed modes (latch at
   // priority 0) PRIMASK is a semantic no-op. This block mirrors the general
   // path's bookkeeping for a committed strobe edge — keep the two in sync.
   if (strobeMode && kDiagnosticForcedMask == 0) {
@@ -1598,8 +1726,10 @@ void handleLatchEdge() {
     tasdeck::TasFrameMasks fastMasks = {};
     if (tasPlayback.tryCommitPreAdvancedMasks(fastMasks)) {
       writeDataPinsForMasks(fastMasks);
+      TasStrobeEdgeCapture strobeCapture = captureStrobeEdgeRaw();
+      const uint32_t latchCountAtEdge = controllerLatchCount;
 
-      controllerLatchCount += 1;
+      controllerLatchCount = latchCountAtEdge + 1;
       controllerClocksSinceLatch = 0;
       controller2ClocksSinceLatch = 0;
       controllerCompletedClockedMask = 0;
@@ -1618,24 +1748,30 @@ void handleLatchEdge() {
       controllerClockedMask = 0;
       controller2ClockedMask = 0;
 
+      const uint32_t cyclesAtHeadRelease = DWT->CYCCNT;
+      __set_PRIMASK(primask);
+      recordLatchHeadCycles(cyclesAtHeadRelease - cyclesAtEntry);
+
+      // Preemptible tail, all working off head snapshots and locals: the
+      // staging ring reserves its slot atomically, the timestamp consumers
+      // run at timer priority, and a nested inline edge (clock ISR retiring
+      // a pended latch over this tail) costs at most one diagnostic count.
+      controllerDiagLineLowAtLatch =
+        (pinsAtEntry & kPort1DataBit) == 0 ? 1 : 0;
+      controller2DiagLineLowAtLatch =
+        (pinsAtEntry & kPort2DataBit) == 0 ? 1 : 0;
+      resolveStrobeEdgeClockedMasks(strobeCapture);
+      countStrobeEdge(strobeCapture, latchCountAtEdge);
       if (tasOutputEnabled) {
-        // Anomaly bookkeeping shares counters with the clock ISRs, so these
-        // checks stay inside the critical head.
         const uint8_t expectedLow = (fastMasks.port1 & 0x01) != 0 ? 1 : 0;
         if (controllerDiagLineLowAtLatch != expectedLow) {
-          noteTasAnomaly(kTasAnomalyLineMismatch);
+          noteTasAnomalyMasked(kTasAnomalyLineMismatch);
         }
         const uint8_t expected2Low = (fastMasks.port2 & 0x01) != 0 ? 1 : 0;
         if (controller2DiagLineLowAtLatch != expected2Low) {
-          noteTasAnomaly(kTasAnomalyLineMismatch);
+          noteTasAnomalyMasked(kTasAnomalyLineMismatch);
         }
       }
-      __set_PRIMASK(primask);
-
-      // Preemptible tail: the staging ring is written only by latch-edge
-      // context and drained only by the service timer, and the timestamp
-      // consumers run at timer priority, so a clock ISR cutting in here
-      // touches none of it.
       controllerDiagWindowKind =
         static_cast<uint8_t>(tasdeck::TasEdgeKind::PreAdvanced);
       const uint32_t fastLatchMicros = micros();
@@ -1666,6 +1802,15 @@ void handleLatchEdge() {
   // the rare non-steady-state edges it serves.
   const uint32_t generalPrimask = __get_PRIMASK();
   __disable_irq();
+  // Strobe-edge traces describe the inter-strobe interval that just ended;
+  // capture before any reset below. Unlike the fast path this runs inside
+  // the full-length PRIMASK hold — the rare edges served here (start,
+  // fallback, completion) accept the longer masked stretch. Never on
+  // windowed edges (the v47 regression).
+  TasStrobeEdgeCapture strobeCapture;
+  if (strobeMode) {
+    strobeCapture = captureAndCountStrobeEdge();
+  }
   const uint32_t previousLatchMicros = controllerLastLatchMicros;
   const bool sameHardwareWindow = strobeMode
     ? false
@@ -1749,6 +1894,9 @@ void handleLatchEdge() {
       }
       if (result == TasPlaybackResult::Complete || result == TasPlaybackResult::Underrun) {
         tasOutputEnabled = false;
+        if (nesStrobePrioritiesActive) {
+          nesStrobePriorityRestorePending = true;
+        }
       }
       const tasdeck::TasEdgeKind kind = tasPlayback.lastEdgeKind();
       controllerDiagWindowKind = static_cast<uint8_t>(kind);
@@ -1809,7 +1957,7 @@ void handleLatchEdge() {
 // latch IRQ is pending when a clock ISR enters, retire it inline first, then
 // shift the freshly latched train. Clearing the ICU flag before handling means
 // a genuinely new edge arriving mid-handler re-pends and runs as its own.
-void serviceLatchPendBeforeClock() {
+TASDECK_RAM_ISR void serviceLatchPendBeforeClock() {
   const int8_t slot = nesLatchIrqSlot;
   if (slot < 0) {
     return;
@@ -1824,7 +1972,7 @@ void serviceLatchPendBeforeClock() {
   handleLatchEdge();
 }
 
-void handlePort1Clock() {
+TASDECK_RAM_ISR void handlePort1Clock() {
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
 #endif
@@ -1912,7 +2060,7 @@ void handlePort1Clock() {
 #endif
 }
 
-void handlePort2Clock() {
+TASDECK_RAM_ISR void handlePort2Clock() {
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
 #endif

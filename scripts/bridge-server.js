@@ -44,10 +44,10 @@ const MAX_EVENT_LOG_BYTES = 4 * 1024 * 1024;
 const BRIDGE_TAS_BUFFER_STATUS_POLL_MS = 500;
 const BRIDGE_TAS_DONE_STATUS_POLL_MS = 1000;
 const BRIDGE_TAS_WAITER_TIMEOUT_MS = 10000;
-const BRIDGE_TAS_TRACE_DEFAULT_COUNT = 512;
-const BRIDGE_TAS_TRACE_MAX_COUNT = 512;
+const BRIDGE_TAS_TRACE_DEFAULT_COUNT = 384;
+const BRIDGE_TAS_TRACE_MAX_COUNT = 384;
 const BRIDGE_TAS_TRACE_PAGE_LIMIT = 12;
-// Optional continuous trace streaming follows the firmware's 512-row ring
+// Optional continuous trace streaming follows the firmware's 384-row ring
 // for the whole run. Keep it off during normal playback: paging trace rows
 // produces near-constant USB CDC traffic, and the Arduino core can briefly
 // mask NES pin interrupts while servicing that traffic. Frozen-ring auto
@@ -1130,7 +1130,7 @@ class SerialBridge {
       const finalStatus = run.firmwareStatus || {};
       await fsp.appendFile(
         filePath,
-        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""}\n`,
+        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""} latch_head_last_cyc=${finalStatus.latch_head_last_cyc ?? ""} latch_head_max_cyc=${finalStatus.latch_head_max_cyc ?? ""}\n`,
         "utf8",
       );
       const gapNote = totalGaps > 0 ? ` (${totalGaps} rows lost to ring overwrite)` : "";
@@ -2244,6 +2244,8 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `firmware_trace_frozen: ${firmwareStatus.trace_frozen ?? ""}`,
     `firmware_latch_isr_last_cyc: ${firmwareStatus.latch_isr_last_cyc ?? ""}`,
     `firmware_latch_isr_max_cyc: ${firmwareStatus.latch_isr_max_cyc ?? ""}`,
+    `firmware_latch_head_last_cyc: ${firmwareStatus.latch_head_last_cyc ?? ""}`,
+    `firmware_latch_head_max_cyc: ${firmwareStatus.latch_head_max_cyc ?? ""}`,
   ].join("\n");
 }
 

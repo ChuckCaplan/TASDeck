@@ -110,11 +110,16 @@ the latch ISR can finish — and with the clocks on top those reads preempt the 
 instead of merging in the clock IRQ's single NVIC pending bit (one lost shift, every later bit
 served one position late). The latch ISR guards clock-shared state with a short PRIMASK critical
 head, and the clock ISRs restore strobe-first ordering in software by running a pended latch edge
-inline before shifting. `TAS_STATUS` reports the measured latch ISR body duration as
-`latch_isr_last_cyc`/`latch_isr_max_cyc` (DWT cycles, 48 per µs, dispatch excluded); the bridge
-copies both into `.trace` headers and the `.stream.csv` footer.
+inline before shifting. The windowed layout is restored by TAS_CANCEL, by the next windowed
+TAS_BEGIN, and — deferred to `loop()`, since completion surfaces in ISR context — when a strobe
+run completes or underruns on its own. `TAS_STATUS` reports two DWT cycle counters (48 per µs,
+core dispatch excluded from both): `latch_isr_last_cyc`/`latch_isr_max_cyc` is latch ISR
+residency, entry to return — in strobe mode preempting clock ISRs are included, so it is not a
+head budget — and `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's
+entry-to-PRIMASK-release span, the number that must beat the console's second post-strobe read.
+The bridge copies all four into `.trace` headers and the `.stream.csv` footer.
 
-`TAS_TRACE [count] [start]` reads from the firmware's trace ring. The ring stores the latest 512
+`TAS_TRACE [count] [start]` reads from the firmware's trace ring. The ring stores the latest 384
 rows, and each firmware response returns up to 12 rows so the middleware
 can page through larger captures without overflowing the serial response buffer.
 `TAS_TRACE_RESUME` clears a frozen trace/anomaly latch after the bridge has saved it, allowing the
@@ -129,7 +134,7 @@ stages a compact event and the 1 kHz service writes the rows, keeping the ISR sh
 console's second read after the strobe. Diag bit 5 marks
 those edge rows, whose clocked mask describes the preceding inter-strobe read. `TAS_STATUS` reports
 whole-run `bare_strobes` and `torn_strobes` counters for strobe-mode diagnostics. The web
-`Trace` button requests the full 512-row window and saves the trace and resulting event log through
+`Trace` button requests the full 384-row window and saves the trace and resulting event log through
 the middleware.
 
 ## Tests And Compile

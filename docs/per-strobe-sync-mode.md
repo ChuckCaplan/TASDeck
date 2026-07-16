@@ -108,37 +108,98 @@ deadline instead:
 1. **Strobe mode inverts the NES pin interrupt priorities** (amends the R16 priority rule for
    strobe runs only): `TAS_BEGIN … strobe` sets the clock IRQs to priority 0 and the latch IRQ to
    priority 1 (`applyNesPinInterruptPriorities`); windowed begins, TAS_CANCEL, and boot restore
-   the proven windowed layout (latch 0, clocks 1) untouched. With the clocks on top, the console's
+   the proven windowed layout (latch 0, clocks 1) untouched. Natural completion and underrun also
+   restore it, deferred to `loop()` via a pending flag (`serviceStrobePriorityRestore`): both
+   completion sites run in ISR context (the latch ISR must not rewrite its own active IRQ's
+   priority; the expiry service also runs from the service timer), and only those sites set the
+   flag, so the armed TAS_BEGIN→TAS_START gap — output disabled but strobe priorities intentional —
+   never triggers a restore. With the clocks on top, the console's
    post-strobe reads preempt the latch ISR's tail and dispatch individually — the single-NVIC-
    pending-bit merge that defeated v47–v49 cannot occur while the latch ISR runs, no matter how
    long dispatch takes.
-2. **The latch ISR splits into a PRIMASK critical head and a preemptible tail.** The head covers
-   only state the clock ISRs read or write: the pre-popped mask commit
-   (`tryCommitPreAdvancedMasks`, split header-inline), the first-bit pin write, the shift/counter
-   resets, and the shared anomaly counters. Everything else — the pre-reset strobe capture (the
-   wire is quiescent before the first post-strobe read), `micros()` and the holdoff re-arm
-   (`noteLatchTimestamp`; its only consumers run at timer priority and can never preempt this
-   ISR), and event staging — runs outside it. In windowed modes the latch ISR stays at priority 0,
-   where PRIMASK is a semantic no-op: the windowed edge path keeps its verified behavior.
+2. **The latch ISR splits into a PRIMASK critical head and a preemptible tail** (tightened in
+   revision 7 after v50's own head counter root-caused the Golf merge — see the hardware history
+   below). The head covers only the pre-popped mask commit (`tryCommitPreAdvancedMasks`, split
+   header-inline), the first-bit pin write, a raw pre-reset counter snapshot
+   (`captureStrobeEdgeRaw` — straight loads/stores; its inputs are destroyed by the resets), and
+   the shift/counter resets. Everything else — clocked-mask resolution and bare/torn accounting on
+   the snapshot, the line diags, the anomaly compares (`noteTasAnomalyMasked` masks only around
+   the rare note itself), `micros()` and the holdoff re-arm (`noteLatchTimestamp`; its only
+   consumers run at timer priority and can never preempt this ISR), and event staging — runs in
+   the tail. The staging ring reserves its slot under PRIMASK so a nested inline edge (a clock ISR
+   retiring a pended latch over the tail via `serviceLatchPendBeforeClock`) fills its own slot;
+   the worst a nested edge can still do is lose one bare/torn diagnostic count. The latch and
+   clock ISR bodies execute from RAM (`.code_in_ram`, the FSP linker script's sanctioned RAM-code
+   section — TAStm32's `.ramcode` parity) so the head's cycle cost is not paying flash wait
+   states. In windowed modes the latch ISR stays at priority 0, where PRIMASK is a semantic
+   no-op: the windowed edge path keeps its verified behavior, and general-path strobe edges
+   (start/fallback/complete) capture-and-count under their full-length PRIMASK hold as before.
 3. **The clock ISRs re-create strobe-first pend ordering in software.** The windowed layout's
    latch-outranks-clocks rule existed so edges pending behind a masked stretch (USB serial paths)
    replay strobe-first; inverted priorities would replay them clock-first and tear the train. In
    strobe mode each clock ISR therefore checks the latch IRQ's NVIC pending bit at entry and, if
    set, clears the ICU/NVIC flags and runs `handleLatchEdge` inline before shifting
    (`serviceLatchPendBeforeClock`) — the same order the windowed NVIC layout produced.
-4. **The latch ISR body is now measured, not estimated**: a DWT cycle counter reports
-   last/max body duration (48 cycles = 1 µs, dispatch excluded) as `latch_isr_last_cyc` /
-   `latch_isr_max_cyc` in TAS_STATUS, the bridge's `.trace` headers, and the `.stream.csv`
-   footer, and resets with the other counters on TAS_BEGIN/TAS_START.
+4. **The latch ISR is now measured, not estimated**, with two DWT cycle counters (48 cycles =
+   1 µs, both excluding NVIC/core dispatch), reported in TAS_STATUS, the bridge's `.trace`
+   headers, and the `.stream.csv` footer, and reset with the other counters on
+   TAS_BEGIN/TAS_START: `latch_isr_last_cyc`/`latch_isr_max_cyc` is ISR *residency* (entry to
+   return — in strobe mode preempting clock ISRs are included, so it is not a head budget), and
+   `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's entry-to-PRIMASK-release
+   span, the number that must beat the console's second post-strobe read (the DWT load happens
+   before release; the bookkeeping runs in the preemptible tail, so the head gains one load,
+   ~2 cycles). A clock preempting the unmasked pre-head inflates the head reading, so per-frame
+   spikes are an in-band signature of the pre-head race. Neither counter sees core dispatch —
+   scope D2-edge → `TASDECK_ISR_DEBUG_PIN` rise remains the only measurement of that.
 
-Accepted residual risks, in-band evidence unchanged: strobe edges that take the general path
-(start, in-holdoff double-latch fallback, completion) hold PRIMASK across the full advance and can
-still merge a Golf-tight read pair on those rare edges; and a masked stretch that happens to span
-both reads of a 2.2 µs pair merges them at the ICU input latch regardless of priorities — inherent
-to every edge-ISR replay device, and rare enough to be a per-attempt lottery rather than the
-deterministic per-frame failure v47–v49 produced. The revision-5 acceptance evidence still gates:
-Golf's title `clocksSinceLatch` distribution must read 4 (2 on boot frames), and the game must
-react to the movie's Start.
+**TAStm32 parity (verified in source, 2026-07-16):** the revision-6 priority architecture is not
+novel — it is how TAStm32 has always run NES/SNES. `TASRun.c:175–184` sets the clock EXTIs to
+preemption priority 0 and the latch EXTI (`EXTI1`, P1_LATCH) to priority 1 — clocks strictly
+outrank the latch. `NesSnesLatch` (`stm32f4xx_it.c:370`, a RAM-resident direct vector handler)
+serves bit 0 with one precomputed `GPIOC->BSRR` write, stages bit 1 and resets the bit index
+inside a tiny `__disable_irq()` critical section, and runs everything else — the 64-byte
+per-bit-word memcpys, `GetNextFrame`, DPCM-fix and latch-train bookkeeping — in the preemptible
+tail. Its clock ISR's hot data path is one array load and one `BSRR` write (plus the optional
+`--clock` filter check and flag-clear work). v50 ports the priority inversion and the head/tail
+split, but **not the entry path**: `NesSnesLatch` reaches its critical section within a few
+instructions of the exception, while TASDeck enters through the Renesas core's `r_icu_isr` →
+attachInterrupt callback dispatch and then runs the strobe capture unmasked before `cpsid i` —
+0x118 bytes of straight-line code in the 2026-07-16 build (`handleLatchEdge` 0x477c → first
+`cpsid` 0x4894), on top of dispatch. That difference is the pre-head residual below. The only
+ordering addition over TAStm32 is `serviceLatchPendBeforeClock` (TAStm32 accepts the
+masked-stretch reorder hazard; TASDeck has documented field evidence of it, so the guard stays).
+
+**v50 hardware verdict (2026-07-16 evening), the evidence behind revision 7:** Lode Runner r08
+completed in strobe mode (second console verification after SMB1 max-score), but Golf still
+merged — title `clocksSinceLatch` read 3 on every frame across delays. The new head counter
+answered why, and it was not the reviewed pre-head race: `latch_head_last_cyc` sat at a rock-
+stable 367 cycles (7.65 µs entry→release, max 371) on every stream. Both title reads (5.6 and
+7.8 µs after the edge) therefore landed inside the *masked* head, pended in the clock IRQ's
+single NVIC bit, and merged — the v48 failure mode relocated into the PRIMASK hold. The
+stability of the reading also bounds the other side: a read landing in the unmasked pre-head
+would have preempted and inflated it, so dispatch + pre-head (280 bytes of it in the v50 build)
+provably stayed under 5.6 µs, ruling out the direct-vector escalation and pointing at the head
+itself. Calibration from the build: 488 bytes of entry→release code ran in 367 cycles ≈ 0.75
+cycles/byte from flash. Revision 7 therefore strips the head (raw snapshot in, analysis out) and
+moves the ISR bodies to RAM.
+
+Accepted residual risks, in-band evidence unchanged: the shrunken pre-head (pin read, mode check,
+branch) plus dispatch remains an unmasked window where a preempting clock's counters would be
+erased by the head's resets — no read was ever observed there (stable head readings), and
+`serviceLatchPendBeforeClock` cannot catch that case (a preempted latch is *active*, not
+pending); per-frame spikes in `latch_head_last_cyc` remain the in-band tripwire. Strobe edges
+that take the general path (start, in-holdoff double-latch fallback, completion) hold PRIMASK
+across the full advance and can still merge a Golf-tight read pair on those rare edges. A masked
+stretch that happens to span both reads of a 2.2 µs pair merges them at the ICU input latch
+regardless of priorities — inherent to every edge-ISR replay device, and rare enough to be a
+per-attempt lottery rather than the deterministic per-frame failure v47–v50 produced. A nested
+inline edge over the fast path's tail can lose one bare/torn diagnostic count (gameplay state and
+the staging ring are nested-safe). The revision-5 acceptance evidence still gates: Golf's title
+`clocksSinceLatch` distribution must read 4 (2 on boot frames), and the game must react to the
+movie's Start — with `latch_head_max_cyc` expected at roughly 200 cycles or below; if a flashed
+revision 7 still merges, re-measure before touching code: the head counter now decides between
+"head still too long" (trim further / more RAM placement) and "reads inside the pre-head"
+(direct-vector escalation).
 
 This document is self-contained implementation requirements. The normative content is the
 "Implementation requirements" checklist and the "Firmware design" contracts; the other sections
@@ -610,7 +671,7 @@ the existing `tasOutputEnabled` path in the edge handler. `TAS_CANCEL`/`TAS_END`
 
 ### Trace and anomalies
 
-- The 512-entry trace ring, `TAS_TRACE` paging, and the bridge's continuous stream
+- The 384-entry trace ring (512 before revision 7 ceded RAM to the .code_in_ram ISRs), `TAS_TRACE` paging, and the bridge's continuous stream
   (`BRIDGE_TAS_TRACE_STREAM=1`) are unchanged in format. Diag bit 5 (R14) partitions row types:
   windowed traces contain only completed-poll rows (bit 5 clear), strobe traces only strobe-edge
   rows (bit 5 set) — kind alone cannot distinguish them.
@@ -623,7 +684,7 @@ the existing `tasOutputEnabled` path in the edge handler. `TAS_CANCEL`/`TAS_END`
   strobe — 60–480 rows/s across the strobe rates in the throughput section. The continuous
   stream drains at most 12 rows per serial exchange at a measured 50–65 ms per exchange
   (≈ 185–240 rows/s ceiling), sharing the serial command queue with ack-gated chunk uploads and
-  status polls, so sustained strobe-mode row rates can outrun it: the 512-row ring (≈ 2–4 s at
+  status polls, so sustained strobe-mode row rates can outrun it: the 384-row ring (≈ 1.5–3 s at
   typical game rates) may turn over between drains and the stream may have gaps. Rows carry monotonic sequence numbers, so gaps are detectable and
   every captured run of rows is contiguous; phase-3 validation criteria are therefore defined over
   **contiguous captured segments**, and the frozen-ring dump (anomaly freeze + `TAS_TRACE` paging)
@@ -675,7 +736,7 @@ TAS_BEGIN <frames> <poll|latch|strobe> [ports] [window_us]
 
 ## Buffer and throughput analysis
 
-- Ring: 512 records; start gate 120 records; `TAS_CHUNK` carries up to 48 records per line at
+- Ring: 384 records (revision 7); start gate 120 records; `TAS_CHUNK` carries up to 48 records per line at
   115200 baud → **raw wire** ceiling ≈ 2.3–2.6 k records/s. The **effective** refill rate is
   lower: the bridge sends chunks synchronously and awaits each acknowledgement
   (`sendNextTasChunk`, `bridge-server.js:578`), and a full exchange measures 50–65 ms, so
