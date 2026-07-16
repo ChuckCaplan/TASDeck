@@ -144,9 +144,21 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
   if (syncMode_ == TasSyncMode::Strobe) {
     // Per-strobe playback intentionally has no window or completed-read
     // accounting. Every accepted latch is a playback event, even when two
-    // edges share a timestamp or the preceding read was bare or torn.
+    // edges share a timestamp or the preceding read was bare or torn. In the
+    // steady state the expiry service pre-pops the next record mid-gap, so
+    // this edge path is a cheap commit; the in-ISR advance below is the
+    // fallback for edges that arrive before the service could run (boot
+    // bursts, double-latch games, a starved loop).
     hasLatched_ = true;
     lastLatchMicros_ = nowMicros;
+
+    if (preAdvanced_) {
+      preAdvanced_ = false;
+      nextMasks = currentMasks_;
+      lastEdgeKind_ = TasEdgeKind::PreAdvanced;
+      lastWindowResult_ = TasPlaybackResult::Ok;
+      return lastWindowResult_;
+    }
 
     TasPlaybackResult result = TasPlaybackResult::Waiting;
     if (!started_) {
@@ -249,13 +261,15 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
 }
 
 bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
-  if (syncMode_ == TasSyncMode::Strobe || !active() || preAdvanced_) {
+  if (!active() || preAdvanced_) {
     return false;
   }
 
   // Signed for the same reason as onLatchEdge's newWindow check: a stored
   // glitched-high latch time must read as "window still open", or the expiry
-  // service pre-advances mid-poll-cluster.
+  // service pre-advances mid-poll-cluster. In strobe mode the window value is
+  // not a coalescing window — every edge is its own event — but it still
+  // serves as the post-edge holdoff before the next record is pre-popped.
   if (hasLatched_ &&
       static_cast<int32_t>(nowMicros - lastLatchMicros_) <
         static_cast<int32_t>(latchWindowMicros_)) {
@@ -264,6 +278,12 @@ bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
 
   if (!started_) {
     return startRequested_ && readyToStart() && startDelayRemaining_ == 0;
+  }
+
+  if (syncMode_ == TasSyncMode::Strobe) {
+    // Every accepted edge consumes a record, so no completed-read credit is
+    // required before staging the next one for the edge to commit.
+    return true;
   }
 
   return pollCompletedInWindow_;
@@ -376,16 +396,12 @@ bool NesTasPlayback::willAdvanceOnEdge() const {
   // holds the current mask, and a ready start or started, polled window serves
   // the staged mask. Reads one byte-sized field at a time so it is safe from
   // the latch ISR.
-  if (!active()) {
+  if (!active() || preAdvanced_) {
     return false;
   }
 
   if (syncMode_ == TasSyncMode::Strobe) {
     return started_ || (startRequested_ && readyToStart() && startDelayRemaining_ == 0);
-  }
-
-  if (preAdvanced_) {
-    return false;
   }
 
   if (!started_) {

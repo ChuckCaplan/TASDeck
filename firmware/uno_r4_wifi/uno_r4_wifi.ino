@@ -29,7 +29,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v47";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v48";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -142,9 +142,52 @@ volatile uint32_t tasTornStrobeCount = 0;
 NesTasPlayback tasPlayback;
 FspTimer tasServiceTimer;
 
-// Each run has one trace-writer context: the clock ISRs in windowed modes or
-// the latch ISR in strobe mode. Trace pages are read from the main loop. A
-// timestamp of zero marks a slot while it is being replaced;
+// Strobe mode records one trace row per active port for every accepted latch
+// edge, but those rows must not be written from the latch ISR: clock edges
+// cannot preempt it (latch is priority 0, clocks priority 1), each clock IRQ
+// holds a single NVIC pending bit, and a latch ISR that outlives the console's
+// second read after the strobe collapses two pended clock edges into one and
+// tears the train one bit late (measured 2026-07-15: in-ISR row writes tore
+// 386 of 387 SMB1 records and 232 of 232 Golf records). The latch ISR instead
+// stages one compact event per accepted edge and the 1 kHz service timer
+// expands it into trace-ring rows mid-gap.
+struct TasStrobeEdgeEvent {
+  uint32_t timestampMicros = 0;
+  uint32_t tasFrame = 0;
+  uint32_t latchCount = 0;
+  uint32_t clockCount = 0;
+  uint32_t clock2Count = 0;
+  uint8_t clocksSinceLatch = 0;
+  uint8_t clocks2SinceLatch = 0;
+  uint8_t shiftIndex = 0;
+  uint8_t shift2Index = 0;
+  uint8_t clockedMask = 0;
+  uint8_t clocked2Mask = 0;
+  uint8_t mask = 0;
+  uint8_t mask2 = 0;
+  uint8_t lineLow = 0;
+  uint8_t line2Low = 0;
+  uint8_t windowKind = 0;
+  uint8_t result = 0;
+};
+
+// Single-producer (latch ISR) / single-consumer (service timer) ring with
+// free-running uint8 indices; the capacity must divide 256 so the wraparound
+// arithmetic stays exact. 16 entries covers >50 ms of edges even for games
+// that strobe five times per frame.
+constexpr uint8_t kTasStrobeEdgeEventCapacity = 16;
+static_assert(
+  (256 % kTasStrobeEdgeEventCapacity) == 0,
+  "free-running uint8 ring indices require the capacity to divide 256");
+TasStrobeEdgeEvent tasStrobeEdgeEvents[kTasStrobeEdgeEventCapacity] = {};
+volatile uint8_t tasStrobeEdgeEventHead = 0;
+volatile uint8_t tasStrobeEdgeEventTail = 0;
+volatile uint16_t tasStrobeEdgeEventDropCount = 0;
+
+// Each run has one trace-ring writer context: the clock ISRs in windowed
+// modes, or the 1 kHz service timer draining latch-ISR-staged edge events in
+// strobe mode. Trace pages are read from the main loop. A timestamp of zero
+// marks a slot while it is being replaced;
 // the real timestamp is published last. This lets the loop retry a preempted
 // copy without ever masking the latency-sensitive NES pin interrupts.
 inline void tasTraceCompilerBarrier() {
@@ -200,6 +243,7 @@ void applyButtonCommandToOutput(const Command& command);
 void resetTasTrace();
 void resumeTasTrace();
 void noteTasAnomaly(uint8_t kind);
+void drainStrobeEdgeTraceEvents();
 void recordTasTraceEntry(const TasTraceEntry& source);
 void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask);
 void restoreDiagnosticForcedMask();
@@ -879,15 +923,9 @@ bool processTasCommand(const Command& command, char* response, size_t responseLe
       controller2LatchedMask = 0;
       controller2ShiftIndex = tasdeck::kNesButtonCount;
       refreshControllerOutput();
-      if (
-        tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe &&
-        command.startDelayPolls == 0 &&
-        !tasPlayback.started()) {
-        // Strobe mode has no expiry service to release frame 0 before the
-        // console's first latch. Put its first-bit levels on both data pins
-        // now while command dispatch already has interrupts masked.
-        writeDataPinsForMasks(tasPlayback.stagedNextMasks());
-      }
+      // No strobe-specific frame-0 release is needed here: the expiry service
+      // pre-pops frame 0 for strobe runs too (windowExpiryDue), putting its
+      // first-bit levels on the wire within a service tick of TAS_START.
     }
     interrupts();
   } else if (command.type == CommandType::TasCancel) {
@@ -1010,6 +1048,9 @@ void resetTasTrace() {
   controller2CompletedClockedMask = 0;
   controllerCompletedPollSinceLatch = false;
   controller2CompletedPollSinceLatch = false;
+  tasStrobeEdgeEventHead = 0;
+  tasStrobeEdgeEventTail = 0;
+  tasStrobeEdgeEventDropCount = 0;
   tasTraceFrozen = false;
   tasTraceFreezeCountdown = 0;
   tasAnomalyCount = 0;
@@ -1089,6 +1130,53 @@ void recordTasTraceEntry(const TasTraceEntry& source) {
     tasTraceFreezeCountdown -= 1;
     if (tasTraceFreezeCountdown == 0) {
       tasTraceFrozen = true;
+    }
+  }
+}
+
+void drainStrobeEdgeTraceEvents() {
+  // Sole trace-ring writer in strobe mode. Runs from the 1 kHz service timer
+  // (priority 12), so the latch ISR can stage new events while a row is being
+  // written without two writers ever interleaving on the ring itself.
+  while (tasStrobeEdgeEventHead != tasStrobeEdgeEventTail) {
+    const uint8_t head = tasStrobeEdgeEventHead;
+    const TasStrobeEdgeEvent event = tasStrobeEdgeEvents[head % kTasStrobeEdgeEventCapacity];
+    tasTraceCompilerBarrier();
+    tasStrobeEdgeEventHead = static_cast<uint8_t>(head + 1);
+
+    TasTraceEntry row = {};
+    row.timestampMicros = event.timestampMicros;
+    row.tasFrame = event.tasFrame;
+    row.latchCount = event.latchCount;
+    row.clockCount = event.clockCount;
+    row.clocksSinceLatch = event.clocksSinceLatch;
+    row.polledMask = event.mask;
+    row.nextMask = event.mask;
+    row.latchedMask = event.mask;
+    row.shiftIndex = event.shiftIndex;
+    row.result = event.result;
+    row.clockedMask = event.clockedMask;
+    row.diag = static_cast<uint8_t>(
+      (event.lineLow & 0x01) |
+      (event.windowKind << 1) |
+      0x20);
+    row.port = 1;
+    recordTasTraceEntry(row);
+
+    if (tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
+      row.clockCount = event.clock2Count;
+      row.clocksSinceLatch = event.clocks2SinceLatch;
+      row.polledMask = event.mask2;
+      row.nextMask = event.mask2;
+      row.latchedMask = event.mask2;
+      row.shiftIndex = event.shift2Index;
+      row.clockedMask = event.clocked2Mask;
+      row.diag = static_cast<uint8_t>(
+        (event.line2Low & 0x01) |
+        (event.windowKind << 1) |
+        0x20);
+      row.port = 2;
+      recordTasTraceEntry(row);
     }
   }
 }
@@ -1189,6 +1277,10 @@ void serviceTasWindowExpiry() {
 void handleTasServiceTimer(timer_callback_args_t* args) {
   (void) args;
   serviceTasWindowExpiry();
+  // Drain only here: the timer is the staging ring's single consumer, keeping
+  // strobe-mode trace rows single-writer (the main-loop expiry calls above
+  // must not also drain).
+  drainStrobeEdgeTraceEvents();
 }
 
 bool latchWindowOpenForPreAdvance(uint32_t nowMicros) {
@@ -1314,7 +1406,8 @@ void handleLatchEdge() {
   const uint16_t pinsAtEntry = R_PORT1->PIDR;
   const uint32_t previousLatchMicros = controllerLastLatchMicros;
   const uint32_t latchMicros = micros();
-  const bool strobeMode = tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe;
+  const tasdeck::TasSyncMode syncMode = tasPlayback.syncMode();
+  const bool strobeMode = syncMode == tasdeck::TasSyncMode::Strobe;
   const bool sameHardwareWindow = strobeMode
     ? false
     : latchWithinCurrentWindow(latchMicros, previousLatchMicros);
@@ -1336,55 +1429,65 @@ void handleLatchEdge() {
   controllerDiagLineLowAtLatch = (pinsAtEntry & kPort1DataBit) == 0 ? 1 : 0;
   controller2DiagLineLowAtLatch = (pinsAtEntry & kPort2DataBit) == 0 ? 1 : 0;
 
-  // Strobe-edge traces describe the inter-strobe interval that just ended.
-  // Capture every field before the reset below; the priority-0 latch ISR is
-  // the sole trace writer in strobe mode.
-  const uint8_t clocksAtStrobe = controllerClocksSinceLatch;
-  const uint8_t clocks2AtStrobe = controller2ClocksSinceLatch;
-  const uint32_t clockCountAtStrobe = controllerClockCount;
-  const uint32_t clock2CountAtStrobe = controller2ClockCount;
   // A strobe should only ever find the shift register idle (8) or freshly
   // latched (0); 1..7 means the previous train ended short — a clock edge was
   // lost and the console just read a duplicated bit.
   const uint8_t shiftAtStrobe = controllerShiftIndex;
-  const uint8_t clockedAtStrobe = controllerCompletedPollSinceLatch
-    ? controllerCompletedClockedMask
-    : (shiftAtStrobe >= 1 && shiftAtStrobe <= tasdeck::kNesButtonCount
-        ? controllerClockedMask
-        : 0);
+  const uint8_t shift2AtStrobe = controller2ShiftIndex;
   if (
     tasOutputEnabled &&
-    tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
+    syncMode == tasdeck::TasSyncMode::Poll &&
     shiftAtStrobe >= 1 &&
     shiftAtStrobe < tasdeck::kNesButtonCount) {
     noteTasAnomaly(kTasAnomalyTornTrain);
   }
-  const uint8_t shift2AtStrobe = controller2ShiftIndex;
-  const uint8_t clocked2AtStrobe = controller2CompletedPollSinceLatch
-    ? controller2CompletedClockedMask
-    : (shift2AtStrobe >= 1 && shift2AtStrobe <= tasdeck::kNesButtonCount
-        ? controller2ClockedMask
-        : 0);
   if (
     tasOutputEnabled &&
-    tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
+    syncMode == tasdeck::TasSyncMode::Poll &&
     shift2AtStrobe >= 1 &&
     shift2AtStrobe < tasdeck::kNesButtonCount) {
     noteTasAnomaly(kTasAnomalyTornTrain);
   }
 
-  if (tasOutputEnabled && strobeMode && controllerLatchCount > 0) {
-    if (clocksAtStrobe == 0) {
-      tasBareStrobeCount += 1;
-    }
-    if (shiftAtStrobe >= 1 && shiftAtStrobe < tasdeck::kNesButtonCount) {
-      tasTornStrobeCount += 1;
-    }
-    if (
-      tasPlayback.portCount() >= tasdeck::kNesControllerPortCount &&
-      shift2AtStrobe >= 1 &&
-      shift2AtStrobe < tasdeck::kNesButtonCount) {
-      tasTornStrobeCount += 1;
+  // Strobe-edge traces describe the inter-strobe interval that just ended.
+  // Capture every field before the reset below. This capture must stay off
+  // the windowed paths: clock edges cannot preempt this ISR, and running it
+  // on every edge (v47) pushed the frame-boundary latch ISR past the second
+  // read of Zelda's first train, tearing that train on every frame.
+  uint8_t clocksAtStrobe = 0;
+  uint8_t clocks2AtStrobe = 0;
+  uint32_t clockCountAtStrobe = 0;
+  uint32_t clock2CountAtStrobe = 0;
+  uint8_t clockedAtStrobe = 0;
+  uint8_t clocked2AtStrobe = 0;
+  if (strobeMode) {
+    clocksAtStrobe = controllerClocksSinceLatch;
+    clocks2AtStrobe = controller2ClocksSinceLatch;
+    clockCountAtStrobe = controllerClockCount;
+    clock2CountAtStrobe = controller2ClockCount;
+    clockedAtStrobe = controllerCompletedPollSinceLatch
+      ? controllerCompletedClockedMask
+      : (shiftAtStrobe >= 1 && shiftAtStrobe <= tasdeck::kNesButtonCount
+          ? controllerClockedMask
+          : 0);
+    clocked2AtStrobe = controller2CompletedPollSinceLatch
+      ? controller2CompletedClockedMask
+      : (shift2AtStrobe >= 1 && shift2AtStrobe <= tasdeck::kNesButtonCount
+          ? controller2ClockedMask
+          : 0);
+    if (tasOutputEnabled && controllerLatchCount > 0) {
+      if (clocksAtStrobe == 0) {
+        tasBareStrobeCount += 1;
+      }
+      if (shiftAtStrobe >= 1 && shiftAtStrobe < tasdeck::kNesButtonCount) {
+        tasTornStrobeCount += 1;
+      }
+      if (
+        shift2AtStrobe >= 1 &&
+        shift2AtStrobe < tasdeck::kNesButtonCount &&
+        tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
+        tasTornStrobeCount += 1;
+      }
     }
   }
 
@@ -1393,10 +1496,12 @@ void handleLatchEdge() {
   controllerClockedMask = 0;
   controller2ClocksSinceLatch = 0;
   controller2ClockedMask = 0;
-  controllerCompletedClockedMask = 0;
-  controller2CompletedClockedMask = 0;
-  controllerCompletedPollSinceLatch = false;
-  controller2CompletedPollSinceLatch = false;
+  if (strobeMode) {
+    controllerCompletedClockedMask = 0;
+    controller2CompletedClockedMask = 0;
+    controllerCompletedPollSinceLatch = false;
+    controller2CompletedPollSinceLatch = false;
+  }
   controllerLastLatchMicros = latchMicros;
 
   // Latch edges drive playback. Windowed modes coalesce nearby edges into one
@@ -1407,7 +1512,6 @@ void handleLatchEdge() {
     if (!sameHardwareWindow) {
       controllerPollsInWindow = 0;
       controller2PollsInWindow = 0;
-      const bool traceActiveBefore = tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
       tasdeck::TasFrameMasks nextMasks = {
         controllerPressedMask,
         controller2PressedMask,
@@ -1416,7 +1520,9 @@ void handleLatchEdge() {
       // R08 replay devices consume one input record per accepted latch, even
       // when the game clocks fewer than eight controller bits. Poll mode keeps
       // requiring a completed read; latch mode grants the window immediately.
-      tasPlayback.noteLatchObserved();
+      if (!strobeMode) {
+        tasPlayback.noteLatchObserved();
+      }
       if (
         result == TasPlaybackResult::Ok ||
         result == TasPlaybackResult::Complete ||
@@ -1448,41 +1554,38 @@ void handleLatchEdge() {
         }
       }
 
-      const bool traceActiveAfter = tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
-      if (strobeMode && (traceActiveBefore || traceActiveAfter)) {
-        TasTraceEntry edgeEntry = {};
-        edgeEntry.timestampMicros = latchMicros;
-        edgeEntry.tasFrame = tasPlayback.currentFrame();
-        edgeEntry.latchCount = controllerLatchCount;
-        edgeEntry.clockCount = clockCountAtStrobe;
-        edgeEntry.clocksSinceLatch = clocksAtStrobe;
-        edgeEntry.polledMask = controllerPressedMask;
-        edgeEntry.nextMask = controllerPressedMask;
-        edgeEntry.latchedMask = controllerPressedMask;
-        edgeEntry.shiftIndex = shiftAtStrobe;
-        edgeEntry.result = static_cast<uint8_t>(result);
-        edgeEntry.clockedMask = clockedAtStrobe;
-        edgeEntry.diag = static_cast<uint8_t>(
-          (controllerDiagLineLowAtLatch & 0x01) |
-          (controllerDiagWindowKind << 1) |
-          0x20);
-        edgeEntry.port = 1;
-        recordTasTraceEntry(edgeEntry);
-
-        if (tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
-          edgeEntry.clockCount = clock2CountAtStrobe;
-          edgeEntry.clocksSinceLatch = clocks2AtStrobe;
-          edgeEntry.polledMask = controller2PressedMask;
-          edgeEntry.nextMask = controller2PressedMask;
-          edgeEntry.latchedMask = controller2PressedMask;
-          edgeEntry.shiftIndex = shift2AtStrobe;
-          edgeEntry.clockedMask = clocked2AtStrobe;
-          edgeEntry.diag = static_cast<uint8_t>(
-            (controller2DiagLineLowAtLatch & 0x01) |
-            (controllerDiagWindowKind << 1) |
-            0x20);
-          edgeEntry.port = 2;
-          recordTasTraceEntry(edgeEntry);
+      if (strobeMode && kind != tasdeck::TasEdgeKind::NotStartedWait) {
+        // Stage one compact event per playback-relevant edge; the 1 kHz
+        // service timer expands it into the per-port trace rows mid-gap.
+        // Building the rows here kept this ISR running past the console's
+        // second read and tore the train (see TasStrobeEdgeEvent).
+        const uint8_t stagingTail = tasStrobeEdgeEventTail;
+        if (
+          static_cast<uint8_t>(stagingTail - tasStrobeEdgeEventHead) >=
+          kTasStrobeEdgeEventCapacity) {
+          tasStrobeEdgeEventDropCount += 1;
+        } else {
+          TasStrobeEdgeEvent& event =
+            tasStrobeEdgeEvents[stagingTail % kTasStrobeEdgeEventCapacity];
+          event.timestampMicros = latchMicros;
+          event.tasFrame = tasPlayback.currentFrame();
+          event.latchCount = controllerLatchCount;
+          event.clockCount = clockCountAtStrobe;
+          event.clock2Count = clock2CountAtStrobe;
+          event.clocksSinceLatch = clocksAtStrobe;
+          event.clocks2SinceLatch = clocks2AtStrobe;
+          event.shiftIndex = shiftAtStrobe;
+          event.shift2Index = shift2AtStrobe;
+          event.clockedMask = clockedAtStrobe;
+          event.clocked2Mask = clocked2AtStrobe;
+          event.mask = controllerPressedMask;
+          event.mask2 = controller2PressedMask;
+          event.lineLow = controllerDiagLineLowAtLatch;
+          event.line2Low = controller2DiagLineLowAtLatch;
+          event.windowKind = controllerDiagWindowKind;
+          event.result = static_cast<uint8_t>(result);
+          tasTraceCompilerBarrier();
+          tasStrobeEdgeEventTail = static_cast<uint8_t>(stagingTail + 1);
         }
       }
     }

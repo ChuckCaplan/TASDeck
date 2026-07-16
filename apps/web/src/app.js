@@ -1598,7 +1598,10 @@ function strobeEdgeResultMatchesKind(edgeKind, result) {
   if (edgeKind === 6) {
     return result === "waiting";
   }
-  if (edgeKind === 2 || edgeKind === 4) {
+  // Kind 1 (pre-advanced) is the steady state: the service timer pops the
+  // next record mid-gap and the edge just commits it. Kinds 2 (advanced at
+  // edge) and 4 (started) are the in-ISR fallback and the first served edge.
+  if (edgeKind === 1 || edgeKind === 2 || edgeKind === 4) {
     return result === "ok";
   }
   if (edgeKind === 7) {

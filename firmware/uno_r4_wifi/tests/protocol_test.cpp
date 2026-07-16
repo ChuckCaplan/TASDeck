@@ -1152,7 +1152,7 @@ void testTasStrobePlaybackDelayAndWindowService() {
   assert(playback.start(2) == TasPlaybackResult::Ok);
   assert(!playback.willAdvanceOnEdge());
 
-  // Timer/loop expiry service never starts or advances a strobe-mode run.
+  // The expiry service never releases frame 0 while start delay remains.
   assert(!playback.windowExpiryDue(100000));
   assert(playback.onWindowExpired(100000, nextMask) == TasPlaybackResult::Waiting);
   assert(nextMask == 0x00);
@@ -1163,6 +1163,7 @@ void testTasStrobePlaybackDelayAndWindowService() {
   assert(playback.startDelayRemaining() == 1);
   assert(!playback.willAdvanceOnEdge());
   assert(playback.stagedNextMask() == 0x02);
+  assert(!playback.windowExpiryDue(10 + 499));
 
   playback.notePollCompleted();
   assert(playback.onLatchEdge(10, nextMask) == TasPlaybackResult::Waiting);
@@ -1184,6 +1185,62 @@ void testTasStrobePlaybackDelayAndWindowService() {
   assert(playback.onLatchEdge(13, nextMask) == TasPlaybackResult::Complete);
   assert(nextMask == 0x00);
   assert(!playback.active());
+}
+
+void testTasStrobePlaybackPreAdvancesBetweenEdges() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40, 0x81};
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(3, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 3) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  // Armed before the first strobe: the expiry service releases frame 0 so its
+  // bit 0 is on the wire before the console ever latches, exactly like the
+  // windowed modes.
+  assert(playback.windowExpiryDue(1000));
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.started());
+  assert(!playback.willAdvanceOnEdge());
+  assert(!playback.windowExpiryDue(1000));
+
+  // The first edge just commits the pre-released frame.
+  assert(playback.onLatchEdge(5000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.currentFrame() == 0);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+
+  // No completed-read credit is required: the holdoff alone re-arms the
+  // pre-advance, and the edge after it commits record 1.
+  assert(!playback.windowExpiryDue(5000 + 7999));
+  assert(playback.windowExpiryDue(5000 + 8000));
+  assert(playback.onWindowExpired(5000 + 8000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x40);
+  assert(!playback.willAdvanceOnEdge());
+  assert(playback.onLatchEdge(21700, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x40);
+  assert(playback.currentFrame() == 1);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+
+  // An edge that arrives before the holdoff (double-latch games) falls back
+  // to advancing in place and still consumes exactly one record.
+  assert(playback.willAdvanceOnEdge());
+  assert(playback.onLatchEdge(21800, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x81);
+  assert(playback.currentFrame() == 2);
+  assert(playback.lastEdgeKind() == TasEdgeKind::AdvancedAtEdge);
+
+  // Completion can also happen mid-gap: the record after the last one ends
+  // the run from the expiry service and never re-arms a pre-advance.
+  assert(playback.windowExpiryDue(21800 + 8000));
+  assert(playback.onWindowExpired(21800 + 8000, nextMask) == TasPlaybackResult::Complete);
+  assert(nextMask == 0x00);
+  assert(playback.complete());
+  assert(!playback.active());
+  assert(!playback.windowExpiryDue(21800 + 16000));
 }
 
 void testTasStrobePlaybackServesTwoPortsAndResets() {
@@ -1347,6 +1404,7 @@ int main() {
   testTasPlaybackIgnoresUnavailableControllerPolls();
   testTasStrobePlaybackAdvancesOnEveryEdge();
   testTasStrobePlaybackDelayAndWindowService();
+  testTasStrobePlaybackPreAdvancesBetweenEdges();
   testTasStrobePlaybackServesTwoPortsAndResets();
   testTasStrobePlaybackReportsUnderrun();
   testTasPlaybackRejectsInvalidLatchWindow();

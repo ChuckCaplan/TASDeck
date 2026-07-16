@@ -1,6 +1,6 @@
 # Per-strobe sync mode specification
 
-Status: FROZEN v1 — rollout phase 1 implemented; console validation and the later default flip remain pending.
+Status: FROZEN v1 + revision 4 — rollout phase 1 implemented; revision 4 (hardware findings) implemented; console validation and the later default flip remain pending.
 Date: 2026-07-15 (revised same day: resolved four implementation-blocking ambiguities from external
 review — completion edge accounting, edge-row marking, trace-capture throughput, strobe counter
 semantics — plus start-delay staging text, effective refill throughput, and mode-aware UI copy.
@@ -12,6 +12,54 @@ completed-poll rows suppressed (two nested ISR writers would corrupt the ring) �
 row per active port replacing the diag-bit-6 marker and restoring two-port bit-perfect diffing.
 Freeze polish: kind-aware expected results for edge rows in R20a, torn counting limited to
 active ports, and the exact non-diagnostic debug-pin build command for the phase-3 ISR check)
+
+## Revision 4 (2026-07-15, hardware test findings — supersedes parts of R4–R7, R13, R14)
+
+The v47 implementation of this spec failed its first hardware session, and the failure was the
+ISR budget this spec told us to verify: clock edges cannot preempt the priority-0 latch ISR, each
+clock IRQ holds a single NVIC pending bit, and a latch ISR that outlives the console's **second**
+read after the strobe collapses two pended clock edges into one. The shift register then runs one
+bit behind for the rest of the train — the console reads bit k−1 at position k (held B reads as
+Select, the movie's Start lands on the console's Up), and the train ends torn (shift index 1–7 at
+the next strobe). Measured on console, 2026-07-15: SMB1 max-score `.r08` in strobe mode tore
+**386 of 387** records; Golf `.r08` tore **232 of 232**; and the strobe-only state capture, which
+v47 ran unconditionally on every edge, added enough to the *windowed* frame-boundary edge path to
+tear Zelda's first read train on **every frame** (15 port-1 clocks/frame in the v47 trace vs 16 on
+v46) — a regression in previously-verified poll-mode playback. The in-ISR trace-row writes alone
+(~2 rows × full-entry copies) exceeded the budget at ordinary 60 Hz single-latch spacing; the ~35
+µs consecutive-strobe target was never reachable that way. Three design changes follow:
+
+1. **Strobe-only work is gated off the windowed edge path** (normative for every future edit to
+   `handleLatchEdge`): the pre-reset state capture, clocked-mask reconstruction, bare/torn counter
+   checks, and edge-event staging run only when `syncMode() == Strobe`. The windowed path must
+   stay instruction-for-instruction at its v46 cost — it was already within ~1–2 µs of tearing
+   Zelda-class first reads.
+2. **Strobe mode pre-advances mid-gap, exactly like the windowed modes** (supersedes R5, revises
+   R4/R6, removes R13). `windowExpiryDue()` is true in strobe mode once the run has started and
+   `latchWindowMicros` has elapsed since the last accepted edge — the window value, unused for
+   coalescing in strobe mode, becomes the post-edge holdoff — and the `!started_` release of
+   frame 0 applies to strobe runs unchanged (which also covers TAS_START delay-0 arming, so R13's
+   command-context pin write is deleted). `onWindowExpired` pops the next record and sets
+   `preAdvanced_`; the accepted edge normally just commits it (`PreAdvanced` edge kind, new in
+   strobe traces). Record-per-edge accounting is unchanged: a pre-popped record is committed by
+   exactly one edge, and an edge that arrives inside the holdoff (double-latch games, re-read
+   bursts) falls back to the in-ISR `advanceFrame` exactly as before (`AdvancedAtEdge`).
+   `willAdvanceOnEdge()` returns false while `preAdvanced_` is set, in strobe mode as in windowed.
+   One visible consequence: `Complete`/`Underrun` can now occur mid-gap from the expiry service
+   (as in windowed modes), so the final `Ended` edge row of R14's record mapping may not appear;
+   completion detection uses TAS_STATUS, not trace rows.
+3. **Edge rows are staged, not written, in the latch ISR** (supersedes R14's sole-writer
+   mechanics; its one-row-per-active-port content contract is unchanged). The latch ISR appends
+   one compact `TasStrobeEdgeEvent` per playback-relevant accepted edge (gating simplified from
+   the before/after-OR rule to: any edge whose kind is not `NotStartedWait`) to a 16-entry
+   single-producer/single-consumer staging ring; the 1 kHz service timer drains it and writes the
+   per-port trace-ring rows mid-gap. The trace ring keeps exactly one writer context per run —
+   clock ISRs in windowed modes, the service timer in strobe mode — so the third-pass concurrency
+   argument still holds, without the row-write cost inside the latch ISR. Staging overflow drops
+   the event and counts `tasStrobeEdgeEventDropCount` (trace stream gaps are acceptable per the
+   second pass). R20a treats `PreAdvanced` (kind 1) edge rows as expected-`ok` alongside
+   `AdvancedAtEdge` and `Started`, and `.r08` record diffing maps records to bit-5 rows with kind
+   `Started`, `PreAdvanced`, or `AdvancedAtEdge`.
 
 This document is self-contained implementation requirements. The normative content is the
 "Implementation requirements" checklist and the "Firmware design" contracts; the other sections
@@ -45,12 +93,16 @@ Firmware — playback (`NesTasPlayback.*`):
 
 - **R3** `begin()` accepts `Strobe` with validation otherwise identical to today.
 - **R4** In strobe mode `onLatchEdge()` implements the contract in "Strobe-mode onLatchEdge
-  contract" below: every call is a playback event; no time comparison; no poll gating;
-  `preAdvanced_` never participates.
-- **R5** In strobe mode `windowExpiryDue()` returns false and `onWindowExpired()` never consumes a
-  record nor sets `preAdvanced_` — the 1 kHz timer and loop service cannot advance playback.
+  contract" below: every call is a playback event; no time comparison; no poll gating.
+  *(Rev 4: a `preAdvanced_` edge commits the pre-popped record — `PreAdvanced` kind — before the
+  start/advance logic; "never participates" is superseded.)*
+- **R5** *(Superseded by revision 4.)* In strobe mode `windowExpiryDue()` is true once the run has
+  started and `latchWindowMicros` has elapsed since the last accepted edge (post-edge holdoff),
+  and the `!started_` frame-0 release applies unchanged; `onWindowExpired()` pre-pops exactly one
+  record and sets `preAdvanced_` for the next edge to commit.
 - **R6** In strobe mode `willAdvanceOnEdge()` returns true iff
-  `active() && (started_ || (startRequested_ && readyToStart() && startDelayRemaining_ == 0))`.
+  `active() && !preAdvanced_ && (started_ || (startRequested_ && readyToStart() && startDelayRemaining_ == 0))`
+  *(rev 4 added the `!preAdvanced_` term — a pre-advanced record is already on the wire)*.
 - **R7** The start delay decrements exactly once per accepted edge (bare, torn, or full read), and
   record 0 is served on the first accepted edge after it reaches zero. Edge accounting
   distinguishes two milestones: **all records served** after delay + totalFrames accepted edges,
@@ -78,21 +130,23 @@ Firmware — sketch (`uno_r4_wifi.ino`):
   `syncMode() == Strobe && willAdvanceOnEdge()`, the data line pre-positions bit 0 of the staged
   next mask for that port instead of the current pressed mask's bit 0. Windowed-mode behavior is
   unchanged.
-- **R13** When `TAS_START` is accepted with delay 0 and playback has not started, the staged
-  frame-0 first-bit levels are written to both data pins from command context, with interrupts
-  briefly masked (mirror the `serviceTasWindowExpiry` pattern).
-- **R14** In strobe mode, trace rows are recorded **per accepted strobe at edge time — one row
-  per active port — and these replace the completed-poll rows**, which are suppressed in strobe
-  mode (sole-writer rule below; windowed-mode tracing is untouched):
-  - **Gating.** The row is recorded iff `started() || startDelayRemaining() > 0` is true when
-    evaluated either immediately before **or** immediately after the `onLatchEdge()` call (the OR
-    of both reads). The predicate changes during the call in both directions: evaluated
-    before-only it misses the delay-0 `Started` edge (turns true during the call); evaluated
-    after-only it misses the final `DelayWait` edge that decrements the delay 1→0.
+- **R13** *(Deleted by revision 4.)* The command-context frame-0 pin write is unnecessary: the
+  expiry service's `!started_` release (now active for strobe runs) puts frame 0's first-bit
+  levels on the wire within one service tick of `TAS_START`.
+- **R14** In strobe mode, trace rows are produced **per accepted strobe — one row per active
+  port — and these replace the completed-poll rows**, which are suppressed in strobe mode
+  (windowed-mode tracing is untouched). *(Rev 4: the latch ISR stages one compact event per edge;
+  the 1 kHz service timer writes the actual ring rows. The row content contract below is
+  unchanged.)*
+  - **Gating.** *(Simplified by rev 4.)* An event is staged iff the edge's kind is not
+    `NotStartedWait` — this covers the `Started` edge, every `DelayWait` edge, and the `Ended`
+    edge, without re-evaluating started/delay state around the `onLatchEdge()` call.
   - **Ordering.** The pre-edge state the row needs — per-port clocks-since-latch, shift indices,
     the clocked-mask reconstruction/snapshot, clock counts — is captured into locals at ISR
-    entry, before `handleLatchEdge` resets that state (`uno_r4_wifi.ino:1310`). The row itself is
-    written after `onLatchEdge()` returns, once the served mask, result, and edge kind are known.
+    entry, before `handleLatchEdge` resets that state, and only when `syncMode() == Strobe`
+    (rev 4 change 1: this capture must never run on the windowed paths). The event is staged
+    after `onLatchEdge()` returns, once the served mask, result, and edge kind are known; the
+    service timer writes the rows from the staged event mid-gap.
   - **Content — one row per active port.** The latch ISR writes a port-1 row and, when
     `portCount() == 2`, a port-2 row immediately after it (consecutive sequence numbers, same
     timestamp and latch count — that pairing is the grouping key). Each row: result = the result
@@ -104,30 +158,33 @@ Firmware — sketch (`uno_r4_wifi.ino`):
     row's own fields, and both served bytes of a two-port `.r08` record are captured — the trace
     diffs bit-perfectly against the full record stream, not just port 1. Diag byte layout: bit 0
     = line-low-at-latch, bits 1–3 = kind, bit 4 = anomaly mark, bit 5 = strobe-edge row.
-  - **Sole writer / poll-row suppression.** In strobe mode the latch ISR is the trace ring's
-    **only** writer: completed-poll rows are suppressed (`recordTasTrace()` is not called from
-    the clock ISRs when `syncMode() == Strobe`; windowed modes are unchanged). This is a hard
-    concurrency requirement, not an optimization. The ring's writer protocol assumes writers
-    that cannot preempt one another — today both writers are the priority-1 clock ISRs, which
-    never nest, and the timestamp-zero publication (`uno_r4_wifi.ino:138`) protects the
-    main-loop *reader* against one writer, not two nested writers. A priority-0 latch-ISR write
-    preempting a clock-ISR write mid-`recordTasTrace()` would reuse the same slot and corrupt
-    both the row and the head/sequence accounting; suppression keeps exactly one writer context
-    per run, and wrapping trace writes in `noInterrupts()` is forbidden (C2). Nothing is lost by
+  - **Sole writer / poll-row suppression.** *(Mechanics revised by rev 4 change 3; the
+    one-writer-context invariant is unchanged.)* Completed-poll rows are suppressed in strobe
+    mode (`recordTasTrace()` is not called from the clock ISRs when `syncMode() == Strobe`;
+    windowed modes are unchanged), because the ring's writer protocol assumes writers that
+    cannot preempt one another — the timestamp-zero publication protects the main-loop *reader*
+    against one writer, not two nested writers. Rev 4 moves the strobe row writes out of the
+    latch ISR entirely: the ISR appends a compact event to a 16-entry SPSC staging ring
+    (producer: latch ISR; consumer: 1 kHz service timer, which is the drain's **only** caller —
+    the main-loop expiry calls must not drain), and the service timer is the trace ring's only
+    writer in strobe mode. In-ISR row writes measurably tore the served trains (see revision 4);
+    wrapping trace writes in `noInterrupts()` remains forbidden (C2). Nothing is lost by
     suppression: the previous read's reconstruction rides in the next edge row, so
     served-vs-read verification becomes a cross-row diff (edge-row pair N+1's clocked masks
     against pair N's served masks) instead of a same-row compare.
   - **Timestamp.** Edge rows record the edge timestamp already captured at ISR entry
-    (`latchMicros`), passed into the trace writer as a parameter: `recordTasTrace()` currently
-    reads `micros()` per row (`uno_r4_wifi.ino:1031`), and the edge path must not pay extra
-    `micros()` reads in the priority-0 latch ISR.
+    (`latchMicros`), carried through the staged event: the edge path must not pay extra
+    `micros()` reads in the priority-0 latch ISR, and both per-port rows built from one event
+    share its timestamp (the pairing key, with the latch count).
   - **Filtering and record mapping.** Diag bit 5 partitions row types across all modes —
     windowed traces contain only bit-5-clear completed-poll rows, strobe traces only bit-5 edge
     rows (kind alone could not distinguish them, since completed-poll rows copy
     `controllerDiagWindowKind` from the edge that opened their read). `.r08` record diffing uses
-    bit-5 rows whose kind is `Started` or `AdvancedAtEdge` — exactly one per served record per
-    active port, port-1 rows forming the record's first byte stream and port-2 rows the second;
-    `DelayWait` rows and the final `Ended` rows do not correspond to movie records.
+    bit-5 rows whose kind is `Started`, `PreAdvanced` (rev 4 — the steady-state commit), or
+    `AdvancedAtEdge` — exactly one per served record per active port, port-1 rows forming the
+    record's first byte stream and port-2 rows the second; `DelayWait` rows and the final `Ended`
+    rows do not correspond to movie records (rev 4: a run that completes mid-gap via the expiry
+    service produces no final `Ended` row at all — completion detection uses TAS_STATUS).
   - **Clocked-mask definition (per port).** The completed-poll paths clear the clocked-mask
     accumulators after each full read (`uno_r4_wifi.ino:1453` and the port-2 equivalent), so the
     edge rows require retained snapshots — each port's completed-poll path saves its
@@ -191,10 +248,11 @@ Web and bridge:
   and a strobe trace consists entirely of such rows (R14 suppresses poll rows in strobe mode), so
   the skip rule keeps the legacy analyzer correct without any mode awareness. The result check
   (`result !== "ok"`, `app.js:1550`) becomes kind-aware for bit-5 rows instead of being skipped:
-  expected pairings are `DelayWait` → `waiting`, `Started`/`AdvancedAtEdge` → `ok`, and a final
-  `Ended` → `complete`; `underrun` is always flagged, as is any other result/kind pairing —
-  including kinds that must never appear on a strobe-edge row (`SameWindow`, `PreAdvanced`,
-  `ReadlessHold`, and `NotStartedWait`, which R14's gating excludes from recording). Sequence-gap
+  expected pairings are `DelayWait` → `waiting`, `Started`/`PreAdvanced`/`AdvancedAtEdge` → `ok`
+  (rev 4 added `PreAdvanced`, the steady-state commit), and a final `Ended` → `complete`;
+  `underrun` is always flagged, as is any other result/kind pairing — including kinds that must
+  never appear on a strobe-edge row (`SameWindow`, `ReadlessHold`, and `NotStartedWait`, which
+  R14's gating excludes from recording). Sequence-gap
   detection still runs over the unfiltered row stream (sequence numbers are global across row
   types). A dedicated strobe-edge analysis pass (cross-row served-vs-read diffing per R14) is
   optional in v1.
@@ -368,10 +426,12 @@ Strobe mode changes:
   `previousWindowPolled` gate entirely. Not-started/delay/started handling mirrors the existing
   structure (`NotStartedWait`, `DelayWait` decrementing per edge, `Started`, then `advanceFrame`
   per edge).
-- `NesTasPlayback::windowExpiryDue()` returns **false** in strobe mode. The 1 kHz service timer and
-  loop service never consume records — wall-clock advancement is meaningless in a latch-driven
-  mode, and a timer-consumed record during a console pause would be an off-by-one. `preAdvanced_`
-  is never set in strobe mode.
+- *(Superseded by revision 4.)* `NesTasPlayback::windowExpiryDue()` is **true** in strobe mode
+  once the run has started and `latchWindowMicros` has elapsed since the last accepted edge, so
+  the service timer pre-pops the next record mid-gap and the edge path is a cheap `PreAdvanced`
+  commit. The original worry — a timer-consumed record during a console pause — is bounded at one
+  pre-popped record: `preAdvanced_` blocks further expiry pops until an edge commits, exactly as
+  in windowed mode, so record-per-edge accounting is preserved.
 - Because the advance decision contains no time comparison, the `micros()` backwards-step hazard
   that caused the Zelda dungeon-1 double-advance (fixed in v44) is structurally absent from this
   mode.
@@ -381,10 +441,13 @@ Strobe mode changes:
 The strobe branch is entered immediately after the `active()` check, before any window logic:
 
 ```txt
-onLatchEdge(nowMicros, nextMasks) — strobe mode:
+onLatchEdge(nowMicros, nextMasks) — strobe mode (rev 4 adds the preAdvanced_ commit):
   nextMasks = currentMasks_
   if (!active()):            lastEdgeKind_ = Ended;          return Inactive
-  hasLatched_ = true; lastLatchMicros_ = nowMicros           # bookkeeping only, never read
+  hasLatched_ = true; lastLatchMicros_ = nowMicros           # feeds the expiry holdoff (rev 4)
+  if (preAdvanced_):
+    preAdvanced_ = false; nextMasks = currentMasks_
+    lastWindowResult_ = Ok;  lastEdgeKind_ = PreAdvanced;    return Ok
   if (!started_):
     if (!startRequested_ || !readyToStart()):
                              lastEdgeKind_ = NotStartedWait; return Waiting
@@ -400,9 +463,9 @@ onLatchEdge(nowMicros, nextMasks) — strobe mode:
   lastWindowResult_ = result;                                return result
 ```
 
-Notes: `preAdvanced_` and `pollCompletedInWindow_` are never read or written in this branch.
+Notes: `pollCompletedInWindow_` is never read or written in this branch.
 `noteLatchObserved()`/`notePollCompleted()` calls from the sketch are harmless no-ops with respect
-to strobe advancement (R8). The first accepted edge after the delay serves record 0 (`Started`);
+to strobe advancement (R8; the sketch additionally skips `noteLatchObserved()` in strobe mode). The first accepted edge after the delay serves record 0 (`Started`);
 each subsequent edge serves the next record; after delay + totalFrames accepted edges every record
 has been served, and the next edge's `advanceFrame` returns `Complete` and releases input — delay
 + totalFrames + 1 accepted edges to completion (R7).
@@ -411,8 +474,9 @@ has been served, and the next edge's `advanceFrame` returns `Complete` and relea
 
 The hard constraint (unchanged from today): the console samples bit 0 a few microseconds after the
 strobe edge — sooner than latch-ISR entry can reliably update the pin. The windowed modes solve
-this by pre-positioning the next mask's bit 0 mid-gap. Strobe mode cannot use a timer, so it
-pre-positions at the earliest post-read moment instead:
+this by pre-positioning the next mask's bit 0 mid-gap. Rev 4 gives strobe mode the same mid-gap
+pre-advance; the post-read pre-positioning below remains as the second layer and the in-holdoff
+fallback:
 
 - **Steady state (full 8-clock reads).** After the edge advance serves record N,
   `advanceFrame → stageNextMask()` already points the staged masks at record N+1. The clock ISRs
@@ -428,33 +492,34 @@ pre-positions at the earliest post-read moment instead:
   the served first bit was on the wire before entry and counts `kTasAnomalyLineMismatch` when it
   was not (`uno_r4_wifi.ino:1352-1364`). The acceptance bar for validation runs is zero
   line-mismatch anomalies on full-read streams.
-- **Consecutive-strobe budget.** Support strobes arriving ≥ ~30 µs apart (SMB3-class re-read loops;
-  the 0.32 payload polls ~35 µs apart). Beyond the work the ISRs already do per edge in windowed
-  runs, the strobe-mode edge path adds: the ring pop and restage, the pre-reset state snapshots
-  and bare/torn counter checks (R14/R15), and up to two trace-ring entry writes (one per active
-  port, R14) — all straight-line loads and stores, with the edge timestamp passed in rather than
-  re-reading `micros()` (R14) — all inside the priority-0 latch ISR that runs immediately before
-  the clock ISRs. The clock ISRs write no trace rows in strobe mode (R14 sole-writer rule), which
-  returns some of that budget. At 48 MHz this
-  is expected to fit the ~30 µs floor, but that is a claim to verify, not assume: phase 3 includes
-  an ISR-budget acceptance check at ~35 µs strobe spacing — no lost clock edges (clock counts
-  consistent with records served) and latch-ISR pulse width within the inter-strobe gap, measured
-  via `TASDECK_ISR_DEBUG_PIN`. The latch ISR remains priority 0, clocks priority 1, per the
-  existing scheme.
+- **Consecutive-strobe budget.** *(Rewritten by revision 4 — the v47 budget failed on hardware at
+  ordinary 60 Hz spacing, not the ~35 µs target.)* The binding deadline is not the next strobe:
+  it is the console's **second clock read after this strobe** (~13 µs for Zelda-class routines,
+  ~14–15 µs for SMB1-class). Clock edges pend behind the priority-0 latch ISR with a single NVIC
+  pending bit each, so a latch ISR longer than that deadline merges two clock edges and tears the
+  train. The v48 strobe edge path therefore contains only: the entry fast-path pin write, the
+  strobe-only state capture, the `preAdvanced_` commit (or the fallback pop for in-holdoff
+  edges), bare/torn counter increments, and one compact staging-ring append — no trace-row
+  construction (rev 4 change 3). The windowed edge path carries none of the strobe-only work
+  (rev 4 change 1). The phase-3 acceptance check stands, with the pass bar restated: on-console
+  `torn_strobes` ≈ 0 on full-read streams (the counter directly measures lost clock edges), and
+  latch-ISR pulse width under the second-read deadline via `TASDECK_ISR_DEBUG_PIN`. The latch ISR
+  remains priority 0, clocks priority 1, per the existing scheme.
 
 ### Start, delay, and arming
 
-- Arming before power-on must put record 0's bit 0 on the wire without a timer release. When
-  `TAS_START` is processed with delay 0 and playback has not started, the staged frame-0 first bit
-  is written from command context (R13) — mirroring today's pre-start staging, minus the window
-  bookkeeping. The existing pre-start `stageNextMask()` in `pushChunk` already keeps the staged
-  masks pointing at frame 0.
-- When the delay reaches 0 **via an edge**, no command- or loop-context path runs — window expiry
-  is disabled in strobe mode (R5), so there is nothing to write from `loop()`. Record 0's bit 0
-  reaches the wire through the normal strobe-mode paths instead: the post-8th-clock rewrite of the
-  read that follows the final `DelayWait` edge (R12 — `willAdvanceOnEdge()` turns true the moment
-  the delay hits zero), or, when that interval is bare or torn, the next edge's ISR entry fast
-  path, with lateness instrumented as `line_mismatch` (R16).
+- Arming before power-on puts record 0's bit 0 on the wire through the expiry service's
+  `!started_` release, which rev 4 enables for strobe runs (R13's command-context write is
+  deleted): within one service tick of `TAS_START` with delay 0, frame 0 is pre-popped, the pins
+  are driven, and the first edge commits it. The existing pre-start `stageNextMask()` in
+  `pushChunk` already keeps the staged masks pointing at frame 0 for the fallback path.
+- When the delay reaches 0 **via an edge**, the expiry service pre-pops record 0 once the holdoff
+  elapses (rev 4), and the next edge commits it. If the next edge arrives inside the holdoff,
+  record 0's bit 0 reaches the wire through the strobe-mode fallback paths instead: the
+  post-8th-clock rewrite of the read that follows the final `DelayWait` edge (R12 —
+  `willAdvanceOnEdge()` turns true the moment the delay hits zero), or, when that interval is
+  bare or torn, the next edge's ISR entry fast path, with lateness instrumented as
+  `line_mismatch` (R16).
 - During the delay, edges serve released input via the existing `DelayWait` path;
   `willAdvanceOnEdge()` stays false until the delay is exhausted, so the entry fast path keeps
   serving zeros. `kTasMaxStartDelayPolls` (3600) is unchanged.
@@ -564,7 +629,8 @@ TAS_BEGIN <frames> <poll|latch|strobe> [ports] [window_us]
     while started (R6);
   - `stagedNextMasks()` progression across arming, delay, every advance, and end of stream —
     zeros after the final record (R10);
-  - `windowExpiryDue()` always false; `onWindowExpired()` never consumes (R5);
+  - `windowExpiryDue()`/`onWindowExpired()` pre-pop exactly one record after the holdoff, blocked
+    while `preAdvanced_` or delay remains, with the edge committing it (R5 as revised by rev 4);
   - completion, underrun, two-port masks served per record, reset/cancel (R9).
 - **R25** — web (`tas.test.js`, `transport.test.js`, `bridge-server.test.js`): mode list contains
   `strobe`; TAS_BEGIN formatting threads `strobe`; bridge accepts and threads the mode end-to-end;
