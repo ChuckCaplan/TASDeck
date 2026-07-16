@@ -149,16 +149,12 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
     // this edge path is a cheap commit; the in-ISR advance below is the
     // fallback for edges that arrive before the service could run (boot
     // bursts, double-latch games, a starved loop).
-    hasLatched_ = true;
-    lastLatchMicros_ = nowMicros;
-
-    if (preAdvanced_) {
-      preAdvanced_ = false;
-      nextMasks = currentMasks_;
-      lastEdgeKind_ = TasEdgeKind::PreAdvanced;
-      lastWindowResult_ = TasPlaybackResult::Ok;
+    if (tryCommitPreAdvancedEdge(nowMicros, nextMasks)) {
       return lastWindowResult_;
     }
+
+    hasLatched_ = true;
+    lastLatchMicros_ = nowMicros;
 
     TasPlaybackResult result = TasPlaybackResult::Waiting;
     if (!started_) {
@@ -488,10 +484,6 @@ TasPlaybackResult NesTasPlayback::lastWindowResult() const {
   return lastWindowResult_;
 }
 
-uint32_t NesTasPlayback::currentFrame() const {
-  return currentFrame_;
-}
-
 uint32_t NesTasPlayback::totalFrames() const {
   return totalFrames_;
 }
@@ -522,14 +514,6 @@ uint8_t NesTasPlayback::currentMask() const {
 
 TasFrameMasks NesTasPlayback::currentMasks() const {
   return currentMasks_;
-}
-
-uint8_t NesTasPlayback::portCount() const {
-  return portCount_;
-}
-
-TasSyncMode NesTasPlayback::syncMode() const {
-  return syncMode_;
 }
 
 bool NesTasPlayback::readyToStart() const {

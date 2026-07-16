@@ -103,6 +103,17 @@ window (windowed modes) or post-edge holdoff (strobe mode) expires; the main loo
 service as a best effort. The latch ISR advances only as a fallback if expiry service was missed.
 Keep serial and command handling from delaying the higher-priority NES latch and clock interrupts.
 
+Interrupt priorities depend on the sync mode. Windowed modes run the latch at NVIC priority 0 and
+the clocks at 1 so simultaneously pended edges replay strobe-first. Strobe mode inverts this
+(clocks 0, latch 1): games like Golf read `$4016` twice within 2.2 µs of the strobe — sooner than
+the latch ISR can finish — and with the clocks on top those reads preempt the latch ISR's tail
+instead of merging in the clock IRQ's single NVIC pending bit (one lost shift, every later bit
+served one position late). The latch ISR guards clock-shared state with a short PRIMASK critical
+head, and the clock ISRs restore strobe-first ordering in software by running a pended latch edge
+inline before shifting. `TAS_STATUS` reports the measured latch ISR body duration as
+`latch_isr_last_cyc`/`latch_isr_max_cyc` (DWT cycles, 48 per µs, dispatch excluded); the bridge
+copies both into `.trace` headers and the `.stream.csv` footer.
+
 `TAS_TRACE [count] [start]` reads from the firmware's trace ring. The ring stores the latest 512
 rows, and each firmware response returns up to 12 rows so the middleware
 can page through larger captures without overflowing the serial response buffer.

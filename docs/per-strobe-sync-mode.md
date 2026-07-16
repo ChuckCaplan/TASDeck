@@ -1,6 +1,6 @@
 # Per-strobe sync mode specification
 
-Status: FROZEN v1 + revision 4 — rollout phase 1 implemented; revision 4 (hardware findings) implemented; console validation and the later default flip remain pending.
+Status: FROZEN v1 + revisions 4–6 — rollout phase 1 implemented; revision 4 (hardware findings) implemented and console-validated for SMB1 max-score r08 (100% completion, strobe, delay 1); revision 5 (Golf latch-ISR fast path) implemented but failed its console retest — the merge is dispatch-bound, not body-bound; revision 6 (strobe-mode interrupt-priority inversion, v50) implemented, Golf console retest pending; the later default flip remains pending.
 Date: 2026-07-15 (revised same day: resolved four implementation-blocking ambiguities from external
 review — completion edge accounting, edge-row marking, trace-capture throughput, strobe counter
 semantics — plus start-delay staging text, effective refill throughput, and mode-aware UI copy.
@@ -60,6 +60,85 @@ v46) — a regression in previously-verified poll-mode playback. The in-ISR trac
    second pass). R20a treats `PreAdvanced` (kind 1) edge rows as expected-`ok` alongside
    `AdvancedAtEdge` and `Started`, and `.r08` record diffing maps records to bit-5 rows with kind
    `Started`, `PreAdvanced`, or `AdvancedAtEdge`.
+
+## Revision 5 (2026-07-15, second hardware session — Golf ROM evidence, inline fast path)
+
+The v48 rework passed its gates: the Zelda/SMB1 tdmask regression was gone and **SMB1 max-score
+`.r08` in strobe mode completed 100% on console (delay 1)** — the first strobe-mode console
+verification. Golf still failed, and its v48 traces plus a disassembly of `Golf (USA).nes` pinned
+the tightest timing requirement in the library: Golf's title routine (strobe pulse at `$C578`,
+reads at `$DAB1/$DAB4/$DAD2/$DB09`) fires two throwaway `LDA $4016` reads ~5.6 µs and ~7.8 µs
+after the strobe rising edge — **2.2 µs apart** — then acts only on reads 3 (Select, `AND #$03`)
+and 4 (Start). The v48 commit path still outlived 7.8 µs (this build has no LTO; every
+out-of-line `NesTasPlayback` call from the ISR is a real call), merging the two pended clock
+edges: traces showed 3 clocks counted where Golf performs 4 reads (and 1 where boot frames
+perform 2), with the pre-advance's mid-gap shift-register re-latch masking the tear from
+`torn_strobes`. One lost shift ⇒ Golf's Start check sampled the served Select bit and the movie's
+Start press was invisible. Changes:
+
+1. **`NesTasPlayback::tryCommitPreAdvancedEdge()`** — the strobe steady-state commit is now a
+   header-inline method (no call overhead), and the hot getters the pin ISRs use (`syncMode`,
+   `portCount`, `currentFrame`) are header-inline too. `onLatchEdge`'s strobe branch delegates to
+   it, so playback semantics are unchanged.
+2. **Latch-ISR strobe fast path** — `handleLatchEdge` commits a pre-advanced strobe edge at the
+   top of the ISR with zero out-of-line calls (pin write → diag capture → pre-reset
+   capture/counters → bookkeeping → line-mismatch anomaly → staging), mirroring the general
+   path's bookkeeping; non-pre-advanced edges (start, delay, in-holdoff double-latches, end)
+   still take the general path. Shared `captureAndCountStrobeEdge()` / `stageStrobeEdgeEvent()`
+   helpers keep the two paths in sync.
+3. **Acceptance evidence for the fix is in-band**: Golf's title `clocksSinceLatch` distribution
+   must read 4 (and 2 on early boot frames) instead of 3/1, and the game must react to the
+   movie's Start. The lost-shift failure mode is otherwise invisible to `torn_strobes` whenever a
+   pre-advance re-latches the shift register mid-gap — treat a "clean counters but game ignores
+   buttons" strobe run as a possible clock-edge merge and check the per-frame clock counts
+   against the game's actual read count first.
+
+## Revision 6 (2026-07-16, third hardware session — the merge is dispatch-bound; priority inversion)
+
+The v49 inline fast path did not move the outcome at all: across five Golf runs (strobe, delays
+0–4, all with stream captures) every title frame still counted `clocksSinceLatch = 3` where Golf
+performs 4 reads, and boot frames 1 where it performs 2 — deterministic, delay-independent. The
+same session's SMB1 max-score stream counted a perfect 8/8 across 2,716 frames. Together these
+bracket the latch ISR's true end-to-end cost (NVIC/core dispatch + body + exit) between Golf's
+second read (~8 µs) and SMB1's (~13 µs), and two rounds of body trimming (v48 → v49) failed to
+cross the lower line: the residue is the Renesas core's interrupt dispatch overhead and `micros()`,
+which body edits cannot remove. Racing that deadline is the wrong architecture. v50 removes the
+deadline instead:
+
+1. **Strobe mode inverts the NES pin interrupt priorities** (amends the R16 priority rule for
+   strobe runs only): `TAS_BEGIN … strobe` sets the clock IRQs to priority 0 and the latch IRQ to
+   priority 1 (`applyNesPinInterruptPriorities`); windowed begins, TAS_CANCEL, and boot restore
+   the proven windowed layout (latch 0, clocks 1) untouched. With the clocks on top, the console's
+   post-strobe reads preempt the latch ISR's tail and dispatch individually — the single-NVIC-
+   pending-bit merge that defeated v47–v49 cannot occur while the latch ISR runs, no matter how
+   long dispatch takes.
+2. **The latch ISR splits into a PRIMASK critical head and a preemptible tail.** The head covers
+   only state the clock ISRs read or write: the pre-popped mask commit
+   (`tryCommitPreAdvancedMasks`, split header-inline), the first-bit pin write, the shift/counter
+   resets, and the shared anomaly counters. Everything else — the pre-reset strobe capture (the
+   wire is quiescent before the first post-strobe read), `micros()` and the holdoff re-arm
+   (`noteLatchTimestamp`; its only consumers run at timer priority and can never preempt this
+   ISR), and event staging — runs outside it. In windowed modes the latch ISR stays at priority 0,
+   where PRIMASK is a semantic no-op: the windowed edge path keeps its verified behavior.
+3. **The clock ISRs re-create strobe-first pend ordering in software.** The windowed layout's
+   latch-outranks-clocks rule existed so edges pending behind a masked stretch (USB serial paths)
+   replay strobe-first; inverted priorities would replay them clock-first and tear the train. In
+   strobe mode each clock ISR therefore checks the latch IRQ's NVIC pending bit at entry and, if
+   set, clears the ICU/NVIC flags and runs `handleLatchEdge` inline before shifting
+   (`serviceLatchPendBeforeClock`) — the same order the windowed NVIC layout produced.
+4. **The latch ISR body is now measured, not estimated**: a DWT cycle counter reports
+   last/max body duration (48 cycles = 1 µs, dispatch excluded) as `latch_isr_last_cyc` /
+   `latch_isr_max_cyc` in TAS_STATUS, the bridge's `.trace` headers, and the `.stream.csv`
+   footer, and resets with the other counters on TAS_BEGIN/TAS_START.
+
+Accepted residual risks, in-band evidence unchanged: strobe edges that take the general path
+(start, in-holdoff double-latch fallback, completion) hold PRIMASK across the full advance and can
+still merge a Golf-tight read pair on those rare edges; and a masked stretch that happens to span
+both reads of a 2.2 µs pair merges them at the ICU input latch regardless of priorities — inherent
+to every edge-ISR replay device, and rare enough to be a per-attempt lottery rather than the
+deterministic per-frame failure v47–v49 produced. The revision-5 acceptance evidence still gates:
+Golf's title `clocksSinceLatch` distribution must read 4 (2 on boot frames), and the game must
+react to the movie's Start.
 
 This document is self-contained implementation requirements. The normative content is the
 "Implementation requirements" checklist and the "Firmware design" contracts; the other sections

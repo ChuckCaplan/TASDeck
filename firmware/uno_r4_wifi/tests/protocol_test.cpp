@@ -1243,6 +1243,82 @@ void testTasStrobePlaybackPreAdvancesBetweenEdges() {
   assert(!playback.windowExpiryDue(21800 + 16000));
 }
 
+void testTasStrobeFastPathCommitInline() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40};
+  uint8_t nextMask = 0xff;
+  TasFrameMasks fastMasks = {};
+
+  assert(playback.begin(2, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  // Nothing pre-advanced yet: the fast path declines and the caller falls
+  // through to the general edge path.
+  assert(!playback.tryCommitPreAdvancedEdge(500, fastMasks));
+
+  assert(playback.windowExpiryDue(1000));
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+
+  // The fast path commits the pre-popped record exactly once and re-arms the
+  // holdoff from the committed edge's timestamp.
+  assert(playback.tryCommitPreAdvancedEdge(5000, fastMasks));
+  assert(fastMasks.port1 == 0x02);
+  assert(fastMasks.port2 == 0x00);
+  assert(playback.currentFrame() == 0);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+  assert(playback.lastWindowResult() == TasPlaybackResult::Ok);
+  assert(!playback.tryCommitPreAdvancedEdge(5001, fastMasks));
+  assert(!playback.windowExpiryDue(5000 + 7999));
+  assert(playback.windowExpiryDue(5000 + 8000));
+
+  // The next pre-advanced record commits through the same path.
+  assert(playback.onWindowExpired(13000, nextMask) == TasPlaybackResult::Ok);
+  assert(playback.tryCommitPreAdvancedEdge(21700, fastMasks));
+  assert(fastMasks.port1 == 0x40);
+  assert(playback.currentFrame() == 1);
+}
+
+// v50 splits the fast-path commit: the mask commit runs inside the latch
+// ISR's PRIMASK critical head, and micros()/the holdoff re-arm run in the
+// preemptible tail via noteLatchTimestamp. Mirror that call sequence.
+void testTasStrobeFastPathSplitCommitAndTimestamp() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40};
+  uint8_t nextMask = 0xff;
+  TasFrameMasks fastMasks = {};
+
+  assert(playback.begin(2, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  // Nothing pre-advanced: the masks-only commit declines too.
+  assert(!playback.tryCommitPreAdvancedMasks(fastMasks));
+
+  assert(playback.windowExpiryDue(1000));
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+
+  // Head: masks commit exactly once. Tail: the timestamp note re-arms the
+  // holdoff from the noted edge time, not the commit call.
+  assert(playback.tryCommitPreAdvancedMasks(fastMasks));
+  assert(fastMasks.port1 == 0x02);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+  assert(!playback.tryCommitPreAdvancedMasks(fastMasks));
+  playback.noteLatchTimestamp(5000);
+  assert(!playback.windowExpiryDue(5000 + 7999));
+  assert(playback.windowExpiryDue(5000 + 8000));
+
+  // The next record flows through the same split sequence.
+  assert(playback.onWindowExpired(13000, nextMask) == TasPlaybackResult::Ok);
+  assert(playback.tryCommitPreAdvancedMasks(fastMasks));
+  assert(fastMasks.port1 == 0x40);
+  playback.noteLatchTimestamp(21700);
+  assert(playback.currentFrame() == 1);
+}
+
 void testTasStrobePlaybackServesTwoPortsAndResets() {
   NesTasPlayback playback;
   const TasFrameMasks masks[] = {{0x01, 0x02}, {0x80, 0x40}};
@@ -1405,6 +1481,8 @@ int main() {
   testTasStrobePlaybackAdvancesOnEveryEdge();
   testTasStrobePlaybackDelayAndWindowService();
   testTasStrobePlaybackPreAdvancesBetweenEdges();
+  testTasStrobeFastPathCommitInline();
+  testTasStrobeFastPathSplitCommitAndTimestamp();
   testTasStrobePlaybackServesTwoPortsAndResets();
   testTasStrobePlaybackReportsUnderrun();
   testTasPlaybackRejectsInvalidLatchWindow();

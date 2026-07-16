@@ -1130,7 +1130,7 @@ class SerialBridge {
       const finalStatus = run.firmwareStatus || {};
       await fsp.appendFile(
         filePath,
-        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0}\n`,
+        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""}\n`,
         "utf8",
       );
       const gapNote = totalGaps > 0 ? ` (${totalGaps} rows lost to ring overwrite)` : "";
@@ -2242,6 +2242,8 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `firmware_anomaly_seq: ${firmwareStatus.anomaly_seq ?? ""}`,
     `firmware_anomaly_kind: ${firmwareStatus.anomaly_kind ?? ""}`,
     `firmware_trace_frozen: ${firmwareStatus.trace_frozen ?? ""}`,
+    `firmware_latch_isr_last_cyc: ${firmwareStatus.latch_isr_last_cyc ?? ""}`,
+    `firmware_latch_isr_max_cyc: ${firmwareStatus.latch_isr_max_cyc ?? ""}`,
   ].join("\n");
 }
 
