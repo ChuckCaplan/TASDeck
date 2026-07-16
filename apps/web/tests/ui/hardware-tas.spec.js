@@ -506,6 +506,67 @@ test.describe("hardware TAS streaming UI", () => {
     expect(types.indexOf("tas_arm")).toBeLessThan(types.indexOf("tas_start"));
   });
 
+  test("animates both TAS controller ports without sending button events", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+
+    await page.setInputFiles("#tasFile", {
+      name: "controller-preview.tdmask",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.concat([
+        TD2P_V1_HEADER,
+        Buffer.from(Array.from({ length: 240 }, () => [0x01, 0x02]).flat()),
+      ]),
+    });
+
+    await page.click("#playButton");
+    await expect(page.locator("#playButton")).toHaveText("Start");
+    await page.click("#playButton");
+
+    await expect(page.locator('[data-button="a"]')).toHaveClass(/tas-pressed/);
+    await expect(page.locator('[data-button="b"]')).not.toHaveClass(/tas-pressed/);
+    await expect(page.locator("#controllerState")).toHaveText("P1 TAS: A");
+
+    await page.click('[data-controller-port="2"]');
+    await expect(page.locator('[data-button="a"]')).not.toHaveClass(/tas-pressed/);
+    await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/);
+    await expect(page.locator("#controllerState")).toHaveText("P2 TAS: B");
+
+    const hardwareButtonEvents = await page.evaluate(() =>
+      window.__fakeBridgeMessages.filter((message) => message.type === "event"),
+    );
+    expect(hardwareButtonEvents).toEqual([]);
+
+    await page.click("#stopButton");
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await expect(page.locator("#controllerState")).toHaveText("P2: None");
+  });
+
+  test("previews the effective TAS masks after start delay and skip", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+
+    await page.setInputFiles("#tasFile", {
+      name: "delayed-preview.tdmask",
+      mimeType: "application/octet-stream",
+      buffer: tdmaskBuffer([
+        ...Array.from({ length: 5 }, () => 0x01),
+        ...Array.from({ length: 180 }, () => 0x02),
+      ]),
+    });
+    await page.fill("#syncSkipPolls", "5");
+    await page.fill("#syncDelayPolls", "30");
+
+    await page.click("#playButton");
+    await expect(page.locator("#playButton")).toHaveText("Start");
+    await page.click("#playButton");
+    await expect.poll(async () => (await messageTypes(page)).includes("tas_start")).toBe(true);
+
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/, { timeout: 1500 });
+    await expect(page.locator('[data-button="a"]')).not.toHaveClass(/tas-pressed/);
+  });
+
   test("stop cancels an arming run before TAS_START", async ({ page }) => {
     await installFakeBridge(page);
     await connectFakeNetworkBridge(page);
