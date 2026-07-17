@@ -30,7 +30,7 @@ Cut the NES controller extension cord in half and use the half with the plug tha
 controller port. Wire that plug half to the Arduino. The other half is not required for TASDeck. For
 two-controller movies, repeat this with a second plug half for NES controller port 2.
 
-The observed cord colors for a generic NES controller extension cord purchased online were:
+The observed cord colors (YMMV) for a generic NES controller extension cord purchased online were:
 
 Port 1:
 
@@ -54,10 +54,9 @@ Port 2 uses the same signal names and my cable used the same wire colors:
 
 IMPORTANT: Wire colors can vary between extension cords. Verify the connector pinout with a multimeter before
 powering the NES. The NES ground must connect to Arduino `GND`; NES `+5V` must not connect to the
-Arduino. Extra zapper pins on NES port 2 are not used by TASDeck. The NES latch signal is shared
+Arduino. Extra Zapper pins are not used by TASDeck. The NES latch signal is shared
 inside the console, so the port 1 connection to `D2` supplies latch timing for both ports. Do not
-connect the port 2 latch wire; cap or insulate it. Firmware leaves `D12` as a parked input and does
-not read or interrupt on it.
+connect the port 2 latch wire; cap or insulate it.
 
 Signal direction:
 
@@ -264,7 +263,7 @@ log `blocked` entries rather than silently dropping them.
 
 ## Upload And Run The TAS
 
-1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the TAS movie.
+1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the TAS movie. This may mean having the cartridge plugged in and the NES off.
 2. Press `Connect` if the Arduino bridge is not already connected.
 3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. Both default to completed-read
    (poll) synchronization. `.tdmask` is locked to poll mode, while `.r08` also exposes a `Sync Mode`
@@ -278,7 +277,7 @@ log `blocked` entries rather than silently dropping them.
    changes to `Start`, press `Start` at the exact console sync point expected by the movie.
 
 For power-on movies, which are most TAS runs, arm TASDeck first by pressing `Play` once, and then press `Start` in TASDeck
-while the NES is off or held in reset. Power on or release reset so poll 0 is consumed by the
+while the NES is off or held in reset. Then power on or release reset so poll 0 is consumed by the
 console's first controller read.
 
 If you use an EverDrive N8 Pro, set `Boot Last Game` to `On`. This bypasses the EverDrive menu and
@@ -290,7 +289,8 @@ holds each frame byte across repeated controller polls. Browser timers do not se
 timing.
 
 Your `.r08` replay, or your `.tdmask` converted from an FM2 or BK2 movie, should now be playing on
-your real NES.
+your real NES. The on-screen controller highlights the TAS button presses for the selected NES port so you
+can watch which buttons are being sent to the console as it plays.
 
 ## Troubleshooting
 

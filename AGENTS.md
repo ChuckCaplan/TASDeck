@@ -209,7 +209,7 @@ NES pin map:
 
 - Port 1 ground to Arduino `GND`; latch `D2`, clock `D3`, data `D6`.
 - Port 2 ground to Arduino `GND`; clock `D8`, data `D7`. Do not connect its latch wire; `D2` receives
-  the NES's shared latch signal for both ports. Firmware parks `D12` as an unused input.
+  the NES's shared latch signal for both ports.
 - NES `+5V` is not connected to the Arduino on either port.
 
 ### Diagnostic Firmware

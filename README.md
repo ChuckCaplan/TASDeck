@@ -31,8 +31,7 @@ Once TASDeck is installed and the firmware is uploaded, start the web app and mi
 npm start
 ```
 
-Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on the same network. Rotate the phone to landscape mode for the touch controller view; the layout is designed to feel like a handheld controller for driving the real NES.
-Press `Connect` in the web app to open the Arduino USB bridge.
+Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on the same network. Press `Connect` in the web app to open the Arduino USB bridge. Rotate the phone to landscape mode for the touch controller view; the layout is designed to feel like a handheld controller for driving the real NES.
 
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
 port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. A
