@@ -21,7 +21,7 @@
     0x0a,
   ]);
   const HARDWARE_TAS_SYNC_MODE = "poll";
-  const HARDWARE_TAS_SYNC_MODES = ["poll", "latch"];
+  const HARDWARE_TAS_SYNC_MODES = ["poll", "latch", "strobe"];
   const HARDWARE_TAS_MAX_START_DELAY_POLLS = 3600;
   const TAS_CHUNK_FRAME_LIMIT = 48;
   // Accepted aliases for a frame's player-2 input, in precedence order. Keep

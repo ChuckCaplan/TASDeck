@@ -44,10 +44,10 @@ const MAX_EVENT_LOG_BYTES = 4 * 1024 * 1024;
 const BRIDGE_TAS_BUFFER_STATUS_POLL_MS = 500;
 const BRIDGE_TAS_DONE_STATUS_POLL_MS = 1000;
 const BRIDGE_TAS_WAITER_TIMEOUT_MS = 10000;
-const BRIDGE_TAS_TRACE_DEFAULT_COUNT = 512;
-const BRIDGE_TAS_TRACE_MAX_COUNT = 512;
+const BRIDGE_TAS_TRACE_DEFAULT_COUNT = 384;
+const BRIDGE_TAS_TRACE_MAX_COUNT = 384;
 const BRIDGE_TAS_TRACE_PAGE_LIMIT = 12;
-// Optional continuous trace streaming follows the firmware's 512-poll ring
+// Optional continuous trace streaming follows the firmware's 384-row ring
 // for the whole run. Keep it off during normal playback: paging trace rows
 // produces near-constant USB CDC traffic, and the Arduino core can briefly
 // mask NES pin interrupts while servicing that traffic. Frozen-ring auto
@@ -379,7 +379,7 @@ class SerialBridge {
 
     const syncMode = message?.syncMode || HARDWARE_TAS_SYNC_MODE;
     if (!HARDWARE_TAS_SYNC_MODES.includes(syncMode)) {
-      throw new Error("TAS upload sync mode must be poll or latch.");
+      throw new Error("TAS upload sync mode must be poll, latch, or strobe.");
     }
 
     const skipPolls = normalizeTasRunSkipPolls(
@@ -1127,7 +1127,12 @@ class SerialBridge {
     }
 
     if (fileReady) {
-      await fsp.appendFile(filePath, `# end: rows=${totalRows} gaps=${totalGaps}\n`, "utf8");
+      const finalStatus = run.firmwareStatus || {};
+      await fsp.appendFile(
+        filePath,
+        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""} latch_head_last_cyc=${finalStatus.latch_head_last_cyc ?? ""} latch_head_max_cyc=${finalStatus.latch_head_max_cyc ?? ""}\n`,
+        "utf8",
+      );
       const gapNote = totalGaps > 0 ? ` (${totalGaps} rows lost to ring overwrite)` : "";
       this.broadcastBridge(`TAS trace stream saved ${totalRows} rows to ${displayPathForLog(filePath)}${gapNote}`);
     }
@@ -1180,6 +1185,8 @@ class SerialBridge {
       latch: status.latch ?? firmwareStatus.latch ?? 0,
       clock: status.clock ?? firmwareStatus.clock ?? 0,
       clock2: status.clock2 ?? firmwareStatus.clock2 ?? 0,
+      bare_strobes: status.bare_strobes ?? firmwareStatus.bare_strobes ?? 0,
+      torn_strobes: status.torn_strobes ?? firmwareStatus.torn_strobes ?? 0,
       anomaly_count: status.anomaly_count ?? firmwareStatus.anomaly_count ?? 0,
       anomaly_seq: status.anomaly_seq ?? firmwareStatus.anomaly_seq ?? 0,
       anomaly_kind: status.anomaly_kind ?? firmwareStatus.anomaly_kind ?? 0,
@@ -2229,10 +2236,16 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `firmware_received: ${firmwareStatus.received ?? ""}`,
     `firmware_buffered: ${firmwareStatus.buffered ?? ""}`,
     `firmware_error: ${firmwareStatus.error ?? run?.error ?? ""}`,
+    `firmware_bare_strobes: ${firmwareStatus.bare_strobes ?? 0}`,
+    `firmware_torn_strobes: ${firmwareStatus.torn_strobes ?? 0}`,
     `firmware_anomaly_count: ${firmwareStatus.anomaly_count ?? ""}`,
     `firmware_anomaly_seq: ${firmwareStatus.anomaly_seq ?? ""}`,
     `firmware_anomaly_kind: ${firmwareStatus.anomaly_kind ?? ""}`,
     `firmware_trace_frozen: ${firmwareStatus.trace_frozen ?? ""}`,
+    `firmware_latch_isr_last_cyc: ${firmwareStatus.latch_isr_last_cyc ?? ""}`,
+    `firmware_latch_isr_max_cyc: ${firmwareStatus.latch_isr_max_cyc ?? ""}`,
+    `firmware_latch_head_last_cyc: ${firmwareStatus.latch_head_last_cyc ?? ""}`,
+    `firmware_latch_head_max_cyc: ${firmwareStatus.latch_head_max_cyc ?? ""}`,
   ].join("\n");
 }
 

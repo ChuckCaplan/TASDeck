@@ -19,7 +19,7 @@ The sketch accepts newline-terminated commands over USB serial:
 PING
 STATUS
 BUTTON [1|2] <a|b|select|start|up|down|left|right> <down|up>
-TAS_BEGIN <frames> poll [ports] [window_us]
+TAS_BEGIN <frames> <poll|latch|strobe> [ports] [window_us]
 TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum>
 TAS_START [delay_polls]
 TAS_CANCEL
@@ -35,7 +35,7 @@ The tested parser lives in `src/NesDeckProtocol.cpp`, the controller-state helpe
 The current serial build reports this firmware id in the boot banner and `STATUS` response:
 
 ```txt
-fw=tasdeck-uno-r4-serial-latchwin-v46 transport=serial
+fw=tasdeck-uno-r4-serial-latchwin-v47 transport=serial
 ```
 
 ## NES Pins
@@ -75,30 +75,52 @@ order:
 A, B, Select, Start, Up, Down, Left, Right
 ```
 
-Each data line is active-low: pressed buttons drive `LOW`, released buttons drive `HIGH`. After the
-8 standard button bits have been shifted out, the firmware drives `HIGH` so extra reads remain
-released instead of looking like phantom button presses.
+Each data line is active-low: pressed buttons drive `LOW`, released buttons drive `HIGH`. Outside
+active strobe playback, the firmware drives `HIGH` after the 8 standard button bits so extra reads
+remain released. In strobe mode the 8th clock instead pre-positions bit 0 of the next record before
+the next latch edge.
 
 Send `STATUS` over serial to inspect the flashed firmware id, clock shift edge, current masks,
 shift index, and latch/clock counts while debugging controller timing.
 
-TAS playback uses `TAS_BEGIN <frames> <poll|latch> [ports] [window_us]`. `TAS_START` arms frame 0, and the
-firmware loads it at the next NES latch window before that controller read is sampled. Playback
-in `poll` mode advances only after a completed eight-clock read. `latch` mode, intended for R08
-replays, advances after an accepted latch even when the game reads fewer than eight bits.
+TAS playback uses `TAS_BEGIN <frames> <poll|latch|strobe> [ports] [window_us]`. `TAS_START` arms record
+0, and the firmware loads it before the corresponding controller read is sampled. Playback in
+`poll` mode advances only after a latch window containing a completed eight-clock read. `latch`
+mode advances once per accepted latch window even when the game reads fewer than eight bits.
+`strobe` mode has no latch window: every accepted latch edge consumes exactly one record, including
+bare strobes and torn reads. The `window_us` value is not a coalescing window in strobe mode; it is
+the post-edge holdoff after which the 1 kHz service pre-pops the next record so the edge itself is a
+cheap commit.
 Two-port TAS chunks use interleaved port 1 / port 2 mask bytes. Use
 `TAS_START <delay_polls>` when a run needs a small alignment offset before frame 0 is released; in
-`latch` mode this is the exact number of blank latch windows served before frame 0.
+windowed modes this counts eligible blank latch windows. In `strobe` mode it counts accepted edges,
+so `TAS_START N` is equivalent to TAStm32 `--blank N` for a default-mode R08 replay.
 Port 1 or port 2 completed reads can grant frame-advance credit for the two-port streams uploaded by
 the web UI.
 
 A 1 kHz hardware-timer service normally advances and pre-positions the next mask when the latch
-window expires; the main loop provides the same service as a best effort. The latch ISR advances
-only as a fallback if expiry service was missed. Keep serial and command handling from delaying the
-higher-priority NES latch and clock interrupts.
+window (windowed modes) or post-edge holdoff (strobe mode) expires; the main loop provides the same
+service as a best effort. The latch ISR advances only as a fallback if expiry service was missed.
+Keep serial and command handling from delaying the higher-priority NES latch and clock interrupts.
 
-`TAS_TRACE [count] [start]` reads from the firmware's completed-poll trace ring. The ring stores the
-latest 512 completed port reads, and each firmware response returns up to 12 rows so the middleware
+Interrupt priorities depend on the sync mode. Windowed modes run the latch at NVIC priority 0 and
+the clocks at 1 so simultaneously pended edges replay strobe-first. Strobe mode inverts this
+(clocks 0, latch 1): games like Golf read `$4016` twice within 2.2 µs of the strobe — sooner than
+the latch ISR can finish — and with the clocks on top those reads preempt the latch ISR's tail
+instead of merging in the clock IRQ's single NVIC pending bit (one lost shift, every later bit
+served one position late). The latch ISR guards clock-shared state with a short PRIMASK critical
+head, and the clock ISRs restore strobe-first ordering in software by running a pended latch edge
+inline before shifting. The windowed layout is restored by TAS_CANCEL, by the next windowed
+TAS_BEGIN, and — deferred to `loop()`, since completion surfaces in ISR context — when a strobe
+run completes or underruns on its own. `TAS_STATUS` reports two DWT cycle counters (48 per µs,
+core dispatch excluded from both): `latch_isr_last_cyc`/`latch_isr_max_cyc` is latch ISR
+residency, entry to return — in strobe mode preempting clock ISRs are included, so it is not a
+head budget — and `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's
+entry-to-PRIMASK-release span, the number that must beat the console's second post-strobe read.
+The bridge copies all four into `.trace` headers and the `.stream.csv` footer.
+
+`TAS_TRACE [count] [start]` reads from the firmware's trace ring. The ring stores the latest 384
+rows, and each firmware response returns up to 12 rows so the middleware
 can page through larger captures without overflowing the serial response buffer.
 `TAS_TRACE_RESUME` clears a frozen trace/anomaly latch after the bridge has saved it, allowing the
 next anomaly to freeze a fresh window. Each row includes sequence, timestamp micros, TAS frame,
@@ -106,8 +128,13 @@ latch count, clock count, clocks since latch, polled mask, next mask, latched ma
 result, the `clockedMask`
 reconstructed from the active port data-line
 level held through each controller read pulse, and the port that completed the poll. Rows are
-per-port: each completed port read produces one row, correlated by sequence and timestamp. The web
-`Trace` button requests the full 512-row window and saves the trace and resulting event log through
+per-port. Windowed modes write one row for each completed port read. Strobe mode instead produces one
+edge row per active port at each recorded latch and suppresses completed-poll rows; the latch ISR only
+stages a compact event and the 1 kHz service writes the rows, keeping the ISR shorter than the
+console's second read after the strobe. Diag bit 5 marks
+those edge rows, whose clocked mask describes the preceding inter-strobe read. `TAS_STATUS` reports
+whole-run `bare_strobes` and `torn_strobes` counters for strobe-mode diagnostics. The web
+`Trace` button requests the full 384-row window and saves the trace and resulting event log through
 the middleware.
 
 ## Tests And Compile

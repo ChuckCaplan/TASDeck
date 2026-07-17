@@ -50,8 +50,8 @@ public verification files use (for example the
 - **NES serial bit order, Right through A**, which TASDeck reverses into its internal A-through-Right
   mask order while loading.
 - **Selectable synchronization.** Because R08 cannot say whether its records are frames or latches,
-  TASDeck defaults to completed-read poll mode and exposes a `Sync Mode` picker. Select accepted-latch
-  mode for replay files that expect one record per accepted latch (see
+  TASDeck defaults to completed-read poll mode at this rollout stage and exposes a `Sync Mode`
+  picker. Select per-strobe mode for replay files made with default TAStm32 semantics (see
   [Console Synchronization](#console-synchronization)).
 
 These are conventions the file cannot prove, not guarantees. The self-describing successor format
@@ -100,8 +100,16 @@ or startup path can change lag and controller polling enough to desynchronize th
 
 A `.tdmask` export always advances only after a window containing a completed eight-clock controller
 read, and its sync mode is not user-selectable. A raw `.r08` replay defaults to that completed-read
-poll mode. When an R08 file is loaded, the `Sync Mode` picker can instead select latch mode, which
-advances after each accepted latch even when the game reads fewer than eight bits.
+poll mode during the initial rollout. When an R08 file is loaded, the `Sync Mode` picker can select
+`latch`, which advances once per accepted latch window without a completed-read gate, or `strobe`,
+which consumes one record on every accepted latch edge with no window coalescing.
+
+| Source data | Sync mode |
+| --- | --- |
+| `.tdmask` from FCEUX/BizHawk (lag-stripped, one record per polled frame) | `poll` |
+| `.r08` verified with default TAStm32 settings | `strobe` |
+| `.r08` documented as requiring TAStm32 `--dpcm` | `poll` or `latch` |
+| A future SubNESHawk per-latch dump | `strobe` |
 
 This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt a controller read,
 causing the game to reread until two consecutive values match. Serving a new mask for every poll
@@ -110,8 +118,9 @@ would drift the stream, while serving one mask per latch window gives each rerea
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
-- Use `Start delay` to wait before releasing record 0. It counts blank windows in the selected sync
-  mode; `.tdmask` always uses completed-read windows.
+- Use `Start delay` to wait before releasing record 0. It counts blank windows in `poll`/`latch`
+  mode and accepted edges in `strobe` mode; TAStm32 `--blank N` maps directly to strobe-mode
+  `Start delay N`. `.tdmask` always uses completed-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
 
 For a power-on movie, load the `.tdmask` or `.r08` and press `Play` once to arm it. While the NES is off or
@@ -133,10 +142,14 @@ First rule out the common causes:
 - Firmware reports a buffer, wire, or controller-read anomaly.
 
 If playback desynchronizes while the bridge buffer remains healthy, press `Trace` in the event-log
-header before starting another run. TASDeck retrieves the completed-poll ring, logs compact rows and
+header before starting another run. TASDeck retrieves the trace ring, logs compact rows and
 anomaly summaries, and asks the middleware to save the full event log under `logs/trace/`. The
 bridge also saves a full-fidelity trace artifact containing CSV rows so exact poll timestamps remain
 available for comparison.
+
+Windowed traces contain completed-poll rows. Strobe traces contain diag-bit-5 edge rows, one per
+active port, with the previous read's reconstructed mask carried on the following edge. The trace
+header/footer also preserve the run's bare- and torn-strobe counters.
 
 Compare the hardware rows near the first visible desync with the converter's
 `<output>.trace.csv`. Two-port traces contain separate rows tagged by port; correlate them by

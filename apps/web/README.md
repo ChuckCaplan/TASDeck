@@ -67,10 +67,11 @@ replay-device convention and its assumptions documented in the
 [hardware TAS workflow guide](../../docs/hardware-tas-workflow.md#r08-format).
 
 `.tdmask` always uses completed-read advancement. `.r08` defaults to completed reads and exposes an
-inline picker in the Status field for completed-read or accepted-latch advancement. The picker is
+inline picker in the Status field for completed-read, accepted-window, or per-strobe advancement. The picker is
 hidden for `.tdmask` loads. The TAS panel also exposes two alignment controls:
 
-- `Start delay`: waits before mask 0 and counts blank windows in the selected synchronization mode.
+- `Start delay`: waits before mask 0 and counts blank windows in windowed modes or accepted edges in
+  per-strobe mode.
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
 
@@ -93,7 +94,7 @@ after the console begins polling or make a small correction in games with unusua
 timing. Hardware playback continues independently of the browser preview.
 
 The NES event log keeps the newest 120 browser-visible events. `Copy` copies the visible log to the
-clipboard. `Trace` asks the firmware for the latest TAS poll trace, logs compact rows and anomaly
+clipboard. `Trace` asks the firmware for the latest TAS trace rows, logs compact rows and anomaly
 summaries, and asks the middleware to save the full event log under `logs/trace/` with a
 `<timestamp>_<tas-file-base>.trace` filename. Firmware trace rows include the active port plus
 line/mask fields from the port data line held through each controller read pulse. The current

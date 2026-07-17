@@ -349,6 +349,7 @@ test.describe("hardware TAS streaming UI", () => {
       "Ready · TD2P · 28779 masks · completed reads",
     );
     await expect(page.locator("#syncModeField")).toBeHidden();
+    await expect(page.locator('#syncMode option[value="strobe"]')).toHaveText("per strobe (r08 replay)");
     const tdmaskLayout = await page.locator(".layout-grid").boundingBox();
     const tdmaskShortcuts = await page.locator(".shortcut-note").boundingBox();
     const tdmaskGap =
@@ -488,6 +489,38 @@ test.describe("hardware TAS streaming UI", () => {
       window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").at(-1),
     );
     expect(upload.syncMode).toBe("latch");
+  });
+
+  test("lets R08 loads use per-strobe synchronization with mode-aware controls", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+
+    await page.setInputFiles("#tasFile", {
+      name: "movie.r08",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from([0x80, 0x40, 0x01, 0x00]),
+    });
+
+    await expect(page.locator("#syncDelayUnit")).toHaveText("windows");
+    await expect(page.locator("#syncSkipUnit")).toHaveText("frames");
+    await page.locator("#syncMode").selectOption("strobe");
+    await expect(page.locator("#syncMode option:checked")).toHaveText("per strobe (r08 replay)");
+    await expect(page.locator("#syncDelayUnit")).toHaveText("strobes");
+    await expect(page.locator("#syncSkipUnit")).toHaveText("records");
+
+    await page.locator("#syncMode").selectOption("poll");
+    await expect(page.locator("#syncDelayUnit")).toHaveText("windows");
+    await expect(page.locator("#syncSkipUnit")).toHaveText("frames");
+
+    await page.locator("#syncMode").selectOption("strobe");
+    await page.click("#playButton");
+    await expect(page.locator("#playButton")).toHaveText("Start");
+    await expect(page.locator("#playbackStatus")).toContainText("at the next latch strobe");
+
+    const upload = await page.evaluate(() =>
+      window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").at(-1),
+    );
+    expect(upload.syncMode).toBe("strobe");
   });
 
   test("play arms the Arduino, then Start begins playback", async ({ page }) => {
@@ -760,6 +793,35 @@ test.describe("hardware TAS streaming UI", () => {
     const saveRequest = await page.evaluate(() => window.__savedEventLogRequest);
     expect(saveRequest.text).toContain("mask=0x01");
     expect(saveRequest.text).not.toContain("line=");
+  });
+
+  test("trace analysis treats strobe-edge rows by edge kind", async ({ page }) => {
+    await installFakeBridge(page, {
+      traceRows: [
+        { sequence: 10, port: 1, latchCount: 1, clockCount: 0, clocksSinceLatch: 0, polledMask: 0x00, clockedMask: 0x00, result: "waiting", diag: 0x2c },
+        { sequence: 11, port: 2, latchCount: 1, clockCount: 0, clocksSinceLatch: 0, polledMask: 0x00, clockedMask: 0x00, result: "waiting", diag: 0x2c },
+        { sequence: 12, port: 1, latchCount: 2, clockCount: 8, clocksSinceLatch: 8, polledMask: 0x01, clockedMask: 0x00, result: "ok", diag: 0x28 },
+        { sequence: 13, port: 2, latchCount: 2, clockCount: 8, clocksSinceLatch: 8, polledMask: 0x02, clockedMask: 0x00, result: "ok", diag: 0x28 },
+        { sequence: 14, port: 1, latchCount: 3, clockCount: 16, clocksSinceLatch: 8, polledMask: 0x00, clockedMask: 0x01, result: "ok", diag: 0x24 },
+        { sequence: 15, port: 2, latchCount: 3, clockCount: 16, clocksSinceLatch: 8, polledMask: 0x00, clockedMask: 0x02, result: "ok", diag: 0x24 },
+        { sequence: 17, port: 1, latchCount: 4, clockCount: 16, clocksSinceLatch: 0, polledMask: 0x80, clockedMask: 0x00, result: "ok", diag: 0x24 },
+        { sequence: 18, port: 2, latchCount: 4, clockCount: 16, clocksSinceLatch: 0, polledMask: 0x00, clockedMask: 0x00, result: "ok", diag: 0x24 },
+        { sequence: 19, port: 1, latchCount: 5, clockCount: 24, clocksSinceLatch: 8, polledMask: 0x00, clockedMask: 0x80, result: "complete", diag: 0x2e },
+        { sequence: 20, port: 2, latchCount: 5, clockCount: 24, clocksSinceLatch: 8, polledMask: 0x00, clockedMask: 0x00, result: "complete", diag: 0x2e },
+        { sequence: 21, port: 1, latchCount: 6, clockCount: 24, clocksSinceLatch: 0, polledMask: 0x00, clockedMask: 0x00, result: "underrun", diag: 0x2e },
+      ],
+    });
+    await connectFakeNetworkBridge(page);
+
+    await page.click("#dumpTrace");
+    await expect.poll(async () => (await messageTypes(page)).includes("save_event_log")).toBe(true);
+
+    const anomalies = await page.evaluate(() => window.__lastTasTraceAnomalies);
+    expect(anomalies).toHaveLength(2);
+    expect(anomalies.map((anomaly) => anomaly.sequence)).toEqual([17, 21]);
+    expect(anomalies[0].sequenceDelta).toBe(2);
+    expect(anomalies[1].result).toBe("underrun");
+    await expect(page.locator("#eventLog")).toContainText("from sequence 10 to 22");
   });
 
   test("ignores stale cancel status after replacing a TAS file", async ({ page }) => {

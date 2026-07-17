@@ -87,6 +87,46 @@ class NesTasPlayback {
   uint8_t stagedNextMask() const;
   TasFrameMasks stagedNextMasks() const;
 
+  // Latch-ISR fast path for the strobe-mode steady state: commit the record
+  // the expiry service pre-popped, with no out-of-line calls. Defined in the
+  // header because this build has no LTO and the commit runs inside the latch
+  // ISR's PRIMASK critical head — Golf's title screen fires back-to-back
+  // $4016 reads ~5.6 and ~7.8 µs after the edge (2.2 µs apart), and the head
+  // must release before the second read so the pended clock edges dispatch
+  // individually instead of merging in the clock IRQ's single NVIC pending
+  // bit (one lost shift, every later bit read one position early — measured
+  // 2026-07-15: Golf's Start check landed on the served Select bit and the
+  // game never started). The mask commit and the latch-timestamp note are
+  // split so micros() stays out of the critical head: the timestamp gates
+  // only the expiry-service holdoff, which runs at timer priority and can
+  // never preempt the latch ISR, so noting it after the head is safe.
+  // Returns false when nothing is pre-advanced (or the run errored); the
+  // caller then takes the general onLatchEdge path.
+  bool tryCommitPreAdvancedMasks(TasFrameMasks& nextMasks) {
+    if (!preAdvanced_ || error_ != TasPlaybackResult::Ok) {
+      return false;
+    }
+    preAdvanced_ = false;
+    pollCompletedInWindow_ = false;
+    nextMasks = currentMasks_;
+    lastEdgeKind_ = TasEdgeKind::PreAdvanced;
+    lastWindowResult_ = TasPlaybackResult::Ok;
+    return true;
+  }
+
+  void noteLatchTimestamp(uint32_t nowMicros) {
+    hasLatched_ = true;
+    lastLatchMicros_ = nowMicros;
+  }
+
+  bool tryCommitPreAdvancedEdge(uint32_t nowMicros, TasFrameMasks& nextMasks) {
+    if (!tryCommitPreAdvancedMasks(nextMasks)) {
+      return false;
+    }
+    noteLatchTimestamp(nowMicros);
+    return true;
+  }
+
   bool active() const;
   bool ready() const;
   bool startRequested() const;
@@ -97,7 +137,8 @@ class NesTasPlayback {
   bool hasError() const;
   TasPlaybackResult error() const;
   TasPlaybackResult lastWindowResult() const;
-  uint32_t currentFrame() const;
+  // Header-inline: read from the latch ISR's strobe fast path (no LTO).
+  uint32_t currentFrame() const { return currentFrame_; }
   uint32_t totalFrames() const;
   uint32_t totalReceived() const;
   uint32_t startDelayRemaining() const;
@@ -106,8 +147,9 @@ class NesTasPlayback {
   uint16_t capacity() const;
   uint8_t currentMask() const;
   TasFrameMasks currentMasks() const;
-  uint8_t portCount() const;
-  TasSyncMode syncMode() const;
+  // Header-inline: read from the NES pin ISRs on every edge (no LTO).
+  uint8_t portCount() const { return portCount_; }
+  TasSyncMode syncMode() const { return syncMode_; }
 
  private:
   bool readyToStart() const;

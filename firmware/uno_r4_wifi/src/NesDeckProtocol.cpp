@@ -118,6 +118,10 @@ TasSyncMode parseTasSyncMode(const char* token) {
     return TasSyncMode::Latch;
   }
 
+  if (equalsIgnoreCase(token, "strobe")) {
+    return TasSyncMode::Strobe;
+  }
+
   return TasSyncMode::Unknown;
 }
 
@@ -588,6 +592,8 @@ const char* tasSyncModeName(TasSyncMode syncMode) {
       return "poll";
     case TasSyncMode::Latch:
       return "latch";
+    case TasSyncMode::Strobe:
+      return "strobe";
     case TasSyncMode::Unknown:
     default:
       return "unknown";

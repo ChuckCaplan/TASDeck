@@ -102,6 +102,25 @@ void testTasProtocolCommands() {
   assert(std::strcmp(tasSyncModeName(command.syncMode), "latch") == 0);
   assert(command.latchWindowMicros == 12000);
 
+  assert(parseCommand("TAS_BEGIN 81 strobe", command));
+  assert(command.type == CommandType::TasBegin);
+  assert(command.portCount == 1);
+  assert(command.syncMode == TasSyncMode::Strobe);
+  assert(command.latchWindowMicros == tasdeck::kTasDefaultLatchWindowMicros);
+  assert(std::strcmp(tasSyncModeName(command.syncMode), "strobe") == 0);
+
+  assert(parseCommand("TAS_BEGIN 81 strobe 2", command));
+  assert(command.portCount == 2);
+  assert(command.latchWindowMicros == tasdeck::kTasDefaultLatchWindowMicros);
+
+  assert(parseCommand("TAS_BEGIN 81 strobe 5000", command));
+  assert(command.portCount == 1);
+  assert(command.latchWindowMicros == 5000);
+
+  assert(parseCommand("TAS_BEGIN 81 strobe 2 5000", command));
+  assert(command.portCount == 2);
+  assert(command.latchWindowMicros == 5000);
+
   assert(parseCommand("TAS_CHUNK 0 3 010080 82", command));
   assert(command.type == CommandType::TasChunk);
   assert(command.startIndex == 0);
@@ -202,6 +221,12 @@ void testInvalidCommandsResetOutput() {
   assert(command.type == CommandType::Invalid);
 
   assert(!parseCommand("TAS_BEGIN 10 poll 2 499", command));
+  assert(command.type == CommandType::Invalid);
+
+  assert(!parseCommand("TAS_BEGIN 10 strobe 499", command));
+  assert(command.type == CommandType::Invalid);
+
+  assert(!parseCommand("TAS_BEGIN 10 strobe 2 15001", command));
   assert(command.type == CommandType::Invalid);
 
   assert(!parseCommand("TAS_CHUNK 0 3 010080 00", command));
@@ -1070,6 +1095,287 @@ void testTasPlaybackIgnoresUnavailableControllerPolls() {
   assert(nextMasks.port1 == 0x80);
 }
 
+void testTasStrobePlaybackAdvancesOnEveryEdge() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x01, 0x00, 0x80};
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(3, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 3) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.stagedNextMask() == 0x01);
+  assert(!playback.willAdvanceOnEdge());
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+  assert(playback.willAdvanceOnEdge());
+
+  // Timestamp equality and 35-us spacing are deliberately immaterial.
+  assert(playback.onLatchEdge(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x01);
+  assert(playback.currentFrame() == 0);
+  assert(playback.lastEdgeKind() == TasEdgeKind::Started);
+  assert(playback.stagedNextMask() == 0x00);
+
+  playback.noteLatchObserved();
+  playback.notePollCompleted();
+  assert(playback.onLatchEdge(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x00);
+  assert(playback.currentFrame() == 1);
+  assert(playback.lastEdgeKind() == TasEdgeKind::AdvancedAtEdge);
+  assert(playback.stagedNextMask() == 0x80);
+
+  playback.noteLatchObserved();
+  assert(playback.onLatchEdge(1035, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x80);
+  assert(playback.currentFrame() == 2);
+  assert(playback.stagedNextMask() == 0x00);
+  assert(playback.active());
+
+  // The final record remains served until one further accepted edge ends the
+  // run and releases the controller.
+  assert(playback.onLatchEdge(1070, nextMask) == TasPlaybackResult::Complete);
+  assert(nextMask == 0x00);
+  assert(playback.lastEdgeKind() == TasEdgeKind::Ended);
+  assert(playback.complete());
+  assert(!playback.active());
+  assert(!playback.willAdvanceOnEdge());
+  assert(playback.stagedNextMask() == 0x00);
+}
+
+void testTasStrobePlaybackDelayAndWindowService() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40};
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(2, TasSyncMode::Strobe, 500) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(2) == TasPlaybackResult::Ok);
+  assert(!playback.willAdvanceOnEdge());
+
+  // The expiry service never releases frame 0 while start delay remains.
+  assert(!playback.windowExpiryDue(100000));
+  assert(playback.onWindowExpired(100000, nextMask) == TasPlaybackResult::Waiting);
+  assert(nextMask == 0x00);
+  assert(playback.stagedNextMask() == 0x02);
+
+  assert(playback.onLatchEdge(10, nextMask) == TasPlaybackResult::Waiting);
+  assert(playback.lastEdgeKind() == TasEdgeKind::DelayWait);
+  assert(playback.startDelayRemaining() == 1);
+  assert(!playback.willAdvanceOnEdge());
+  assert(playback.stagedNextMask() == 0x02);
+  assert(!playback.windowExpiryDue(10 + 499));
+
+  playback.notePollCompleted();
+  assert(playback.onLatchEdge(10, nextMask) == TasPlaybackResult::Waiting);
+  assert(playback.startDelayRemaining() == 0);
+  assert(playback.willAdvanceOnEdge());
+  assert(playback.stagedNextMask() == 0x02);
+
+  assert(playback.onLatchEdge(11, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.currentFrame() == 0);
+  assert(playback.stagedNextMask() == 0x40);
+
+  assert(playback.onLatchEdge(12, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x40);
+  assert(playback.currentFrame() == 1);
+  assert(playback.stagedNextMask() == 0x00);
+  assert(playback.active());
+
+  assert(playback.onLatchEdge(13, nextMask) == TasPlaybackResult::Complete);
+  assert(nextMask == 0x00);
+  assert(!playback.active());
+}
+
+void testTasStrobePlaybackPreAdvancesBetweenEdges() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40, 0x81};
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(3, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 3) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  // Armed before the first strobe: the expiry service releases frame 0 so its
+  // bit 0 is on the wire before the console ever latches, exactly like the
+  // windowed modes.
+  assert(playback.windowExpiryDue(1000));
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.started());
+  assert(!playback.willAdvanceOnEdge());
+  assert(!playback.windowExpiryDue(1000));
+
+  // The first edge just commits the pre-released frame.
+  assert(playback.onLatchEdge(5000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.currentFrame() == 0);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+
+  // No completed-read credit is required: the holdoff alone re-arms the
+  // pre-advance, and the edge after it commits record 1.
+  assert(!playback.windowExpiryDue(5000 + 7999));
+  assert(playback.windowExpiryDue(5000 + 8000));
+  assert(playback.onWindowExpired(5000 + 8000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x40);
+  assert(!playback.willAdvanceOnEdge());
+  assert(playback.onLatchEdge(21700, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x40);
+  assert(playback.currentFrame() == 1);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+
+  // An edge that arrives before the holdoff (double-latch games) falls back
+  // to advancing in place and still consumes exactly one record.
+  assert(playback.willAdvanceOnEdge());
+  assert(playback.onLatchEdge(21800, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x81);
+  assert(playback.currentFrame() == 2);
+  assert(playback.lastEdgeKind() == TasEdgeKind::AdvancedAtEdge);
+
+  // Completion can also happen mid-gap: the record after the last one ends
+  // the run from the expiry service and never re-arms a pre-advance.
+  assert(playback.windowExpiryDue(21800 + 8000));
+  assert(playback.onWindowExpired(21800 + 8000, nextMask) == TasPlaybackResult::Complete);
+  assert(nextMask == 0x00);
+  assert(playback.complete());
+  assert(!playback.active());
+  assert(!playback.windowExpiryDue(21800 + 16000));
+}
+
+void testTasStrobeFastPathCommitInline() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40};
+  uint8_t nextMask = 0xff;
+  TasFrameMasks fastMasks = {};
+
+  assert(playback.begin(2, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  // Nothing pre-advanced yet: the fast path declines and the caller falls
+  // through to the general edge path.
+  assert(!playback.tryCommitPreAdvancedEdge(500, fastMasks));
+
+  assert(playback.windowExpiryDue(1000));
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+
+  // The fast path commits the pre-popped record exactly once and re-arms the
+  // holdoff from the committed edge's timestamp.
+  assert(playback.tryCommitPreAdvancedEdge(5000, fastMasks));
+  assert(fastMasks.port1 == 0x02);
+  assert(fastMasks.port2 == 0x00);
+  assert(playback.currentFrame() == 0);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+  assert(playback.lastWindowResult() == TasPlaybackResult::Ok);
+  assert(!playback.tryCommitPreAdvancedEdge(5001, fastMasks));
+  assert(!playback.windowExpiryDue(5000 + 7999));
+  assert(playback.windowExpiryDue(5000 + 8000));
+
+  // The next pre-advanced record commits through the same path.
+  assert(playback.onWindowExpired(13000, nextMask) == TasPlaybackResult::Ok);
+  assert(playback.tryCommitPreAdvancedEdge(21700, fastMasks));
+  assert(fastMasks.port1 == 0x40);
+  assert(playback.currentFrame() == 1);
+}
+
+// v50 splits the fast-path commit: the mask commit runs inside the latch
+// ISR's PRIMASK critical head, and micros()/the holdoff re-arm run in the
+// preemptible tail via noteLatchTimestamp. Mirror that call sequence.
+void testTasStrobeFastPathSplitCommitAndTimestamp() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40};
+  uint8_t nextMask = 0xff;
+  TasFrameMasks fastMasks = {};
+
+  assert(playback.begin(2, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  // Nothing pre-advanced: the masks-only commit declines too.
+  assert(!playback.tryCommitPreAdvancedMasks(fastMasks));
+
+  assert(playback.windowExpiryDue(1000));
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+
+  // Head: masks commit exactly once. Tail: the timestamp note re-arms the
+  // holdoff from the noted edge time, not the commit call.
+  assert(playback.tryCommitPreAdvancedMasks(fastMasks));
+  assert(fastMasks.port1 == 0x02);
+  assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
+  assert(!playback.tryCommitPreAdvancedMasks(fastMasks));
+  playback.noteLatchTimestamp(5000);
+  assert(!playback.windowExpiryDue(5000 + 7999));
+  assert(playback.windowExpiryDue(5000 + 8000));
+
+  // The next record flows through the same split sequence.
+  assert(playback.onWindowExpired(13000, nextMask) == TasPlaybackResult::Ok);
+  assert(playback.tryCommitPreAdvancedMasks(fastMasks));
+  assert(fastMasks.port1 == 0x40);
+  playback.noteLatchTimestamp(21700);
+  assert(playback.currentFrame() == 1);
+}
+
+void testTasStrobePlaybackServesTwoPortsAndResets() {
+  NesTasPlayback playback;
+  const TasFrameMasks masks[] = {{0x01, 0x02}, {0x80, 0x40}};
+  TasFrameMasks nextMasks = {};
+
+  assert(playback.begin(2, TasSyncMode::Strobe, 2, 15000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 2, 2) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.stagedNextMasks().port1 == 0x01);
+  assert(playback.stagedNextMasks().port2 == 0x02);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  assert(playback.onLatchEdge(500, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x01);
+  assert(nextMasks.port2 == 0x02);
+  assert(playback.stagedNextMasks().port1 == 0x80);
+  assert(playback.stagedNextMasks().port2 == 0x40);
+
+  assert(playback.onLatchEdge(501, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x80);
+  assert(nextMasks.port2 == 0x40);
+  assert(playback.stagedNextMasks().port1 == 0x00);
+  assert(playback.stagedNextMasks().port2 == 0x00);
+
+  playback.reset();
+  assert(!playback.active());
+  assert(playback.syncMode() == TasSyncMode::Unknown);
+  assert(playback.currentMasks().port1 == 0x00);
+  assert(playback.currentMasks().port2 == 0x00);
+  assert(playback.stagedNextMasks().port1 == 0x00);
+  assert(playback.stagedNextMasks().port2 == 0x00);
+}
+
+void testTasStrobePlaybackReportsUnderrun() {
+  NesTasPlayback playback;
+  uint8_t chunk[tasdeck::kTasChunkFrameLimit] = {};
+  uint32_t startIndex = 0;
+  uint8_t nextMask = 0xff;
+
+  assert(playback.begin(200, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  for (int chunkIndex = 0; chunkIndex < 4; ++chunkIndex) {
+    assert(playback.pushChunk(startIndex, chunk, tasdeck::kTasChunkFrameLimit) == TasPlaybackResult::Ok);
+    startIndex += tasdeck::kTasChunkFrameLimit;
+  }
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+
+  for (uint32_t record = 0; record < startIndex; ++record) {
+    assert(playback.onLatchEdge(record, nextMask) == TasPlaybackResult::Ok);
+  }
+
+  assert(playback.onLatchEdge(startIndex, nextMask) == TasPlaybackResult::Underrun);
+  assert(nextMask == 0x00);
+  assert(playback.hasError());
+  assert(!playback.active());
+  assert(playback.stagedNextMask() == 0x00);
+}
+
 void testTasPlaybackRejectsInvalidLatchWindow() {
   NesTasPlayback playback;
 
@@ -1172,6 +1478,13 @@ int main() {
   testTasPlaybackStagesFallbackMasks();
   testTasPlaybackServesTwoControllerMasks();
   testTasPlaybackIgnoresUnavailableControllerPolls();
+  testTasStrobePlaybackAdvancesOnEveryEdge();
+  testTasStrobePlaybackDelayAndWindowService();
+  testTasStrobePlaybackPreAdvancesBetweenEdges();
+  testTasStrobeFastPathCommitInline();
+  testTasStrobeFastPathSplitCommitAndTimestamp();
+  testTasStrobePlaybackServesTwoPortsAndResets();
+  testTasStrobePlaybackReportsUnderrun();
   testTasPlaybackRejectsInvalidLatchWindow();
   testTasPlaybackRejectsOutOfOrderAndOverflowChunks();
   testTasPlaybackStartWaitsForPrebuffer();

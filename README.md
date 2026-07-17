@@ -37,7 +37,8 @@ TASDeck supports live controller input from the on-screen controls or keyboard, 
 port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. A
 `.tdmask` is generated from an `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movie using the converter
 scripts in `scripts/` (see the [Installation guide](INSTALL.md)); an `.r08` can be played
-directly with no conversion. 
+directly with no conversion, including a selectable per-strobe mode that matches default TAStm32
+replay semantics.
 
 During hardware TAS playback, the on-screen controller lights up the buttons for the selected NES port, so you can watch the inputs as they're sent to the NES. The event log can capture firmware traces for diagnosing
 playback alignment and hardware timing.
