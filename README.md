@@ -94,7 +94,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Pac-Man (Tengen) by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.bk2` | EverDrive N8 Pro |
 | Donkey Kong by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.bk2`, `.r08` | EverDrive N8 Pro |
 | The Legend of Zelda — Baxter & jprofit22 | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
-| The Legend of Zelda "Swordless Challenge" by Lord Tom | 24:39.71 | [3289M](https://tasvideos.org/3290M) | `.fm2` | EverDrive N8 Pro |
+| The Legend of Zelda "Swordless Challenge" by Lord Tom | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
 | Ghosts 'n Goblins - Arc & Koh1fds | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
 | Disney's The Little Mermaid - McBobX | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
 
