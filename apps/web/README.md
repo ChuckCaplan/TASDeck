@@ -74,6 +74,24 @@ hidden for `.tdmask` loads. The TAS panel also exposes two alignment controls:
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
 
+### TAS Controller Preview
+
+During hardware TAS playback, the on-screen controller highlights the buttons in the current TAS
+mask. The `P1` / `P2` selector chooses which port to display for two-controller streams; switching
+the preview does not change the hardware playback data.
+
+After `Start` is pressed, the preview stays blank until firmware status confirms that playback has
+started and the NES has produced controller activity. Completed-read mode waits for controller
+clock activity, while accepted-latch mode waits for latch activity. The preview then anchors itself
+to the firmware's current mask index, animates at the expected NES frame rate between status
+updates, and corrects its position whenever another firmware status arrives. `Start delay` and
+`Skip first` are included in the effective preview position.
+
+The preview is display-only: it does not send TAS button events, alter the uploaded masks, or affect
+firmware timing. It is intentionally approximate and may appear about half a second to one second
+after the console begins polling or make a small correction in games with unusual controller-read
+timing. Hardware playback continues independently of the browser preview.
+
 The NES event log keeps the newest 120 browser-visible events. `Copy` copies the visible log to the
 clipboard. `Trace` asks the firmware for the latest TAS poll trace, logs compact rows and anomaly
 summaries, and asks the middleware to save the full event log under `logs/trace/` with a

@@ -256,6 +256,7 @@ function installFakeBridge(page, options = {}) {
         window.__fakeBridgeState.current = overrides.current ?? window.__fakeBridgeState.current;
         window.__fakeBridgeState.latch = overrides.latch ?? window.__fakeBridgeState.latch;
         window.__fakeBridgeState.clock = overrides.clock ?? window.__fakeBridgeState.clock;
+        window.__fakeBridgeState.clock2 = overrides.clock2 ?? window.__fakeBridgeState.clock2;
         this.sendBridgeMessage({
           type: "tas_status",
           command,
@@ -277,6 +278,7 @@ function installFakeBridge(page, options = {}) {
           mask: overrides.mask ?? 0,
           latch: window.__fakeBridgeState.latch,
           clock: window.__fakeBridgeState.clock,
+          clock2: window.__fakeBridgeState.clock2,
           error: "ok",
           message: `OK ${command}`,
         });
@@ -293,6 +295,7 @@ function installFakeBridge(page, options = {}) {
       current: 0,
       latch: 0,
       clock: 0,
+      clock2: 0,
       started: false,
       ended: false,
       cancelled: false,
@@ -504,6 +507,90 @@ test.describe("hardware TAS streaming UI", () => {
     const types = await messageTypes(page);
     expect(types).toContain("tas_arm");
     expect(types.indexOf("tas_arm")).toBeLessThan(types.indexOf("tas_start"));
+  });
+
+  test("animates both TAS controller ports without sending button events", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+
+    await page.setInputFiles("#tasFile", {
+      name: "controller-preview.tdmask",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.concat([
+        TD2P_V1_HEADER,
+        Buffer.from(Array.from({ length: 240 }, () => [0x01, 0x02]).flat()),
+      ]),
+    });
+
+    await page.click("#playButton");
+    await expect(page.locator("#playButton")).toHaveText("Start");
+    await page.click("#playButton");
+
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 1,
+        clock: 8,
+      });
+    });
+    await expect(page.locator('[data-button="a"]')).toHaveClass(/tas-pressed/);
+    await expect(page.locator('[data-button="b"]')).not.toHaveClass(/tas-pressed/);
+    await expect(page.locator("#controllerState")).toHaveText("P1 TAS: A");
+
+    await page.click('[data-controller-port="2"]');
+    await expect(page.locator('[data-button="a"]')).not.toHaveClass(/tas-pressed/);
+    await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/);
+    await expect(page.locator("#controllerState")).toHaveText("P2 TAS: B");
+
+    const hardwareButtonEvents = await page.evaluate(() =>
+      window.__fakeBridgeMessages.filter((message) => message.type === "event"),
+    );
+    expect(hardwareButtonEvents).toEqual([]);
+
+    await page.click("#stopButton");
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await expect(page.locator("#controllerState")).toHaveText("P2: None");
+  });
+
+  test("previews the effective TAS masks after start delay and skip", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeNetworkBridge(page);
+
+    await page.setInputFiles("#tasFile", {
+      name: "delayed-preview.tdmask",
+      mimeType: "application/octet-stream",
+      buffer: tdmaskBuffer([
+        ...Array.from({ length: 5 }, () => 0x01),
+        ...Array.from({ length: 180 }, () => 0x02),
+      ]),
+    });
+    await page.fill("#syncSkipPolls", "5");
+    await page.fill("#syncDelayPolls", "30");
+
+    await page.click("#playButton");
+    await expect(page.locator("#playButton")).toHaveText("Start");
+    await page.click("#playButton");
+    await expect.poll(async () => (await messageTypes(page)).includes("tas_start")).toBe(true);
+
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 0,
+        clock: 8,
+      });
+    });
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 1,
+        clock: 16,
+      });
+    });
+    await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/);
+    await expect(page.locator('[data-button="a"]')).not.toHaveClass(/tas-pressed/);
   });
 
   test("stop cancels an arming run before TAS_START", async ({ page }) => {
