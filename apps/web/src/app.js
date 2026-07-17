@@ -75,11 +75,15 @@ const state = {
     preview: {
       active: false,
       animationFrameId: 0,
+      baselineClock: null,
+      baselineClock2: null,
+      baselineLatch: null,
       buttons: new Set(),
       currentMask: null,
       frameIndex: -1,
       masks: [],
       runId: 0,
+      syncedToHardware: false,
       startedAt: 0,
     },
   },
@@ -850,7 +854,7 @@ function updateDeviceStates() {
   elements.controllerState.textContent = `P${port}: ${formatButtons(state.pressed)}`;
 }
 
-function startTasControllerPreview(runId) {
+function startTasControllerPreview(runId, status) {
   stopTasControllerPreview();
 
   const masks = state.tas.masks.slice(state.tas.syncSkipPolls);
@@ -862,14 +866,51 @@ function startTasControllerPreview(runId) {
   preview.active = true;
   preview.runId = runId;
   preview.masks = masks;
-  preview.startedAt = window.performance.now() + state.tas.syncDelayPolls * TAS_PREVIEW_FRAME_DURATION_MS;
+  preview.baselineClock = hardwareCounter(status?.clock);
+  preview.baselineClock2 = hardwareCounter(status?.clock2);
+  preview.baselineLatch = hardwareCounter(status?.latch);
   renderTasControllerPreview();
-  preview.animationFrameId = window.requestAnimationFrame(animateTasControllerPreview);
+}
+
+function syncTasControllerPreview(status) {
+  const preview = state.tas.preview;
+  if (!preview.active || preview.runId !== state.tas.hardwareRunId || preview.masks.length === 0) {
+    return;
+  }
+
+  const current = Math.max(0, Math.min(Number(status.current || 0), preview.masks.length - 1));
+  if (!preview.syncedToHardware) {
+    const playbackStarted = Number(status.started || 0) === 1;
+    const hardwareAdvanced = current > 0;
+    const pollCompleted =
+      hardwareCounterDelta(status.clock, preview.baselineClock) >= 8 ||
+      hardwareCounterDelta(status.clock2, preview.baselineClock2) >= 8;
+    const latchAccepted = hardwareCounterDelta(status.latch, preview.baselineLatch) > 0;
+    const consoleReadObserved = state.tas.syncMode === "latch" ? latchAccepted : pollCompleted;
+    if (!playbackStarted || (!consoleReadObserved && !hardwareAdvanced)) {
+      return;
+    }
+
+    preview.syncedToHardware = true;
+  }
+
+  preview.frameIndex = current;
+  preview.currentMask = preview.masks[current];
+  preview.startedAt = window.performance.now() - current * TAS_PREVIEW_FRAME_DURATION_MS;
+  renderTasControllerPreview();
+  if (!preview.animationFrameId) {
+    preview.animationFrameId = window.requestAnimationFrame(animateTasControllerPreview);
+  }
 }
 
 function animateTasControllerPreview(timestamp) {
   const preview = state.tas.preview;
-  if (!preview.active || preview.runId !== state.tas.hardwareRunId || state.tas.hardwareStopped) {
+  if (
+    !preview.active ||
+    !preview.syncedToHardware ||
+    preview.runId !== state.tas.hardwareRunId ||
+    state.tas.hardwareStopped
+  ) {
     stopTasControllerPreview();
     return;
   }
@@ -897,13 +938,30 @@ function stopTasControllerPreview() {
 
   preview.active = false;
   preview.animationFrameId = 0;
+  preview.baselineClock = null;
+  preview.baselineClock2 = null;
+  preview.baselineLatch = null;
   preview.buttons.clear();
   preview.currentMask = null;
   preview.frameIndex = -1;
   preview.masks = [];
   preview.runId = 0;
+  preview.syncedToHardware = false;
   preview.startedAt = 0;
   renderTasControllerPreview();
+}
+
+function hardwareCounter(value) {
+  const counter = Number(value);
+  return Number.isFinite(counter) && counter >= 0 ? Math.trunc(counter) : null;
+}
+
+function hardwareCounterDelta(value, baseline) {
+  const counter = hardwareCounter(value);
+  if (counter === null || baseline === null) {
+    return 0;
+  }
+  return (counter - baseline) >>> 0;
 }
 
 function renderTasControllerPreview() {
@@ -1453,7 +1511,7 @@ async function continueHardwareTas(runId) {
 
   state.tas.status = "playing";
   updateHardwareStatusFromFirmware(status, { quiet: true });
-  startTasControllerPreview(runId);
+  startTasControllerPreview(runId, status);
   writeLog({
     type: "playback",
     message: "Arduino TAS start accepted; the bridge will keep streaming chunks even if the browser sleeps",
@@ -1513,6 +1571,10 @@ function updateHardwareStatusFromFirmware(status, options = {}) {
   state.tas.streamedFrames = Math.max(state.tas.streamedFrames, received);
   state.tas.nextFrameIndex = state.tas.streamedFrames;
   state.tas.hardwareStatus = status;
+
+  if (!isComplete && (!status.error || status.error === "ok")) {
+    syncTasControllerPreview(status);
+  }
 
   if (status.error && status.error !== "ok") {
     stopTasControllerPreview();

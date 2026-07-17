@@ -256,6 +256,7 @@ function installFakeBridge(page, options = {}) {
         window.__fakeBridgeState.current = overrides.current ?? window.__fakeBridgeState.current;
         window.__fakeBridgeState.latch = overrides.latch ?? window.__fakeBridgeState.latch;
         window.__fakeBridgeState.clock = overrides.clock ?? window.__fakeBridgeState.clock;
+        window.__fakeBridgeState.clock2 = overrides.clock2 ?? window.__fakeBridgeState.clock2;
         this.sendBridgeMessage({
           type: "tas_status",
           command,
@@ -277,6 +278,7 @@ function installFakeBridge(page, options = {}) {
           mask: overrides.mask ?? 0,
           latch: window.__fakeBridgeState.latch,
           clock: window.__fakeBridgeState.clock,
+          clock2: window.__fakeBridgeState.clock2,
           error: "ok",
           message: `OK ${command}`,
         });
@@ -293,6 +295,7 @@ function installFakeBridge(page, options = {}) {
       current: 0,
       latch: 0,
       clock: 0,
+      clock2: 0,
       started: false,
       ended: false,
       cancelled: false,
@@ -523,6 +526,14 @@ test.describe("hardware TAS streaming UI", () => {
     await expect(page.locator("#playButton")).toHaveText("Start");
     await page.click("#playButton");
 
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 1,
+        clock: 8,
+      });
+    });
     await expect(page.locator('[data-button="a"]')).toHaveClass(/tas-pressed/);
     await expect(page.locator('[data-button="b"]')).not.toHaveClass(/tas-pressed/);
     await expect(page.locator("#controllerState")).toHaveText("P1 TAS: A");
@@ -563,7 +574,22 @@ test.describe("hardware TAS streaming UI", () => {
     await expect.poll(async () => (await messageTypes(page)).includes("tas_start")).toBe(true);
 
     await expect(page.locator(".tas-pressed")).toHaveCount(0);
-    await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/, { timeout: 1500 });
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 0,
+        clock: 8,
+      });
+    });
+    await expect(page.locator(".tas-pressed")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 1,
+        clock: 16,
+      });
+    });
+    await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/);
     await expect(page.locator('[data-button="a"]')).not.toHaveClass(/tas-pressed/);
   });
 
