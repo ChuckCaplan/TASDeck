@@ -66,12 +66,14 @@ as two controller bytes per record in NES serial bit order (reversed while impor
 replay-device convention and its assumptions documented in the
 [hardware TAS workflow guide](../../docs/hardware-tas-workflow.md#r08-format).
 
-`.tdmask` always uses completed-read advancement. `.r08` defaults to completed reads and exposes an
-inline picker in the Status field for completed-read, accepted-window, or per-strobe advancement. The picker is
-hidden for `.tdmask` loads. The TAS panel also exposes two alignment controls:
+`.tdmask` always uses completed-read advancement. `.r08` defaults to per-strobe advancement and
+exposes an inline picker in the Status field for completed-read, accepted-window, or per-strobe
+advancement. The picker is hidden for `.tdmask` loads. The TAS panel also exposes two alignment
+controls:
 
 - `Start delay`: waits before mask 0 and counts blank windows in windowed modes or accepted edges in
-  per-strobe mode.
+  per-strobe mode. It prefills to the mode's default — 1 in per-strobe mode (TAStm32 `--blank 1`
+  parity), otherwise 0 — until a value is entered by hand, which then survives mode changes.
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
 
@@ -83,7 +85,7 @@ the preview does not change the hardware playback data.
 
 After `Start` is pressed, the preview stays blank until firmware status confirms that playback has
 started and the NES has produced controller activity. Completed-read mode waits for controller
-clock activity, while accepted-latch mode waits for latch activity. The preview then anchors itself
+clock activity, while the accepted-window and per-strobe modes wait for latch activity. The preview then anchors itself
 to the firmware's current mask index, animates at the expected NES frame rate between status
 updates, and corrects its position whenever another firmware status arrives. `Start delay` and
 `Skip first` are included in the effective preview position.

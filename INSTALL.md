@@ -265,12 +265,14 @@ log `blocked` entries rather than silently dropping them.
 
 1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the TAS movie. This may mean having the cartridge plugged in and the NES off.
 2. Press `Connect` if the Arduino bridge is not already connected.
-3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. Both default to completed-read
-   (poll) synchronization. `.tdmask` is locked to poll mode, while `.r08` also exposes a `Sync Mode`
-   picker so you can switch it to accepted-latch mode if a replay needs it.
-4. Set `Start delay` or `Skip first` only if the run needs poll alignment tuning. `Start delay`
-   waits after the console sync point before releasing the first poll. `Skip first` discards masks
-   from the front of the stream before arming. Ideally this should not be needed.
+3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. `.tdmask` is locked to
+   completed-read (poll) synchronization. `.r08` defaults to per-strobe synchronization — the
+   semantics default TAStm32 settings record — and exposes a `Sync Mode` picker to switch to poll
+   or latch-window mode if a replay is documented as needing TAStm32 `--dpcm`.
+4. Leave `Start delay` at its prefill: 0 for `.tdmask`, 1 for `.r08` in per-strobe mode (matching
+   the blank record default TAStm32 dumps prepend). `Start delay` waits after the console sync
+   point before releasing the first record; `Skip first` discards masks from the front of the
+   stream before arming. Change these only if the run needs alignment tuning.
 5. Wait for TASDeck to parse and preview the file. Once both the Arduino bridge and a valid file are
    ready, TASDeck uploads the TAS stream to the bridge while manual controls stay active.
 6. Press `Play` a single time to prebuffer and arm the Arduino. When the status is armed and the playback button

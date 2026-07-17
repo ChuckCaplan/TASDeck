@@ -1,6 +1,6 @@
 # Per-strobe sync mode specification
 
-Status: FROZEN v1 + revisions 4–6 — rollout phase 1 implemented; revision 4 (hardware findings) implemented and console-validated for SMB1 max-score r08 (100% completion, strobe, delay 1); revision 5 (Golf latch-ISR fast path) implemented but failed its console retest — the merge is dispatch-bound, not body-bound; revision 6 (strobe-mode interrupt-priority inversion, v50) implemented, Golf console retest pending; the later default flip remains pending.
+Status: FROZEN v1 + revisions 4–6 — rollout phase 1 implemented; revision 4 (hardware findings) implemented and console-validated for SMB1 max-score r08 (100% completion, strobe, delay 1); revision 5 (Golf latch-ISR fast path) implemented but failed its console retest — the merge is dispatch-bound, not body-bound; revision 6 (strobe-mode interrupt-priority inversion, v50) implemented; the v50 rev 7 slim latch head passed the Golf serving-fidelity retest on console 2026-07-16; the phase-4 r08 default flip to strobe (with a guarded Start delay 1 prefill) landed 2026-07-17.
 Date: 2026-07-15 (revised same day: resolved four implementation-blocking ambiguities from external
 review — completion edge accounting, edge-row marking, trace-capture throughput, strobe counter
 semantics — plus start-delay staging text, effective refill throughput, and mode-aware UI copy.
@@ -363,8 +363,8 @@ Firmware — sketch (`uno_r4_wifi.ino`):
 Web and bridge:
 
 - **R18** `tas.js`: `HARDWARE_TAS_SYNC_MODES = ["poll", "latch", "strobe"]`. The r08 parse default
-  remains `"poll"` at land time; it flips to `"strobe"` only in rollout phase 4, as a separate
-  change after hardware validation.
+  remained `"poll"` at land time; the phase-4 flip to `"strobe"` landed 2026-07-17 after the SMB1
+  max-score and Lode Runner strobe completions and Golf's serving-fidelity pass.
 - **R19** `index.html`: the `#syncMode` picker gains
   `<option value="strobe">per strobe (r08 replay)</option>`; the picker remains visible only for
   `.r08` loads.

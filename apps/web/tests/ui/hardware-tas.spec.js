@@ -365,8 +365,8 @@ test.describe("hardware TAS streaming UI", () => {
     await expect(page.locator("#syncModeField")).toBeVisible();
     await expect(page.locator(".file-actions #syncMode")).toHaveCount(0);
     await expect(page.locator("#playbackStatus #syncMode")).toBeVisible();
-    await expect(page.locator("#syncMode")).toHaveValue("poll");
-    await expect(page.locator("#syncMode option:checked")).toHaveText("completed reads");
+    await expect(page.locator("#syncMode")).toHaveValue("strobe");
+    await expect(page.locator("#syncMode option:checked")).toHaveText("per strobe (r08 replay)");
     const r08Layout = await page.locator(".layout-grid").boundingBox();
     const r08Shortcuts = await page.locator(".shortcut-note").boundingBox();
     const r08Gap = r08Layout.y + r08Layout.height - (r08Shortcuts.y + r08Shortcuts.height);
@@ -446,7 +446,7 @@ test.describe("hardware TAS streaming UI", () => {
     expect(upload.frameCount).toBe(12);
   });
 
-  test("parses and uploads R08 records with poll synchronization by default", async ({ page }) => {
+  test("parses and uploads R08 records with per-strobe synchronization by default", async ({ page }) => {
     await installFakeBridge(page);
     await connectFakeNetworkBridge(page);
 
@@ -460,7 +460,7 @@ test.describe("hardware TAS streaming UI", () => {
     const upload = await page.evaluate(() =>
       window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").at(-1),
     );
-    expect(upload.syncMode).toBe("poll");
+    expect(upload.syncMode).toBe("strobe");
     expect(upload.portCount).toBe(2);
     expect(upload.frameCount).toBe(2);
     expect(upload.masks).toEqual([0x01, 0x02, 0x80, 0x00]);
@@ -480,7 +480,7 @@ test.describe("hardware TAS streaming UI", () => {
     await expect(page.locator("#syncMode")).toBeEnabled();
     await page.locator("#syncMode").selectOption("latch");
     await expect(page.locator("#playbackStatusText")).toHaveText("Ready · R08 · 2 records");
-    await expect(page.locator("#syncMode option:checked")).toHaveText("per accepted latch");
+    await expect(page.locator("#syncMode option:checked")).toHaveText("per latch window (dpcm r08)");
     await page.click("#playButton");
     await expect.poll(async () =>
       page.evaluate(() => window.__fakeBridgeMessages.filter((message) => message.type === "tas_upload").length),
@@ -501,18 +501,28 @@ test.describe("hardware TAS streaming UI", () => {
       buffer: Buffer.from([0x80, 0x40, 0x01, 0x00]),
     });
 
-    await expect(page.locator("#syncDelayUnit")).toHaveText("windows");
-    await expect(page.locator("#syncSkipUnit")).toHaveText("frames");
-    await page.locator("#syncMode").selectOption("strobe");
+    // R08 loads default to strobe mode with the TAStm32 --blank 1 delay.
     await expect(page.locator("#syncMode option:checked")).toHaveText("per strobe (r08 replay)");
     await expect(page.locator("#syncDelayUnit")).toHaveText("strobes");
     await expect(page.locator("#syncSkipUnit")).toHaveText("records");
+    await expect(page.locator("#syncDelayPolls")).toHaveValue("1");
 
     await page.locator("#syncMode").selectOption("poll");
     await expect(page.locator("#syncDelayUnit")).toHaveText("windows");
     await expect(page.locator("#syncSkipUnit")).toHaveText("frames");
+    await expect(page.locator("#syncDelayPolls")).toHaveValue("0");
 
     await page.locator("#syncMode").selectOption("strobe");
+    await expect(page.locator("#syncDelayPolls")).toHaveValue("1");
+
+    // A hand-entered delay survives mode changes instead of being reset.
+    await page.fill("#syncDelayPolls", "3");
+    await page.locator("#syncMode").selectOption("poll");
+    await expect(page.locator("#syncDelayPolls")).toHaveValue("3");
+    await page.locator("#syncMode").selectOption("strobe");
+    await expect(page.locator("#syncDelayPolls")).toHaveValue("3");
+    await page.fill("#syncDelayPolls", "1");
+
     await page.click("#playButton");
     await expect(page.locator("#playButton")).toHaveText("Start");
     await expect(page.locator("#playbackStatus")).toContainText("at the next latch strobe");

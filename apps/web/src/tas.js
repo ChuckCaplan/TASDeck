@@ -82,11 +82,14 @@
     const extension = extensionForFileName(fileName);
 
     if (extension === ".r08") {
+      // Raw .r08 dumps carry one record per strobe, so default them to the
+      // TAStm32-parity strobe mode; the picker can still select poll or latch
+      // for dumps documented as needing --dpcm window playback.
       return parseResult(parseR08Bytes(normalizedBytes), {
         format: "r08",
         label: "R08 two-controller stream",
         fileName,
-        syncMode: HARDWARE_TAS_SYNC_MODE,
+        syncMode: "strobe",
       });
     }
 

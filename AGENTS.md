@@ -174,9 +174,11 @@ slices that many masks from the front of the uploaded stream before sending chun
 The UI accepts versioned `TD2P` `.tdmask` files with interleaved port 1 / port 2 bytes and raw R08
 files with two bytes per record. TD2P bytes use A, B, Select, Start, Up, Down, Left, Right bit order;
 R08 bytes are reversed from their NES serial order during import. `.tdmask` always uses completed-read
-poll mode. `.r08` defaults to poll mode and exposes a UI picker for completed reads or accepted latches.
-The picker also offers per-strobe playback, which matches default TAStm32 `.r08` semantics by
-consuming one two-port record on every accepted latch edge.
+poll mode. `.r08` defaults to per-strobe playback, which matches default TAStm32 `.r08` semantics by
+consuming one two-port record on every accepted latch edge, and prefills `Start delay 1` to mirror
+the blank record default TAStm32 dumps prepend (the prefill only applies while the delay field is
+untouched). The UI picker can switch an `.r08` to completed-read poll or accepted-latch-window mode
+for dumps documented as needing TAStm32 `--dpcm`.
 
 Hardware TAS playback uses the upload/chunk protocol with pre-generated mask bytes. Do not send
 browser-timed TAS button diffs to the real hardware bridge.
@@ -267,8 +269,9 @@ hardware-flow changes:
   versioned header, and empty or odd-length R08 files are rejected.
 - A generated versioned `TD2P` `.tdmask` file loads as a two-controller console-ready mask stream
   and uploads after Arduino USB is connected, including when all port 2 bytes are zero.
-- A raw `.r08` file loads as a two-controller stream, reverses each controller byte, defaults to poll
-  sync mode, and exposes a selector that can switch the upload to latch or per-strobe mode.
+- A raw `.r08` file loads as a two-controller stream, reverses each controller byte, defaults to
+  per-strobe sync mode with `Start delay` prefilled to 1, and exposes a selector that can switch the
+  upload to poll or latch-window mode.
 - The `Start delay` and `Skip first` controls stay editable before arming and disabled during active
   hardware playback.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.

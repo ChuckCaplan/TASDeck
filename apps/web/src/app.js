@@ -52,6 +52,7 @@ const state = {
     masks: [],
     syncMode: HARDWARE_TAS_SYNC_MODE,
     syncDelayPolls: 0,
+    syncDelayTouched: false,
     syncSkipPolls: 0,
     validation: null,
     currentFrame: 0,
@@ -1202,9 +1203,9 @@ function loadTasFromParseResult(fileName, parseResult) {
   state.tas.masks = validation.masks;
   state.tas.syncMode = normalizeHardwareTasSyncMode(parseResult?.syncMode);
   elements.syncMode.value = state.tas.syncMode;
-  state.tas.syncDelayPolls = 0;
+  state.tas.syncDelayTouched = false;
+  applyDefaultSyncDelay();
   state.tas.syncSkipPolls = 0;
-  elements.syncDelayPolls.value = "0";
   elements.syncSkipPolls.value = "0";
   elements.syncSkipPolls.max = validation.masks.length > 0 ? String(validation.masks.length - 1) : "0";
   state.tas.validation = validation;
@@ -2109,10 +2110,27 @@ function handleSyncDelayChange() {
   const normalized = Number.isSafeInteger(value)
     ? Math.max(0, Math.min(HARDWARE_TAS_MAX_START_DELAY_POLLS, value))
     : 0;
+  state.tas.syncDelayTouched = true;
   state.tas.syncDelayPolls = normalized;
   if (String(normalized) !== elements.syncDelayPolls.value) {
     elements.syncDelayPolls.value = String(normalized);
   }
+}
+
+// Default TAStm32 dumps prepend one blank record (--blank 1), so strobe mode
+// starts one accepted edge late; window modes start at the first window.
+function defaultSyncDelayForMode(syncMode) {
+  return syncMode === "strobe" ? 1 : 0;
+}
+
+function applyDefaultSyncDelay() {
+  if (state.tas.syncDelayTouched) {
+    return;
+  }
+
+  const delay = defaultSyncDelayForMode(state.tas.syncMode);
+  state.tas.syncDelayPolls = delay;
+  elements.syncDelayPolls.value = String(delay);
 }
 
 function handleSyncModeChange() {
@@ -2122,6 +2140,7 @@ function handleSyncModeChange() {
   }
 
   state.tas.syncMode = normalizeHardwareTasSyncMode(elements.syncMode.value);
+  applyDefaultSyncDelay();
   state.tas.hardwareFileKey = "";
   state.tas.hardwareUploadPromise = null;
   state.tas.hardwareMessage = loadedTasStatusMessage({ format: "r08" }, state.tas.validation);

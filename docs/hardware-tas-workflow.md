@@ -50,8 +50,9 @@ public verification files use (for example the
 - **NES serial bit order, Right through A**, which TASDeck reverses into its internal A-through-Right
   mask order while loading.
 - **Selectable synchronization.** Because R08 cannot say whether its records are frames or latches,
-  TASDeck defaults to completed-read poll mode at this rollout stage and exposes a `Sync Mode`
-  picker. Select per-strobe mode for replay files made with default TAStm32 semantics (see
+  TASDeck assumes the common case — one record per strobe, as default TAStm32 settings record —
+  and defaults R08 loads to per-strobe mode. The `Sync Mode` picker can select `poll` or `latch`
+  for dumps documented as needing TAStm32 `--dpcm` window playback (see
   [Console Synchronization](#console-synchronization)).
 
 These are conventions the file cannot prove, not guarantees. The self-describing successor format
@@ -99,10 +100,11 @@ or startup path can change lag and controller polling enough to desynchronize th
 ## Console Synchronization
 
 A `.tdmask` export always advances only after a window containing a completed eight-clock controller
-read, and its sync mode is not user-selectable. A raw `.r08` replay defaults to that completed-read
-poll mode during the initial rollout. When an R08 file is loaded, the `Sync Mode` picker can select
-`latch`, which advances once per accepted latch window without a completed-read gate, or `strobe`,
-which consumes one record on every accepted latch edge with no window coalescing.
+read, and its sync mode is not user-selectable. A raw `.r08` replay defaults to `strobe` mode, which
+consumes one record on every accepted latch edge with no window coalescing — the semantics default
+TAStm32 settings record and replay. When an R08 file is loaded, the `Sync Mode` picker can instead
+select `poll`, or `latch`, which advances once per accepted latch window without a completed-read
+gate; both windowed modes exist for dumps documented as needing TAStm32 `--dpcm`.
 
 | Source data | Sync mode |
 | --- | --- |
@@ -120,7 +122,9 @@ Before arming playback:
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
 - Use `Start delay` to wait before releasing record 0. It counts blank windows in `poll`/`latch`
   mode and accepted edges in `strobe` mode; TAStm32 `--blank N` maps directly to strobe-mode
-  `Start delay N`. `.tdmask` always uses completed-read windows.
+  `Start delay N`, so strobe mode prefills `Start delay 1` to match the one blank record default
+  TAStm32 dumps prepend. A hand-entered delay survives mode changes; the prefill applies only while
+  the field is untouched. `.tdmask` always uses completed-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
 
 For a power-on movie, load the `.tdmask` or `.r08` and press `Play` once to arm it. While the NES is off or
