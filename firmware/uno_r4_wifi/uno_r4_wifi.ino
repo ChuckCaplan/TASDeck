@@ -70,7 +70,6 @@ constexpr uint8_t kTasAnomalyReReadStorm = 5;    // 5th poll in one window
 constexpr uint8_t kPort1LatchPin = 2;
 constexpr uint8_t kPort1ClockPin = 3;
 constexpr uint8_t kPort1DataPin = 6;
-constexpr uint8_t kPort2LatchPin = 12;
 constexpr uint8_t kPort2ClockPin = 8;
 constexpr uint8_t kPort2DataPin = 7;
 constexpr uint16_t kPort1LatchBit = 1u << 4;  // D2 = P104 on UNO R4 WiFi.
@@ -255,7 +254,7 @@ void printStartupBanner() {
   Serial.print("NES clock shift edge: ");
   Serial.println(kClockEdgeMode);
   Serial.println("Protocol: PING | STATUS | BUTTON [1|2] <button> <down|up> | TAS_BEGIN <frames> poll [ports] [window_us] | TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum> | TAS_START [delay_frames] | TAS_CANCEL | TAS_END | TAS_STATUS | TAS_TRACE [count] [start] | TAS_TRACE_RESUME");
-  Serial.println("NES pins: P1 latch D2 clock D3 data D6, P2 latch D12 clock D8 data D7");
+  Serial.println("NES pins: P1 latch D2 clock D3 data D6, P2 clock D8 data D7 (latch shared from D2)");
   if (kDiagnosticForcedMask != 0) {
     Serial.print("DIAGNOSTIC: forced controller mask 0x");
     if (kDiagnosticForcedMask < 0x10) {
@@ -273,10 +272,9 @@ void setupNesPins() {
   pinMode(kPort1LatchPin, INPUT);
   pinMode(kPort1ClockPin, INPUT);
   pinMode(kPort1DataPin, OUTPUT);
-  // The NES exposes the same latch/strobe on both controller connectors. D12
-  // may stay physically connected for wiring convenience, but D2 is the sole
-  // interrupt source so one console strobe cannot run two latch ISRs.
-  pinMode(kPort2LatchPin, INPUT_PULLUP);
+  // The NES drives one shared latch/strobe for both controller connectors, so
+  // port 2 has no latch pin: D2 is the sole latch source and one console
+  // strobe cannot run two latch ISRs.
   // Port 2 is optional. Keep an unwired clock input at its idle HIGH level so
   // noise cannot look like a completed controller read and advance playback.
   pinMode(kPort2ClockPin, INPUT_PULLUP);
