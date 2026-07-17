@@ -889,7 +889,7 @@ function syncTasControllerPreview(status) {
       hardwareCounterDelta(status.clock, preview.baselineClock) >= 8 ||
       hardwareCounterDelta(status.clock2, preview.baselineClock2) >= 8;
     const latchAccepted = hardwareCounterDelta(status.latch, preview.baselineLatch) > 0;
-    const consoleReadObserved = state.tas.syncMode === "latch" ? latchAccepted : pollCompleted;
+    const consoleReadObserved = state.tas.syncMode === "poll" ? pollCompleted : latchAccepted;
     if (!playbackStarted || (!consoleReadObserved && !hardwareAdvanced)) {
       return;
     }
