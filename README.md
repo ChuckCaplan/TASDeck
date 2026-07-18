@@ -86,18 +86,20 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Super Mario Bros. — "warps" by HappyLee | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. — "warpless" by HappyLee & Mars608 | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. — "Playaround" | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro |
-| Super Mario Bros. — "maximum score" |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.r08` | EverDrive N8 Pro |
+| Super Mario Bros. — "maximum score" |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Super Mario Bros. 2 (FDS / Japan) — "warps, Mario" by HappyLee | 08:04.83 | [3348M](https://tasvideos.org/3348M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 2 (FDS / Japan) — "SMB2J ACE Total Control example" |  | [GitHub](https://github.com/threecreepio/smb2j-ace-tc) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 2 — "warps" by Aglar & andrewg | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
 | Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
 | Tetris — "maximum score" by r57shell & Archanfel | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
-| Pac-Man (Tengen) by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.bk2` | EverDrive N8 Pro |
-| Donkey Kong by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files/tree/main) | `.bk2`, `.r08` | EverDrive N8 Pro |
+| Pac-Man (Tengen) by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2` | EverDrive N8 Pro |
+| Donkey Kong by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2`, `.r08` | EverDrive N8 Pro |
 | The Legend of Zelda — Baxter & jprofit22 | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
 | The Legend of Zelda "Swordless Challenge" by Lord Tom | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
 | Ghosts 'n Goblins - Arc & Koh1fds | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
+| Lode Runner by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| Monopoly by Alyosha |  | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Disney's The Little Mermaid - McBobX | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
 
 ## Background
