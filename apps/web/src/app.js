@@ -2,9 +2,11 @@ const {
   HARDWARE_TAS_MAX_START_DELAY_POLLS,
   HARDWARE_TAS_SYNC_MODE,
   HARDWARE_TAS_SYNC_MODES,
+  NES_FRAMES_PER_SECOND,
   maskToButtons,
   normalizeTasMasks,
   parseTasFileBytes,
+  reconcileCompletedExactRunElapsed,
   tasMaskHasInput,
   tasMaskPortValue,
   tasMasksPortCount,
@@ -26,7 +28,16 @@ const TAS_TRACE_EXPECTED_CLOCK_DELTA = 8;
 // edges can separate the last port-1 poll of one frame from the first of the next.
 const TAS_TRACE_EXPECTED_LATCH_DELTA = 4;
 const TAS_TRACE_ANOMALY_LOG_LIMIT = 5;
-const TAS_PREVIEW_FRAME_DURATION_MS = 1000 / 60.0988;
+const TAS_PREVIEW_FRAME_DURATION_MS = 1000 / NES_FRAMES_PER_SECOND;
+const RUN_TIMER_RENDER_INTERVAL_MS = 1000;
+// Consumption stalls longer than this show the "console not reading input"
+// note (cutscenes, lag clusters). Two bridge status polls plus slack.
+const RUN_TIMER_STALL_MS = 2500;
+// The measured-rate total estimate takes over from the one-record-per-frame
+// assumption only after enough of the run has played to trust the rate.
+const RUN_TIMER_MIN_RATE_RECORDS = 60;
+const RUN_TIMER_MIN_RATE_MS = 5000;
+const RUN_TIMER_ESTIMATE_REFRESH_MS = 10000;
 const HARDWARE_TAS_PAUSE_MESSAGE =
   "Hardware TAS playback already buffered on the Arduino will continue. This only pauses/stops sending more TAS chunks from the bridge.";
 const KEYBOARD_BUTTONS = new Map([
@@ -54,6 +65,18 @@ const state = {
     syncDelayPolls: 0,
     syncDelayTouched: false,
     syncSkipPolls: 0,
+    sourceFrameCount: 0,
+    runTimer: {
+      running: false,
+      anchorMs: 0,
+      finalElapsedMs: -1,
+      completed: false,
+      lastCurrent: 0,
+      lastAdvanceMs: 0,
+      estimatedTotalMs: 0,
+      estimateUpdatedElapsedMs: 0,
+      intervalId: 0,
+    },
     validation: null,
     currentFrame: 0,
     streamedFrames: 0,
@@ -112,6 +135,7 @@ const elements = {
   syncDelayPolls: document.querySelector("#syncDelayPolls"),
   syncDelayUnit: document.querySelector("#syncDelayUnit"),
   syncSkipPolls: document.querySelector("#syncSkipPolls"),
+  runTimer: document.querySelector("#runTimer"),
   syncSkipUnit: document.querySelector("#syncSkipUnit"),
   currentFrame: document.querySelector("#currentFrame"),
   dumpTrace: document.querySelector("#dumpTrace"),
@@ -896,6 +920,7 @@ function syncTasControllerPreview(status) {
     }
 
     preview.syncedToHardware = true;
+    startRunTimer(current);
   }
 
   preview.frameIndex = current;
@@ -953,6 +978,169 @@ function stopTasControllerPreview() {
   preview.syncedToHardware = false;
   preview.startedAt = 0;
   renderTasControllerPreview();
+}
+
+// Run timer: elapsed time is measured from the hardware status stream; the
+// total is exact when the TD2P v2 header carries the source movie's frame count
+// and an estimate otherwise (one record per video frame until enough of the run
+// has played to measure the real record-consumption rate, which absorbs lag
+// frames and multi-latch games). A one-second displayed completion overrun is
+// reconciled separately because status polling can report success that late.
+function startRunTimer(currentRecord) {
+  const timer = state.tas.runTimer;
+  if (timer.running) {
+    return;
+  }
+
+  const now = window.performance.now();
+  timer.running = true;
+  timer.completed = false;
+  timer.finalElapsedMs = -1;
+  // Records consumed before sync detection arrived shift the anchor back so
+  // elapsed counts from the console's start, not the status message's arrival.
+  timer.anchorMs = now - currentRecord * TAS_PREVIEW_FRAME_DURATION_MS;
+  timer.lastCurrent = currentRecord;
+  timer.lastAdvanceMs = now;
+  resetRunTimerEstimate();
+  if (!timer.intervalId) {
+    timer.intervalId = window.setInterval(renderRunTimer, RUN_TIMER_RENDER_INTERVAL_MS);
+  }
+  renderRunTimer();
+}
+
+function noteRunTimerProgress(currentRecord) {
+  const timer = state.tas.runTimer;
+  if (!timer.running) {
+    return;
+  }
+
+  if (currentRecord > timer.lastCurrent) {
+    timer.lastCurrent = currentRecord;
+    timer.lastAdvanceMs = window.performance.now();
+  }
+  renderRunTimer();
+}
+
+function freezeRunTimer(completed = false) {
+  const timer = state.tas.runTimer;
+  if (!timer.running) {
+    return;
+  }
+
+  timer.running = false;
+  timer.completed = completed;
+  timer.finalElapsedMs = window.performance.now() - timer.anchorMs;
+  stopRunTimerInterval();
+  renderRunTimer();
+}
+
+function resetRunTimer() {
+  const timer = state.tas.runTimer;
+  timer.running = false;
+  timer.anchorMs = 0;
+  timer.finalElapsedMs = -1;
+  timer.completed = false;
+  timer.lastCurrent = 0;
+  timer.lastAdvanceMs = 0;
+  resetRunTimerEstimate();
+  stopRunTimerInterval();
+  renderRunTimer();
+}
+
+function resetRunTimerEstimate() {
+  const timer = state.tas.runTimer;
+  const effectiveRecords = Math.max(0, state.tas.masks.length - state.tas.syncSkipPolls);
+  timer.estimatedTotalMs = (effectiveRecords / NES_FRAMES_PER_SECOND) * 1000;
+  timer.estimateUpdatedElapsedMs = 0;
+}
+
+function estimatedRunTimerTotal(elapsedMs, effectiveRecords) {
+  const timer = state.tas.runTimer;
+  const refreshDue = elapsedMs >= timer.estimateUpdatedElapsedMs + RUN_TIMER_ESTIMATE_REFRESH_MS;
+  if (refreshDue && timer.lastCurrent >= RUN_TIMER_MIN_RATE_RECORDS && elapsedMs >= RUN_TIMER_MIN_RATE_MS) {
+    const recordsPerMs = timer.lastCurrent / elapsedMs;
+    timer.estimatedTotalMs = elapsedMs + (effectiveRecords - timer.lastCurrent) / recordsPerMs;
+    // Anchor refreshes to stable ten-second elapsed boundaries even when a
+    // delayed status update skips over more than one boundary.
+    timer.estimateUpdatedElapsedMs =
+      Math.floor(elapsedMs / RUN_TIMER_ESTIMATE_REFRESH_MS) * RUN_TIMER_ESTIMATE_REFRESH_MS;
+  }
+  return timer.estimatedTotalMs;
+}
+
+function stopRunTimerInterval() {
+  const timer = state.tas.runTimer;
+  if (timer.intervalId) {
+    window.clearInterval(timer.intervalId);
+    timer.intervalId = 0;
+  }
+}
+
+function runTimerDurations() {
+  const timer = state.tas.runTimer;
+  const effectiveRecords = Math.max(0, state.tas.masks.length - state.tas.syncSkipPolls);
+  let elapsedMs = 0;
+  if (timer.running) {
+    elapsedMs = window.performance.now() - timer.anchorMs;
+  } else if (timer.finalElapsedMs >= 0) {
+    elapsedMs = timer.finalElapsedMs;
+  }
+
+  // An exact movie duration outranks the wall-clock measurement even after
+  // completion: the measured elapsed carries up to ~1s of status latency.
+  if (state.tas.sourceFrameCount > 0) {
+    const totalMs = (state.tas.sourceFrameCount / NES_FRAMES_PER_SECOND) * 1000;
+    return {
+      elapsedMs: timer.completed ? reconcileCompletedExactRunElapsed(elapsedMs, totalMs) : elapsedMs,
+      totalMs,
+      exact: true,
+    };
+  }
+
+  // Without an exact total, a completed run's duration is measured, not
+  // estimated: keep the time it actually finished at instead of reverting to
+  // the pre-run estimate.
+  if (timer.completed && elapsedMs > 0) {
+    return { elapsedMs, totalMs: elapsedMs, exact: true };
+  }
+
+  // Cache measured-rate refinements for ten seconds at a time. In the final
+  // partial interval the last estimate stays put until completion replaces it
+  // with the measured duration. A run that continues through the next full
+  // interval gets another refinement instead.
+  const totalMs = estimatedRunTimerTotal(elapsedMs, effectiveRecords);
+  return { elapsedMs, totalMs, exact: false };
+}
+
+function formatRunTime(milliseconds) {
+  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const paddedSeconds = String(seconds).padStart(2, "0");
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${paddedSeconds}`;
+  }
+  return `${minutes}:${paddedSeconds}`;
+}
+
+function renderRunTimer() {
+  if (!elements.runTimer) {
+    return;
+  }
+
+  if (state.tas.masks.length === 0) {
+    elements.runTimer.textContent = "—";
+    return;
+  }
+
+  const timer = state.tas.runTimer;
+  const { elapsedMs, totalMs, exact } = runTimerDurations();
+  let text = `${formatRunTime(elapsedMs)} / ${exact ? "" : "~"}${formatRunTime(totalMs)}`;
+  if (timer.running && window.performance.now() - timer.lastAdvanceMs > RUN_TIMER_STALL_MS) {
+    text += " · console not reading input";
+  }
+  elements.runTimer.textContent = text;
 }
 
 function hardwareCounter(value) {
@@ -1207,6 +1395,8 @@ function loadTasFromParseResult(fileName, parseResult) {
   applyDefaultSyncDelay();
   state.tas.syncSkipPolls = 0;
   elements.syncSkipPolls.value = "0";
+  state.tas.sourceFrameCount = Number(parseResult?.sourceFrameCount) || 0;
+  resetRunTimer();
   elements.syncSkipPolls.max = validation.masks.length > 0 ? String(validation.masks.length - 1) : "0";
   state.tas.validation = validation;
   state.tas.currentFrame = 0;
@@ -1575,6 +1765,7 @@ function updateHardwareStatusFromFirmware(status, options = {}) {
   state.tas.streamedFrames = Math.max(state.tas.streamedFrames, received);
   state.tas.nextFrameIndex = state.tas.streamedFrames;
   state.tas.hardwareStatus = status;
+  noteRunTimerProgress(current);
 
   if (!isComplete && (!status.error || status.error === "ok")) {
     syncTasControllerPreview(status);
@@ -1582,6 +1773,7 @@ function updateHardwareStatusFromFirmware(status, options = {}) {
 
   if (status.error && status.error !== "ok") {
     stopTasControllerPreview();
+    freezeRunTimer();
     state.tas.status = "error";
     state.tas.hardwareMessage = `Arduino TAS error: ${status.error}`;
     if (!options.quiet) {
@@ -1593,6 +1785,7 @@ function updateHardwareStatusFromFirmware(status, options = {}) {
     }
   } else if (isComplete) {
     stopTasControllerPreview();
+    freezeRunTimer(true);
     state.tas.status = "complete";
     state.tas.hardwareMessage = "Hardware TAS playback complete.";
     if (!options.quiet && !wasComplete) {
@@ -1883,6 +2076,7 @@ function resumeHardwareTas() {
 
 function stopHardwareTas(options = {}) {
   stopTasControllerPreview();
+  freezeRunTimer();
   const bridgeRunId = Number(state.tas.hardwareBridgeRunId || state.tas.hardwareStatus?.run_id || 0);
   const hadHardwareRun =
     ["arming", "armed", "streaming", "playing", "paused"].includes(state.tas.status) ||
@@ -2167,6 +2361,8 @@ function handleSyncSkipChange() {
   if (String(normalized) !== elements.syncSkipPolls.value) {
     elements.syncSkipPolls.value = String(normalized);
   }
+  resetRunTimerEstimate();
+  renderRunTimer();
   state.tas.hardwareFileKey = "";
   state.tas.hardwareUploadPromise = null;
 }

@@ -29,12 +29,16 @@ const DEFAULT_START_FRAME = 30;
 const DEFAULT_TOLERANCE_FRAMES = 0.65;
 const TD2P_MAGIC = Buffer.from("TD2P");
 const TD2P_HEADER_LENGTH = 8;
+// Version 2 appends a big-endian uint32 source-movie frame count.
+const TD2P_V2_HEADER_LENGTH = 12;
 
 // The core diff/insertion logic works on a flat per-frame P1 mask array. Modern
-// .tdmask files are TD2P: an 8-byte header then two interleaved bytes (P1, P2)
-// per frame. Split that here so the rest of the tool is format-agnostic, and
-// re-wrap on output. A header-less buffer is treated as the legacy single-port
-// stream (one byte per frame).
+// .tdmask files are TD2P: an 8- (v1) or 12-byte (v2) header then two
+// interleaved bytes (P1, P2) per frame. Split that here so the rest of the
+// tool is format-agnostic, and re-wrap on output — the v2 movie-frame count
+// stays valid because expansion changes record granularity, not the movie. A
+// header-less buffer is treated as the legacy single-port stream (one byte per
+// frame).
 function readTdmask(buffer) {
   const isTd2p =
     buffer.length >= TD2P_HEADER_LENGTH && buffer.subarray(0, 4).equals(TD2P_MAGIC);
@@ -42,7 +46,12 @@ function readTdmask(buffer) {
     return { portCount: 1, header: null, p1: Array.from(buffer), p2: null };
   }
 
-  const payload = buffer.subarray(TD2P_HEADER_LENGTH);
+  const version = buffer[TD2P_MAGIC.length];
+  const headerLength = version >= 2 ? TD2P_V2_HEADER_LENGTH : TD2P_HEADER_LENGTH;
+  if (buffer.length < headerLength) {
+    fail("TD2P tdmask header is truncated");
+  }
+  const payload = buffer.subarray(headerLength);
   if (payload.length % 2 !== 0) {
     fail("TD2P tdmask payload has an incomplete two-controller frame");
   }
@@ -52,7 +61,7 @@ function readTdmask(buffer) {
     p1.push(payload[index]);
     p2.push(payload[index + 1]);
   }
-  return { portCount: 2, header: Buffer.from(buffer.subarray(0, TD2P_HEADER_LENGTH)), p1, p2 };
+  return { portCount: 2, header: Buffer.from(buffer.subarray(0, headerLength)), p1, p2 };
 }
 
 function usage() {

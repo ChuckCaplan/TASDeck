@@ -31,10 +31,29 @@ local strobe_high = false
 local observed_mismatches = 0
 local intra_frame_mismatches = 0
 
--- Versioned two-controller TASDeck header: magic, version, port count, CRLF.
--- Payload bytes are interleaved per frame: p1, p2, p1, p2, ...
+-- Versioned two-controller TASDeck header: magic, version, port count, CRLF,
+-- then the source movie's total video-frame count (big-endian uint32, lag
+-- frames included) so TASDeck can time the run exactly. The count is not known
+-- until the movie loads, so write zero (meaning "unknown") now and seek back
+-- to fill it in at completion. Payload bytes are interleaved per frame:
+-- p1, p2, p1, p2, ...
 output:write("TD2P")
-output:write(string.char(1, 2, 13, 10))
+output:write(string.char(2, 2, 13, 10))
+output:write(string.char(0, 0, 0, 0))
+
+local function backfill_movie_frame_count()
+  if movie_length <= 0 then
+    return
+  end
+  output:seek("set", 8)
+  output:write(string.char(
+    math.floor(movie_length / 0x1000000) % 256,
+    math.floor(movie_length / 0x10000) % 256,
+    math.floor(movie_length / 0x100) % 256,
+    movie_length % 256
+  ))
+  output:seek("end", 0)
+end
 
 local ports = {
   [1] = {
@@ -169,6 +188,7 @@ local function finish(reason)
   memory.registerread(0x4016, nil)
   memory.registerread(0x4017, nil)
   memory.registerwrite(0x4016, nil)
+  backfill_movie_frame_count()
   output:close()
   trace_output:close()
   local completion_output = assert(io.open(completion_filename, "w"))

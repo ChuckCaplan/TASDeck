@@ -40,7 +40,8 @@ scripts in `scripts/` (see the [Installation guide](INSTALL.md)); an `.r08` can 
 directly with no conversion, defaulting to a per-strobe mode that matches default TAStm32
 replay semantics.
 
-During hardware TAS playback, the on-screen controller lights up the buttons for the selected NES port, so you can watch the inputs as they're sent to the NES. The event log can capture firmware traces for diagnosing
+During hardware TAS playback, the on-screen controller lights up the buttons for the selected NES port, so you can watch the inputs as they're sent to the NES, and a run timer shows elapsed and
+total time — exact for .tdmask movies, and estimated for.r08. The event log can capture firmware traces for diagnosing
 playback alignment and hardware timing.
 
 Keyboard input uses common NES emulator mapping:

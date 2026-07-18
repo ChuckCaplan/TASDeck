@@ -14,12 +14,15 @@ const {
   parseTas,
   parseTasFileBytes,
   parseTasText,
+  reconcileCompletedExactRunElapsed,
   reverseByteBits,
   HARDWARE_TAS_SYNC_MODES,
   TAS_CHUNK_FRAME_LIMIT,
   TWO_CONTROLLER_MASK_HEADER,
   TWO_CONTROLLER_MASK_MAGIC,
   TWO_CONTROLLER_MASK_VERSION,
+  twoControllerMaskHeaderWithFrames,
+  twoControllerMaskSourceFrameCount,
   tasChunkChecksum,
   tasFramesToMasks,
   tasMasksPortCount,
@@ -29,6 +32,16 @@ const {
 
 test("exposes all hardware TAS synchronization modes", () => {
   assert.deepEqual(HARDWARE_TAS_SYNC_MODES, ["poll", "latch", "strobe"]);
+});
+
+test("reconciles only a one-second displayed completion overrun", () => {
+  const exactTotalMs = (17868 / 60.0988) * 1000;
+
+  // Completion-status latency produces 4:58 / 4:57, so show 4:57 / 4:57.
+  assert.equal(reconcileCompletedExactRunElapsed(exactTotalMs + 700, exactTotalMs), exactTotalMs);
+
+  // A displayed two-second overrun remains visible as 4:59 / 4:57.
+  assert.equal(reconcileCompletedExactRunElapsed(exactTotalMs + 2000, exactTotalMs), exactTotalMs + 2000);
 });
 
 test("parses JSON frame arrays and normalizes aliases", () => {
@@ -193,6 +206,7 @@ test("parses two-controller .tdmask uploads with TD2P header", () => {
 
   assert.equal(result.format, "raw-mask-v2");
   assert.equal(result.syncMode, "poll");
+  assert.equal(result.sourceFrameCount, 0);
   assert.equal(TWO_CONTROLLER_MASK_VERSION, 1);
   assert.equal(result.label, "TASDeck two-controller mask stream");
   assert.deepEqual(result.frames, [
@@ -275,11 +289,46 @@ test("rejects incomplete or unsupported TD2P headers", () => {
   );
 
   const wrongVersion = Uint8Array.from(TWO_CONTROLLER_MASK_HEADER);
-  wrongVersion[TWO_CONTROLLER_MASK_MAGIC.length] = 2;
+  wrongVersion[TWO_CONTROLLER_MASK_MAGIC.length] = 3;
   assert.throws(
     () => parseTasFileBytes("future.tdmask", wrongVersion),
     /requires a versioned TD2P \.tdmask file/,
   );
+
+  // A version-2 header cut off before its frame-count field is invalid.
+  const truncatedV2 = Uint8Array.from(TWO_CONTROLLER_MASK_HEADER);
+  truncatedV2[TWO_CONTROLLER_MASK_MAGIC.length] = 2;
+  assert.throws(
+    () => parseTasFileBytes("truncated.tdmask", truncatedV2),
+    /requires a versioned TD2P \.tdmask file/,
+  );
+});
+
+test("parses TD2P v2 headers with a source movie frame count", () => {
+  const bytes = Uint8Array.from([
+    ...twoControllerMaskHeaderWithFrames(30000),
+    0x01,
+    0x02,
+    0x00,
+    0x08,
+  ]);
+  const result = parseTasFileBytes("movie.tdmask", bytes);
+
+  assert.equal(result.format, "raw-mask-v2");
+  assert.equal(result.sourceFrameCount, 30000);
+  assert.deepEqual(tasFramesToMasks(result.frames), [
+    { p1: 0x01, p2: 0x02 },
+    { p1: 0x00, p2: 0x08 },
+  ]);
+  assert.equal(twoControllerMaskSourceFrameCount(bytes), 30000);
+
+  // Big-endian byte order in the frame-count field.
+  assert.deepEqual(Array.from(twoControllerMaskHeaderWithFrames(0x01020304).slice(8)), [1, 2, 3, 4]);
+
+  // A zero count means the exporter could not learn the total; readers treat
+  // the duration as unknown and estimate instead.
+  const unknownCount = Uint8Array.from([...twoControllerMaskHeaderWithFrames(0), 0x01, 0x02]);
+  assert.equal(parseTasFileBytes("unknown.tdmask", unknownCount).sourceFrameCount, 0);
 });
 
 test("rejects uploads without a supported hardware-stream extension", () => {

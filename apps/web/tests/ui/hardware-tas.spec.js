@@ -533,6 +533,81 @@ test.describe("hardware TAS streaming UI", () => {
     expect(upload.syncMode).toBe("strobe");
   });
 
+  test("shows an exact run time for TD2P v2 and an estimate otherwise", async ({ page }) => {
+    await page.goto("/");
+
+    // v1 tdmask carries no source frame count: the total is an estimate.
+    await page.setInputFiles("#tasFile", {
+      name: "estimate.tdmask",
+      mimeType: "application/octet-stream",
+      buffer: tdmaskBuffer(Array.from({ length: 121 }, () => 0x01)),
+    });
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / ~0:02");
+
+    // v2 tdmask with a 3600-frame source movie (~59.9 s): the total is exact.
+    const v2Header = Buffer.from([
+      0x54, 0x44, 0x32, 0x50, 0x02, 0x02, 0x0d, 0x0a, 0x00, 0x00, 0x0e, 0x10,
+    ]);
+    await page.setInputFiles("#tasFile", {
+      name: "exact.tdmask",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.concat([v2Header, Buffer.from([0x01, 0x00, 0x01, 0x00])]),
+    });
+    await expect(page.locator("#playbackStatusText")).toContainText("2 masks");
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / 1:00");
+
+    // An r08 load has no frame count either and stays an estimate.
+    await page.setInputFiles("#tasFile", {
+      name: "movie.r08",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from([0x80, 0x00, 0x00, 0x00]),
+    });
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / ~0:00");
+  });
+
+  test("refreshes estimated totals every ten seconds and holds the final partial interval", async ({ page }) => {
+    await page.goto("/");
+
+    await page.setInputFiles("#tasFile", {
+      name: "paced-estimate.r08",
+      mimeType: "application/octet-stream",
+      // 1,200 two-port records start with a roughly 20-second estimate.
+      buffer: Buffer.alloc(2400),
+    });
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / ~0:20");
+
+    const renderAt = (elapsedMs, currentRecord, completed = false) =>
+      page.evaluate(
+        ({ elapsedMs, currentRecord, completed }) => {
+          // These names are browser globals from the classic app.js script.
+          // eslint-disable-next-line no-undef
+          const timer = state.tas.runTimer;
+          timer.running = false;
+          timer.completed = completed;
+          timer.finalElapsedMs = elapsedMs;
+          timer.lastCurrent = currentRecord;
+          // eslint-disable-next-line no-undef
+          renderRunTimer();
+          // eslint-disable-next-line no-undef
+          return document.querySelector("#runTimer").textContent;
+        },
+        { elapsedMs, currentRecord, completed },
+      );
+
+    // Consumption-rate changes inside the first interval do not move total.
+    expect(await renderAt(9000, 300)).toBe("0:09 / ~0:20");
+    // The first ten-second boundary refines the total to roughly 40 seconds.
+    expect(await renderAt(10000, 300)).toBe("0:10 / ~0:40");
+    // Another rate change remains hidden until the next full boundary.
+    expect(await renderAt(19000, 900)).toBe("0:19 / ~0:40");
+    // With less than ten estimated seconds left, hold this estimate rather
+    // than adjusting every second near the finish.
+    expect(await renderAt(20000, 900)).toBe("0:20 / ~0:27");
+    expect(await renderAt(25000, 1100)).toBe("0:25 / ~0:27");
+    // Completion replaces the last estimate with the measured duration.
+    expect(await renderAt(26000, 1200, true)).toBe("0:26 / 0:26");
+  });
+
   test("play arms the Arduino, then Start begins playback", async ({ page }) => {
     await installFakeBridge(page);
     await connectFakeNetworkBridge(page);
@@ -712,6 +787,17 @@ test.describe("hardware TAS streaming UI", () => {
     await page.click("#playButton");
     await expect.poll(async () => (await messageTypes(page)).includes("tas_start")).toBe(true);
 
+    // A mid-run status starts the run timer before the final status freezes it.
+    await page.evaluate(() => {
+      window.__fakeBridgeSocket.sendTasStatus("tas_status", {
+        bridge_state: "streaming",
+        started: 1,
+        current: 2,
+        clock: 16,
+      });
+    });
+    await expect(page.locator("#runTimer")).toContainText("/");
+
     await page.evaluate(() => {
       window.__fakeBridgeState.received = window.__fakeBridgeState.total;
       window.__fakeBridgeSocket.sendTasStatus("tas_status", {
@@ -730,6 +816,8 @@ test.describe("hardware TAS streaming UI", () => {
     });
 
     await expect(page.locator("#playbackStatus")).toContainText("Hardware TAS playback complete");
+    // A completed run keeps the measured duration as its total (no ~ estimate).
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / 0:00");
     await expect(page.locator("#diagTasFrame")).toHaveCount(0);
     await expect(page.locator("#eventLog")).toContainText("Hardware TAS playback complete");
   });

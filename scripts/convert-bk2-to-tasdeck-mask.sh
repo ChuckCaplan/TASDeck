@@ -156,18 +156,23 @@ if [[ ! -s "$output_path" ]]; then
 fi
 
 bytes=$(wc -c < "$output_path" | tr -d '[:space:]')
+# TD2P v2: 8-byte header then a big-endian uint32 source movie frame count.
 header=$(od -An -tx1 -N8 "$output_path" | tr -d '[:space:]')
-if [[ "$header" != "5444325001020d0a" ]]; then
-  echo "Output does not contain a supported TD2P v1 header: $output_path" >&2
+if [[ "$header" != "5444325002020d0a" ]]; then
+  echo "Output does not contain a supported TD2P v2 header: $output_path" >&2
   exit 1
 fi
-if (( bytes < 8 || (bytes - 8) % 2 != 0 )); then
+if (( bytes < 12 || (bytes - 12) % 2 != 0 )); then
   echo "Output has an incomplete two-controller frame: $output_path" >&2
   exit 1
 fi
+movie_frames=$((16#$(od -An -tx1 -j8 -N4 "$output_path" | tr -d '[:space:]')))
+if (( movie_frames == 0 )); then
+  echo "Warning: exporter could not record the source movie frame count; TASDeck will estimate the run time." >&2
+fi
 
-frames=$(((bytes - 8) / 2))
-echo "Wrote $bytes byte(s), $frames polled frame(s): $output_path"
+frames=$(((bytes - 12) / 2))
+echo "Wrote $bytes byte(s), $frames polled frame(s), $movie_frames source movie frame(s): $output_path"
 if [[ -f "$trace_output_path" ]]; then
   trace_rows=$(wc -l < "$trace_output_path" | tr -d '[:space:]')
   echo "Wrote trace CSV with $trace_rows line(s): $trace_output_path"

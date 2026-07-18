@@ -147,10 +147,12 @@ only when the previous window contained a completed 8-clock read (bare boot stro
 never consume masks) in `poll` mode. `latch` mode grants advancement credit to every accepted window
 without requiring a completed read. In `strobe` mode every accepted latch edge consumes one record,
 with no window coalescing or completed-read gate. The next latch then serves the pre-positioned mask. Streams start with the
-versioned `TD2P 01 02 0D 0A` header and store interleaved port 1 / port 2 bytes per movie frame that
-polls either controller. Lag frames are
+versioned `TD2P` header (`TD2P 02 02 0D 0A` plus a big-endian uint32 source-movie frame count in
+version 2; `TD2P 01 02 0D 0A` in still-loadable version 1) and store interleaved port 1 / port 2
+bytes per movie frame that polls either controller. Lag frames are
 omitted, so games that read the controllers a variable number of times per frame (SMB3, Tetris under
-DPCM DMA read corruption) stay in sync.
+DPCM DMA read corruption) stay in sync; the v2 frame count preserves the movie's true length so the
+UI can time the run exactly, with zero meaning unknown.
 
 The normal windowed-mode advance happens when a 1 kHz hardware-timer service detects that the window expired and
 calls `onWindowExpired`; the main loop also services expiry as a best effort. It does not normally
@@ -274,6 +276,9 @@ hardware-flow changes:
   upload to poll or latch-window mode.
 - The `Start delay` and `Skip first` controls stay editable before arming and disabled during active
   hardware playback.
+- The progress row's run timer shows elapsed wall-clock time and the run duration — exact from a
+  TD2P v2 source-movie frame count, otherwise a `~` estimate refined by the measured record
+  consumption rate every ten elapsed seconds — and notes when the console stops reading input.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.
 - Event-log actions remain usable at narrow mobile width; `Trace`, `Copy`, and `Clear` should not
   overflow off screen.

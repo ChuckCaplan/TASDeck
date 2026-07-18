@@ -71,8 +71,17 @@ local function run_export()
 
   output = assert(io.open(output_filename, "wb"))
   trace_output = assert(io.open(trace_filename, "w"))
+  -- TD2P v2 header: magic, version, port count, CRLF, then the source movie's
+  -- total video-frame count (big-endian uint32, lag frames included) so
+  -- TASDeck can time the run exactly.
   output:write("TD2P")
-  output:write(string.char(1, 2, 13, 10))
+  output:write(string.char(2, 2, 13, 10))
+  output:write(string.char(
+    math.floor(movie_length / 0x1000000) % 256,
+    math.floor(movie_length / 0x10000) % 256,
+    math.floor(movie_length / 0x100) % 256,
+    movie_length % 256
+  ))
   trace_output:write("frame_index,source_frame,mask1_hex,mask2_hex,source_format\n")
 
   local written_frames = 0

@@ -60,8 +60,9 @@ the common NES emulator mapping: arrow keys for the D-pad, `Z` for `B`, `X` for 
 `Start`, and `Shift` for `Select`.
 
 Hardware TAS playback accepts versioned `TD2P` `.tdmask` streams and raw `.r08` replay files. TD2P
-stores interleaved port-1 and port-2 masks in TASDeck button-bit order; its header records format
-version 1 and two ports even when every player-2 byte is zero. R08 is header-less; TASDeck reads it
+stores interleaved port-1 and port-2 masks in TASDeck button-bit order; its header records the
+format version and two ports even when every player-2 byte is zero, and version 2 adds the source
+movie's total frame count so the run can be timed exactly. R08 is header-less; TASDeck reads it
 as two controller bytes per record in NES serial bit order (reversed while importing) under the
 replay-device convention and its assumptions documented in the
 [hardware TAS workflow guide](../../docs/hardware-tas-workflow.md#r08-format).
@@ -76,6 +77,28 @@ controls:
   parity), otherwise 0 — until a value is entered by hand, which then survives mode changes.
 - `Skip first`: discards this many masks from the front of the uploaded stream before the bridge
   sends data to the Arduino.
+
+The progress row shows a run timer beside the mask counter: elapsed wall-clock time since the
+console started consuming records, then the run's duration. The duration is exact when a TD2P v2
+file carries its source movie frame count, and a `~` estimate otherwise — one record per video
+frame until enough of the run has played to measure the real record-consumption rate, which absorbs
+lag frames and games that latch several times per frame. The estimated total refreshes only every
+ten elapsed seconds. If less than ten seconds remain after the last refresh, that estimate stays
+fixed through the final partial interval and completion replaces it with the measured duration; a
+run that continues to the next ten-second boundary gets another refresh. While the console stops reading input
+(cutscenes, lag clusters), the timer says so instead of letting the estimate drift silently. When
+an estimated run completes, the total keeps the measured duration rather than reverting to the
+estimate; a file with an exact movie duration keeps that exact total, since the wall-clock
+measurement carries up to about a second of status latency.
+On successful completion with an exact duration, a one-second displayed overrun from that latency
+is collapsed to the exact total; overruns of two displayed seconds or more remain visible.
+
+The timer is an informational display and should not be used for official TAS timing. It measures
+wall-clock time across the whole movie from when the console starts consuming records, with up to
+about a second of start-detection and status-latency slack — official TAS durations are
+frame-counted in the emulator instead. It is not speedrun (RTA) leaderboard timing either: those
+start points are game-specific and usually later than the movie's beginning — an SMB1 speedrun
+clock starts at game-mode selection, slightly after the TAS movie has already begun at power-on.
 
 ### TAS Controller Preview
 

@@ -12,7 +12,14 @@
   const TAS_INPUTS = [...NES_BUTTONS];
   const TWO_CONTROLLER_MASK_MAGIC = "TD2P";
   const TWO_CONTROLLER_MASK_VERSION = 1;
+  // Version 2 appends a big-endian uint32 after the 8-byte header: the source
+  // movie's total video-frame count including lag frames, which times the run
+  // exactly. Zero means the exporter could not learn the count; readers fall
+  // back to estimating the duration, exactly as they must for version 1.
+  const TWO_CONTROLLER_MASK_VERSION_WITH_FRAMES = 2;
+  const TWO_CONTROLLER_MASK_FRAME_COUNT_BYTES = 4;
   const TAS_CONTROLLER_PORT_COUNT = 2;
+  const NES_FRAMES_PER_SECOND = 60.0988;
   const TWO_CONTROLLER_MASK_HEADER = Uint8Array.from([
     ...Array.from(TWO_CONTROLLER_MASK_MAGIC, (char) => char.charCodeAt(0)),
     TWO_CONTROLLER_MASK_VERSION,
@@ -28,6 +35,21 @@
   // every consumer (normalization, mask conversion, two-controller detection)
   // on this one list.
   const PLAYER2_FRAME_KEYS = ["player2", "controller2", "p2"];
+
+  // A successful run can be reported up to one status-poll late. Hide only a
+  // one-second discrepancy in the rounded display; preserve larger overruns
+  // because they can indicate a real playback slowdown or stall.
+  function reconcileCompletedExactRunElapsed(elapsedMs, totalMs) {
+    const elapsed = Number(elapsedMs);
+    const total = Number(totalMs);
+    if (!Number.isFinite(elapsed) || !Number.isFinite(total)) {
+      return elapsedMs;
+    }
+
+    const displayedSecondDifference = Math.round(elapsed / 1000) - Math.round(total / 1000);
+    return displayedSecondDifference === 1 ? total : elapsed;
+  }
+
   function parseTas(contents) {
     return parseTasText(contents).frames;
   }
@@ -106,6 +128,7 @@
       label: "TASDeck two-controller mask stream",
       fileName,
       syncMode: HARDWARE_TAS_SYNC_MODE,
+      sourceFrameCount: twoControllerMaskSourceFrameCount(normalizedBytes),
     });
   }
 
@@ -119,11 +142,12 @@
 
   function parseTwoControllerMaskBytes(bytes) {
     const normalizedBytes = normalizeBytes(bytes);
-    if (!isTwoControllerMaskStream(normalizedBytes)) {
+    const version = twoControllerMaskStreamVersion(normalizedBytes);
+    if (version === 0) {
       throw new Error("Two-controller TASDeck mask stream has an unsupported or invalid header.");
     }
 
-    const payload = normalizedBytes.slice(TWO_CONTROLLER_MASK_HEADER.length);
+    const payload = normalizedBytes.slice(twoControllerMaskHeaderLength(version));
     if (payload.length % TAS_CONTROLLER_PORT_COUNT !== 0) {
       throw new Error("Two-controller TASDeck mask stream has an incomplete frame.");
     }
@@ -186,6 +210,7 @@
       label: options.label || "TAS file",
       fileName: options.fileName || "",
       syncMode: options.syncMode || HARDWARE_TAS_SYNC_MODE,
+      sourceFrameCount: options.sourceFrameCount || 0,
       warnings: options.warnings || [],
     };
   }
@@ -415,18 +440,65 @@
     return true;
   }
 
+  function twoControllerMaskStreamVersion(bytes) {
+    if (!bytes || bytes.length < TWO_CONTROLLER_MASK_HEADER.length || !hasTwoControllerMaskMagic(bytes)) {
+      return 0;
+    }
+
+    const version = bytes[TWO_CONTROLLER_MASK_MAGIC.length];
+    if (version !== TWO_CONTROLLER_MASK_VERSION && version !== TWO_CONTROLLER_MASK_VERSION_WITH_FRAMES) {
+      return 0;
+    }
+    if (
+      bytes[TWO_CONTROLLER_MASK_MAGIC.length + 1] !== TAS_CONTROLLER_PORT_COUNT ||
+      bytes[TWO_CONTROLLER_MASK_MAGIC.length + 2] !== 0x0d ||
+      bytes[TWO_CONTROLLER_MASK_MAGIC.length + 3] !== 0x0a
+    ) {
+      return 0;
+    }
+    if (bytes.length < twoControllerMaskHeaderLength(version)) {
+      return 0;
+    }
+
+    return version;
+  }
+
+  function twoControllerMaskHeaderLength(version) {
+    return version === TWO_CONTROLLER_MASK_VERSION_WITH_FRAMES
+      ? TWO_CONTROLLER_MASK_HEADER.length + TWO_CONTROLLER_MASK_FRAME_COUNT_BYTES
+      : TWO_CONTROLLER_MASK_HEADER.length;
+  }
+
+  // Reads the version-2 source-movie frame count; 0 for version 1 or an
+  // exporter that could not learn the count.
+  function twoControllerMaskSourceFrameCount(bytes) {
+    if (twoControllerMaskStreamVersion(bytes) !== TWO_CONTROLLER_MASK_VERSION_WITH_FRAMES) {
+      return 0;
+    }
+
+    const offset = TWO_CONTROLLER_MASK_HEADER.length;
+    return (
+      bytes[offset] * 0x1000000 + bytes[offset + 1] * 0x10000 + bytes[offset + 2] * 0x100 + bytes[offset + 3]
+    );
+  }
+
+  function twoControllerMaskHeaderWithFrames(totalFrames) {
+    const count = Number.isSafeInteger(totalFrames) && totalFrames > 0 ? Math.min(totalFrames, 0xffffffff) : 0;
+    return Uint8Array.from([
+      ...Array.from(TWO_CONTROLLER_MASK_MAGIC, (char) => char.charCodeAt(0)),
+      TWO_CONTROLLER_MASK_VERSION_WITH_FRAMES,
+      TAS_CONTROLLER_PORT_COUNT,
+      0x0d,
+      0x0a,
+      (count >>> 24) & 0xff,
+      (count >>> 16) & 0xff,
+      (count >>> 8) & 0xff,
+      count & 0xff,
+    ]);
+  }
+
   function isTwoControllerMaskStream(bytes) {
-    if (!bytes || bytes.length < TWO_CONTROLLER_MASK_HEADER.length) {
-      return false;
-    }
-
-    for (let index = 0; index < TWO_CONTROLLER_MASK_HEADER.length; index += 1) {
-      if (bytes[index] !== TWO_CONTROLLER_MASK_HEADER[index]) {
-        return false;
-      }
-    }
-
-    return true;
+    return twoControllerMaskStreamVersion(bytes) !== 0;
   }
 
   // The *Normalized variants assume the caller already ran normalizeTasMasks;
@@ -628,12 +700,16 @@
     HARDWARE_TAS_MAX_START_DELAY_POLLS,
     HARDWARE_TAS_SYNC_MODE,
     HARDWARE_TAS_SYNC_MODES,
+    NES_FRAMES_PER_SECOND,
     TAS_INPUTS,
     TAS_CHUNK_FRAME_LIMIT,
     TAS_CONTROLLER_PORT_COUNT,
     TWO_CONTROLLER_MASK_HEADER,
     TWO_CONTROLLER_MASK_MAGIC,
     TWO_CONTROLLER_MASK_VERSION,
+    TWO_CONTROLLER_MASK_VERSION_WITH_FRAMES,
+    twoControllerMaskHeaderWithFrames,
+    twoControllerMaskSourceFrameCount,
     encodeTasMasks,
     formatTasChunk,
     frameToPortMasks,
@@ -656,6 +732,7 @@
     parseTasFileBytes,
     parseTasText,
     parseTextFrame,
+    reconcileCompletedExactRunElapsed,
     reverseByteBits,
     tasMaskHasInput,
     tasMaskPortValue,

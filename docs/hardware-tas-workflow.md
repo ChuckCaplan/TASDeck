@@ -25,14 +25,22 @@ bit 6: Left
 bit 7: Right
 ```
 
-Streams begin with an eight-byte header and contain interleaved port 1 and port 2 bytes:
+Streams begin with a versioned header and contain interleaved port 1 and port 2 bytes. Version 2,
+the current export format, follows the eight header bytes with a big-endian uint32 holding the
+source movie's total video-frame count (lag frames included), which TASDeck uses to display the
+run duration. That display is informational and should not be used for official TAS timing (which
+is frame-counted in the emulator), nor for RTA speedrun timing, whose start points are
+game-specific and usually later than the movie's beginning — an SMB1 speedrun clock starts at
+game-mode selection, slightly after the movie has already begun at power-on:
 
 ```txt
-"TD2P", 01, 02, 0D, 0A, p1_frame0, p2_frame0, p1_frame1, p2_frame1, ...
+"TD2P", 02, 02, 0D, 0A, frames_be32, p1_frame0, p2_frame0, p1_frame1, p2_frame1, ...
 ```
 
-The versioned header identifies a two-port stream even when every port-2 mask is zero. `.tdmask` is
-currently specific to TASDeck.
+A frame count of zero means the exporter could not learn the total; TASDeck then estimates the
+duration, exactly as it must for a version 1 stream (`"TD2P", 01, 02, 0D, 0A, ...`), which remains
+loadable. The versioned header identifies a two-port stream even when every port-2 mask is zero.
+`.tdmask` is currently specific to TASDeck.
 
 ## `.r08` Format
 
