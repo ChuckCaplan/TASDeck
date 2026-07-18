@@ -6,7 +6,7 @@ const {
   maskToButtons,
   normalizeTasMasks,
   parseTasFileBytes,
-  reconcileCompletedExactRunElapsed,
+  reconcileExactRunElapsed,
   tasMaskHasInput,
   tasMaskPortValue,
   tasMasksPortCount,
@@ -984,8 +984,8 @@ function stopTasControllerPreview() {
 // total is exact when the TD2P v2 header carries the source movie's frame count
 // and an estimate otherwise (one record per video frame until enough of the run
 // has played to measure the real record-consumption rate, which absorbs lag
-// frames and multi-latch games). A one-second displayed completion overrun is
-// reconciled separately because status polling can report success that late.
+// frames and multi-latch games). Exact runs hold at the movie duration during
+// a one-second grace period because status polling can report success late.
 function startRunTimer(currentRecord) {
   const timer = state.tas.runTimer;
   if (timer.running) {
@@ -1086,12 +1086,12 @@ function runTimerDurations() {
     elapsedMs = timer.finalElapsedMs;
   }
 
-  // An exact movie duration outranks the wall-clock measurement even after
-  // completion: the measured elapsed carries up to ~1s of status latency.
+  // An exact movie duration outranks up to one second of wall-clock overrun,
+  // including while waiting for the final status response.
   if (state.tas.sourceFrameCount > 0) {
     const totalMs = (state.tas.sourceFrameCount / NES_FRAMES_PER_SECOND) * 1000;
     return {
-      elapsedMs: timer.completed ? reconcileCompletedExactRunElapsed(elapsedMs, totalMs) : elapsedMs,
+      elapsedMs: reconcileExactRunElapsed(elapsedMs, totalMs),
       totalMs,
       exact: true,
     };

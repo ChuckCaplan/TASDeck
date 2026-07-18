@@ -556,6 +556,25 @@ test.describe("hardware TAS streaming UI", () => {
     await expect(page.locator("#playbackStatusText")).toContainText("2 masks");
     await expect(page.locator("#runTimer")).toHaveText("0:00 / 1:00");
 
+    const renderExactRunAt = (elapsedMs) =>
+      page.evaluate((elapsed) => {
+        // These names are browser globals from the classic app.js script.
+        // eslint-disable-next-line no-undef
+        const timer = state.tas.runTimer;
+        timer.running = true;
+        timer.anchorMs = window.performance.now() - elapsed;
+        timer.lastAdvanceMs = window.performance.now();
+        // eslint-disable-next-line no-undef
+        renderRunTimer();
+        return window.document.querySelector("#runTimer").textContent;
+      }, elapsedMs);
+    const exactTotalMs = (3600 / 60.0988) * 1000;
+
+    // Do not flash 1:01 while completion status is less than a second late.
+    expect(await renderExactRunAt(exactTotalMs + 700)).toBe("1:00 / 1:00");
+    // A genuine overrun longer than the grace period remains visible.
+    expect(await renderExactRunAt(exactTotalMs + 1200)).toBe("1:01 / 1:00");
+
     // An r08 load has no frame count either and stays an estimate.
     await page.setInputFiles("#tasFile", {
       name: "movie.r08",

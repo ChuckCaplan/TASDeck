@@ -36,18 +36,18 @@
   // on this one list.
   const PLAYER2_FRAME_KEYS = ["player2", "controller2", "p2"];
 
-  // A successful run can be reported up to one status-poll late. Hide only a
-  // one-second discrepancy in the rounded display; preserve larger overruns
-  // because they can indicate a real playback slowdown or stall.
-  function reconcileCompletedExactRunElapsed(elapsedMs, totalMs) {
+  // Hold an exact-duration run at its movie time during the one-second grace
+  // period where status latency can keep the measured timer running. Preserve
+  // longer overruns because they can indicate a real playback slowdown or
+  // stall.
+  function reconcileExactRunElapsed(elapsedMs, totalMs) {
     const elapsed = Number(elapsedMs);
     const total = Number(totalMs);
     if (!Number.isFinite(elapsed) || !Number.isFinite(total)) {
       return elapsedMs;
     }
 
-    const displayedSecondDifference = Math.round(elapsed / 1000) - Math.round(total / 1000);
-    return displayedSecondDifference === 1 ? total : elapsed;
+    return elapsed > total && elapsed <= total + 1000 ? total : elapsed;
   }
 
   function parseTas(contents) {
@@ -732,7 +732,7 @@
     parseTasFileBytes,
     parseTasText,
     parseTextFrame,
-    reconcileCompletedExactRunElapsed,
+    reconcileExactRunElapsed,
     reverseByteBits,
     tasMaskHasInput,
     tasMaskPortValue,

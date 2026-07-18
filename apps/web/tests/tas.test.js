@@ -14,7 +14,7 @@ const {
   parseTas,
   parseTasFileBytes,
   parseTasText,
-  reconcileCompletedExactRunElapsed,
+  reconcileExactRunElapsed,
   reverseByteBits,
   HARDWARE_TAS_SYNC_MODES,
   TAS_CHUNK_FRAME_LIMIT,
@@ -34,14 +34,15 @@ test("exposes all hardware TAS synchronization modes", () => {
   assert.deepEqual(HARDWARE_TAS_SYNC_MODES, ["poll", "latch", "strobe"]);
 });
 
-test("reconciles only a one-second displayed completion overrun", () => {
+test("holds exact elapsed time through a one-second overrun grace period", () => {
   const exactTotalMs = (17868 / 60.0988) * 1000;
 
-  // Completion-status latency produces 4:58 / 4:57, so show 4:57 / 4:57.
-  assert.equal(reconcileCompletedExactRunElapsed(exactTotalMs + 700, exactTotalMs), exactTotalMs);
+  assert.equal(reconcileExactRunElapsed(exactTotalMs - 1, exactTotalMs), exactTotalMs - 1);
+  assert.equal(reconcileExactRunElapsed(exactTotalMs + 700, exactTotalMs), exactTotalMs);
+  assert.equal(reconcileExactRunElapsed(exactTotalMs + 1000, exactTotalMs), exactTotalMs);
 
-  // A displayed two-second overrun remains visible as 4:59 / 4:57.
-  assert.equal(reconcileCompletedExactRunElapsed(exactTotalMs + 2000, exactTotalMs), exactTotalMs + 2000);
+  // Once the measured run is more than one second late, show the overrun.
+  assert.equal(reconcileExactRunElapsed(exactTotalMs + 1001, exactTotalMs), exactTotalMs + 1001);
 });
 
 test("parses JSON frame arrays and normalizes aliases", () => {
