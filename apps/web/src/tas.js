@@ -187,17 +187,36 @@
       throw new Error("R08 stream has an incomplete two-controller record.");
     }
 
+    // An .r08 always stores two bytes per record, but a 1-player movie leaves
+    // every port-2 byte at 0. Emitting a player2 key on those records would make
+    // frameDeclaresSecondController treat the run as explicitly two-controller
+    // and keep it in 2-port mode — which costs a full 8-clock port-2 read-service
+    // every frame for a controller that is never pressed (the extra interrupt
+    // density that makes such runs harder to serve). Only carry player2 through
+    // when some record actually uses it, so a P2-idle dump collapses to 1-port.
+    const usesSecondController = (() => {
+      for (let index = 1; index < normalizedBytes.length; index += TAS_CONTROLLER_PORT_COUNT) {
+        if (normalizedBytes[index] !== 0) {
+          return true;
+        }
+      }
+      return false;
+    })();
+
     const frames = [];
     for (let index = 0; index < normalizedBytes.length; index += TAS_CONTROLLER_PORT_COUNT) {
       const port1Mask = reverseByteBits(normalizedBytes[index]);
       const port2Mask = reverseByteBits(normalizedBytes[index + 1]);
-      frames.push({
+      const frame = {
         frame: index / TAS_CONTROLLER_PORT_COUNT,
         buttons: maskToButtons(port1Mask),
         player1: maskToButtons(port1Mask),
-        player2: maskToButtons(port2Mask),
         raw: `p1=0x${byteToHex(port1Mask)} p2=0x${byteToHex(port2Mask)}`,
-      });
+      };
+      if (usesSecondController) {
+        frame.player2 = maskToButtons(port2Mask);
+      }
+      frames.push(frame);
     }
 
     return frames;

@@ -1187,10 +1187,16 @@ void testTasStrobePlaybackDelayAndWindowService() {
   assert(!playback.active());
 }
 
-void testTasStrobePlaybackPreAdvancesBetweenEdges() {
+// Rev 8 (v51): a started strobe run re-arms the pre-advance from the latch ISR
+// tail (prefetchNextRecord), not the mid-gap expiry service. Only the !started_
+// frame-0 release still runs on the expiry service; windowExpiryDue is false for
+// every started strobe edge. This is the change that lets Archon's sub-holdoff
+// burst latches keep taking the fast path.
+void testTasStrobePlaybackPreAdvancesFromTail() {
   NesTasPlayback playback;
   const uint8_t masks[] = {0x02, 0x40, 0x81};
   uint8_t nextMask = 0xff;
+  TasFrameMasks nextMasks = {};
 
   assert(playback.begin(3, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
   assert(playback.pushChunk(0, masks, 3) == TasPlaybackResult::Ok);
@@ -1198,8 +1204,8 @@ void testTasStrobePlaybackPreAdvancesBetweenEdges() {
   assert(playback.start(0) == TasPlaybackResult::Ok);
 
   // Armed before the first strobe: the expiry service releases frame 0 so its
-  // bit 0 is on the wire before the console ever latches, exactly like the
-  // windowed modes.
+  // bit 0 is on the wire before the console ever latches. This !started_ release
+  // is unchanged in Rev 8.
   assert(playback.windowExpiryDue(1000));
   assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
   assert(nextMask == 0x02);
@@ -1213,34 +1219,40 @@ void testTasStrobePlaybackPreAdvancesBetweenEdges() {
   assert(playback.currentFrame() == 0);
   assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
 
-  // No completed-read credit is required: the holdoff alone re-arms the
-  // pre-advance, and the edge after it commits record 1.
-  assert(!playback.windowExpiryDue(5000 + 7999));
-  assert(playback.windowExpiryDue(5000 + 8000));
-  assert(playback.onWindowExpired(5000 + 8000, nextMask) == TasPlaybackResult::Ok);
-  assert(nextMask == 0x40);
+  // The expiry service no longer re-arms a started strobe run at any time; the
+  // tail prefetch pops record 1 and the edge after it commits that record.
+  assert(!playback.windowExpiryDue(5000 + 8000));
+  assert(playback.willAdvanceOnEdge());
+  assert(playback.prefetchNextRecord(nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x40);
+  assert(playback.currentFrame() == 1);
   assert(!playback.willAdvanceOnEdge());
   assert(playback.onLatchEdge(21700, nextMask) == TasPlaybackResult::Ok);
   assert(nextMask == 0x40);
   assert(playback.currentFrame() == 1);
   assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
 
-  // An edge that arrives before the holdoff (double-latch games) falls back
-  // to advancing in place and still consumes exactly one record.
+  // An edge that arrives before the tail prefetch ran (sub-tail double strobe)
+  // falls back to advancing in place and still consumes exactly one record.
   assert(playback.willAdvanceOnEdge());
   assert(playback.onLatchEdge(21800, nextMask) == TasPlaybackResult::Ok);
   assert(nextMask == 0x81);
   assert(playback.currentFrame() == 2);
   assert(playback.lastEdgeKind() == TasEdgeKind::AdvancedAtEdge);
 
-  // Completion can also happen mid-gap: the record after the last one ends
-  // the run from the expiry service and never re-arms a pre-advance.
-  assert(playback.windowExpiryDue(21800 + 8000));
-  assert(playback.onWindowExpired(21800 + 8000, nextMask) == TasPlaybackResult::Complete);
+  // The final record is current: the tail prefetch declines to arm (it never
+  // ends the run), and the next accepted edge resolves completion on the
+  // general path — the pre-mid-gap "one further edge ends the run" semantics.
+  assert(playback.prefetchNextRecord(nextMasks) == TasPlaybackResult::Waiting);
+  assert(playback.currentFrame() == 2);
+  assert(playback.active());
+  assert(playback.onLatchEdge(21900, nextMask) == TasPlaybackResult::Complete);
   assert(nextMask == 0x00);
+  assert(playback.lastEdgeKind() == TasEdgeKind::Ended);
   assert(playback.complete());
   assert(!playback.active());
-  assert(!playback.windowExpiryDue(21800 + 16000));
+  assert(!playback.willAdvanceOnEdge());
+  assert(playback.prefetchNextRecord(nextMasks) == TasPlaybackResult::Waiting);
 }
 
 void testTasStrobeFastPathCommitInline() {
@@ -1271,14 +1283,23 @@ void testTasStrobeFastPathCommitInline() {
   assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
   assert(playback.lastWindowResult() == TasPlaybackResult::Ok);
   assert(!playback.tryCommitPreAdvancedEdge(5001, fastMasks));
-  assert(!playback.windowExpiryDue(5000 + 7999));
-  assert(playback.windowExpiryDue(5000 + 8000));
 
-  // The next pre-advanced record commits through the same path.
-  assert(playback.onWindowExpired(13000, nextMask) == TasPlaybackResult::Ok);
+  // Rev 8 (v51): the tail re-arms the next record, not the expiry service — a
+  // started strobe run is never expiry-due. The next edge commits through the
+  // same fast path.
+  assert(!playback.windowExpiryDue(5000 + 8000));
+  TasFrameMasks prefetchMasks = {};
+  assert(playback.prefetchNextRecord(prefetchMasks) == TasPlaybackResult::Ok);
+  assert(prefetchMasks.port1 == 0x40);
   assert(playback.tryCommitPreAdvancedEdge(21700, fastMasks));
   assert(fastMasks.port1 == 0x40);
   assert(playback.currentFrame() == 1);
+
+  // The final record is current: the tail declines to arm, and no further
+  // expiry-service pop happens.
+  assert(playback.prefetchNextRecord(prefetchMasks) == TasPlaybackResult::Waiting);
+  assert(!playback.tryCommitPreAdvancedEdge(21800, fastMasks));
+  assert(!playback.windowExpiryDue(21700 + 8000));
 }
 
 // v50 splits the fast-path commit: the mask commit runs inside the latch
@@ -1301,18 +1322,20 @@ void testTasStrobeFastPathSplitCommitAndTimestamp() {
   assert(playback.windowExpiryDue(1000));
   assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
 
-  // Head: masks commit exactly once. Tail: the timestamp note re-arms the
-  // holdoff from the noted edge time, not the commit call.
+  // Head: masks commit exactly once. Tail: the timestamp note records the edge
+  // time, and (Rev 8) the tail prefetch — not the expiry service — re-arms the
+  // next record. windowExpiryDue stays false for the started run.
   assert(playback.tryCommitPreAdvancedMasks(fastMasks));
   assert(fastMasks.port1 == 0x02);
   assert(playback.lastEdgeKind() == TasEdgeKind::PreAdvanced);
   assert(!playback.tryCommitPreAdvancedMasks(fastMasks));
   playback.noteLatchTimestamp(5000);
-  assert(!playback.windowExpiryDue(5000 + 7999));
-  assert(playback.windowExpiryDue(5000 + 8000));
+  assert(!playback.windowExpiryDue(5000 + 8000));
 
-  // The next record flows through the same split sequence.
-  assert(playback.onWindowExpired(13000, nextMask) == TasPlaybackResult::Ok);
+  // The next record flows through the same split sequence, armed by the tail.
+  TasFrameMasks prefetchMasks = {};
+  assert(playback.prefetchNextRecord(prefetchMasks) == TasPlaybackResult::Ok);
+  assert(prefetchMasks.port1 == 0x40);
   assert(playback.tryCommitPreAdvancedMasks(fastMasks));
   assert(fastMasks.port1 == 0x40);
   playback.noteLatchTimestamp(21700);
@@ -1480,7 +1503,7 @@ int main() {
   testTasPlaybackIgnoresUnavailableControllerPolls();
   testTasStrobePlaybackAdvancesOnEveryEdge();
   testTasStrobePlaybackDelayAndWindowService();
-  testTasStrobePlaybackPreAdvancesBetweenEdges();
+  testTasStrobePlaybackPreAdvancesFromTail();
   testTasStrobeFastPathCommitInline();
   testTasStrobeFastPathSplitCommitAndTimestamp();
   testTasStrobePlaybackServesTwoPortsAndResets();

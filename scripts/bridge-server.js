@@ -1130,7 +1130,7 @@ class SerialBridge {
       const finalStatus = run.firmwareStatus || {};
       await fsp.appendFile(
         filePath,
-        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""} latch_head_last_cyc=${finalStatus.latch_head_last_cyc ?? ""} latch_head_max_cyc=${finalStatus.latch_head_max_cyc ?? ""}\n`,
+        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""} latch_head_last_cyc=${finalStatus.latch_head_last_cyc ?? ""} latch_head_max_cyc=${finalStatus.latch_head_max_cyc ?? ""} latch_tail_max_cyc=${finalStatus.latch_tail_max_cyc ?? ""} latch_prefetch_masked_max_cyc=${finalStatus.latch_prefetch_masked_max_cyc ?? ""}\n`,
         "utf8",
       );
       const gapNote = totalGaps > 0 ? ` (${totalGaps} rows lost to ring overwrite)` : "";
@@ -2246,6 +2246,10 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `firmware_latch_isr_max_cyc: ${firmwareStatus.latch_isr_max_cyc ?? ""}`,
     `firmware_latch_head_last_cyc: ${firmwareStatus.latch_head_last_cyc ?? ""}`,
     `firmware_latch_head_max_cyc: ${firmwareStatus.latch_head_max_cyc ?? ""}`,
+    `firmware_latch_tail_last_cyc: ${firmwareStatus.latch_tail_last_cyc ?? ""}`,
+    `firmware_latch_tail_max_cyc: ${firmwareStatus.latch_tail_max_cyc ?? ""}`,
+    `firmware_latch_prefetch_masked_last_cyc: ${firmwareStatus.latch_prefetch_masked_last_cyc ?? ""}`,
+    `firmware_latch_prefetch_masked_max_cyc: ${firmwareStatus.latch_prefetch_masked_max_cyc ?? ""}`,
   ].join("\n");
 }
 

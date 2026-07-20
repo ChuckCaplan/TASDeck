@@ -1,6 +1,6 @@
 # Per-strobe sync mode specification
 
-Status: FROZEN v1 + revisions 4–6 — rollout phase 1 implemented; revision 4 (hardware findings) implemented and console-validated for SMB1 max-score r08 (100% completion, strobe, delay 1); revision 5 (Golf latch-ISR fast path) implemented but failed its console retest — the merge is dispatch-bound, not body-bound; revision 6 (strobe-mode interrupt-priority inversion, v50) implemented; the v50 rev 7 slim latch head passed the Golf serving-fidelity retest on console 2026-07-16; the phase-4 r08 default flip to strobe (with a guarded Start delay 1 prefill) landed 2026-07-17.
+Status: FROZEN v1 + revisions 4–6 — rollout phase 1 implemented; revision 4 (hardware findings) implemented and console-validated for SMB1 max-score r08 (100% completion, strobe, delay 1); revision 5 (Golf latch-ISR fast path) implemented but failed its console retest — the merge is dispatch-bound, not body-bound; revision 6 (strobe-mode interrupt-priority inversion, v50) implemented; the v50 rev 7 slim latch head passed the Golf serving-fidelity retest on console 2026-07-16; the phase-4 r08 default flip to strobe (with a guarded Start delay 1 prefill) landed 2026-07-17. Revision 8 (Archon slow-train findings; inline prefetch replaces the strobe mid-gap pre-advance, v51) DRAFTED 2026-07-18, pending review — supersedes revision 4 item 2 for started strobe runs.
 Date: 2026-07-15 (revised same day: resolved four implementation-blocking ambiguities from external
 review — completion edge accounting, edge-row marking, trace-capture throughput, strobe counter
 semantics — plus start-delay staging text, effective refill throughput, and mode-aware UI copy.
@@ -205,6 +205,111 @@ This document is self-contained implementation requirements. The normative conte
 "Implementation requirements" checklist and the "Firmware design" contracts; the other sections
 carry the evidence and rationale behind them. Anything listed under "Future work" is explicitly
 out of scope for this implementation.
+
+## Revision 8 (2026-07-18, fourth hardware session — Archon; inline prefetch replaces the mid-gap pre-advance, v51) — DRAFT, pending review
+
+The v50 rev-7 firmware failed Archon (USA), and the failure falsifies revision 4 item 2's core
+premise — that an edge arriving inside the holdoff is a "rare fallback." Evidence from three
+bit-identical runs (deterministic: same torn count 281, same three `line_mismatch` anomalies at
+the same sequence numbers across three boots):
+
+- **Serving was bit-perfect and record alignment held end to end.** 0/1223 served-mask mismatches
+  against the file, 0/522 wire-reconstruction mismatches on completed reads, and every press in
+  the r08 landed exactly at an observed poll-phase boundary (A at record 58 = last poll of the
+  first 58-poll menu burst, etc.). The run consumed all 1739 records. The game still played
+  visibly wrong.
+- **Archon's read shape is the untested regime.** ROM disassembly (PRG 0x1f92a, sole read
+  routine): one strobe, then a fixed loop of eight `LDA $4016 / AND #3` reads 18 CPU cycles
+  (10.06 µs) apart — a ~74 µs-wide train, 4× wider than Golf's. The game latches in ~283 µs
+  bursts at menus (poll-wait loops), once per frame in gameplay, and every ~399 ms in slow
+  scenes.
+- **The general path's full-length PRIMASK hold is lethal to slow trains.** Any accepted edge
+  without a pre-advanced record takes the general path, which masks interrupts end to end for
+  1558–2416 cycles (32–50 µs). Archon's mid-train clocks at ~17/27/37 µs pend into one NVIC bit
+  and merge: 8 console reads, 6 shifts (`clocksSinceLatch` 6, torn), every bit after the merge
+  served late — Left (bit 6) never reaches the wire; on Down+Left records the Down bit lands in
+  the console's Right slot. A movie that is ~90% held Left desyncs behaviorally while staying
+  structurally aligned. Golf escaped only because its 2.2 µs-spaced train is ~20 µs wide.
+- **The fallback was the common case, not the rare one.** Burst latches (283 µs apart) can never
+  be pre-advanced under the 8 ms holdoff — 100% general path. Steady-state latches alternated
+  strictly fast/general (FGFG in the edge-kind diag for the entire gameplay stretch; general
+  edges followed 16.74 ms gaps, fast edges 16.49 ms). By code inspection the 1 kHz expiry service
+  should re-arm at +8–9 ms in both gap classes and does not after fast edges; the mechanism is
+  unresolved (DWT forensics would be needed) and is made moot by this revision.
+- **TAStm32 comparison (source re-audit, ~/Documents/TAStm32).** The device that verified Archon
+  has no timer-armed pre-advance, no holdoff, and no fast/general split. Every latch
+  (`NesSnesLatch`, `Src/stm32f4xx_it.c` ~371, RAM-resident) serves the prefetched bit 0 as its
+  first action, holds `__disable_irq()` for only ~6 instructions, and then — in the preemptible
+  tail, clock EXTI at higher priority — pops the next record (`GetNextFrame`, a pointer bump,
+  `Src/TASRun.c:22`) and builds its output data inline. The prefetch for edge N+1 always
+  completes inside edge N's handler, at any latch cadence. That is the consumption model this
+  revision adopts.
+
+Normative changes (strobe mode only; revision 4 item 1's windowed-path invariance remains
+binding — no instruction may be added to windowed edges):
+
+1. **Inline prefetch per accepted edge** (supersedes revision 4 item 2 for started strobe runs).
+   After the fast head commits and releases PRIMASK, the latch ISR tail pops the next record and
+   stages it (staged masks + `preAdvanced_`) so the *next* edge takes the fast head. The pop and
+   flag/mask stores run under a short PRIMASK section (target ≤ ~50 cycles ≈ 1 µs; measured, see
+   change 5) because `serviceLatchPendBeforeClock` can run latch-edge logic from clock-ISR
+   context over the tail — an unmasked pop could nest. One masked ~1 µs stretch inside the train
+   cannot merge a read pair ≥ 2.2 µs apart. The remainder of the tail (diags, counters, staging)
+   stays preemptible and unchanged.
+2. **The expiry service stops popping for started strobe runs.** Its only remaining strobe duties
+   are the `!started_` frame-0 release (unchanged, still covers TAS_START delay-0 arming) and
+   windowed-mode behavior (untouched). `latchWindowMicros` loses all strobe-mode meaning; strobe
+   accepted-edge behavior must not depend on it. The ring becomes single-consumer =
+   latch-edge context, which *simplifies* the pop concurrency contract (the
+   latch-vs-expiry-service pop race ceases to exist).
+3. **The general path is demoted to a start/error/anomaly path.** Post-start, it is reachable
+   only when a second accepted edge lands before the previous tail's prefetch completes
+   (sub-~35 µs double strobes — line noise territory, below any known game's re-strobe spacing)
+   or after a sticky error. It stays as-is (full-length PRIMASK is acceptable there), but its
+   post-start occurrences become a counted signal: `AdvancedAtEdge` edge rows after `started_`
+   must be zero on every validation game (gate below).
+4. **Completion is edge-driven, one edge after the last record.** The tail prefetch never ends the
+   run: when the next record would exhaust the buffer (the final served record, or a not-yet-
+   buffered one), it declines to arm and leaves `preAdvanced_` clear. The next accepted edge then
+   takes the general path and resolves `Complete`/`Underrun` through that path's existing teardown
+   (`tasOutputEnabled` off, priority restore pending) — exactly one record consumed per edge, and
+   never before the last record has been clocked out. This preserves the pre-mid-gap "one further
+   accepted edge ends the run" semantics; TAS_STATUS (buffered=0, current=total) remains the
+   completion source of truth, so a game that stops latching at its end simply holds the final
+   record with the run effectively done, as on TAStm32.
+5. **Instrumentation.** Two new DWT counters beside `latch_head_*`: tail total cycles and
+   prefetch-masked cycles (`latch_tail_last/max_cyc`, `latch_prefetch_masked_last/max_cyc` or
+   equivalent), reported in TAS_STATUS. Budget: head unchanged at 244 cycles; tail total must
+   stay far inside the tightest observed latch spacing (283 µs = 13,584 cycles; current general
+   tail is 1558–2416, and the added pop is ~100–200, so ~6× margin is expected — measure, don't
+   assume).
+
+Validation gates (phase 5):
+
+- Windowed no-regression: Zelda + SMB1 tdmask, per-frame clock counts identical to v50.
+- Strobe re-verification: SMB1 max-score r08 100% completion; Golf r08 bit-perfect serving with
+  title `clocksSinceLatch` distribution unchanged from rev 7; Lode Runner r08.
+- **New Archon gate:** full run with zero post-start `AdvancedAtEdge` rows, zero torn steady-state
+  trains (8/8 clocks on every one-latch-per-frame poll), burst sections consuming per-latch as
+  dumped, and gameplay visually matching the movie. Three consecutive boots.
+- DWT: `latch_head_max_cyc` unchanged (~244); new tail/masked counters recorded in the session
+  log before and after.
+
+Accepted tradeoff (the one thing to watch on hardware). v50 pre-positioned the *next* frame's
+bit 0 on the data line during the inter-frame gap (the mid-gap service's re-latch, plus the clock
+ISR's `betweenPollMask` using `stagedNextMask()` while `willAdvanceOnEdge()` was true through the
+reads). Rev 8 cannot: the tail prefetch runs *before* the current frame's read train, so it must
+not touch the served line, and once it arms `preAdvanced_`, `willAdvanceOnEdge()` is false, so the
+clock ISR holds the *current* frame's bit 0 after the 8th clock (correct for same-frame re-polls).
+The next frame's bit 0 is therefore positioned by the next fast head at the latch — writeDataPins
+is its first action after the commit check (~1–2 µs), well inside Golf's 5.6 µs first read. This is
+exactly TAStm32's architecture: `NesSnesLatch` positions bit 0 at the latch, never before, and that
+device verifies the whole r08 library including Golf — so latch-time positioning is sufficient by
+construction, and the gap pre-position was TASDeck-specific margin, not a correctness requirement.
+If Golf's serving fidelity regresses on the phase-5 retest, this reduced margin is the first
+suspect; the fallback is to have the clock ISR pre-position the pre-advanced record's bit 0 from
+`currentMasks_` (not `stagedNextMask()`, which is one record further ahead in this model) after the
+8th clock, gated on `preAdvanced_`.
 
 ## Summary
 

@@ -87,6 +87,22 @@ class NesTasPlayback {
   uint8_t stagedNextMask() const;
   TasFrameMasks stagedNextMasks() const;
 
+  // Header-inline for the clock ISR (no LTO). The record the next accepted
+  // strobe will commit while a pre-advance is armed. After the 8th shift the
+  // clock ISR drives this record's bit 0 onto the data line so the next strobe's
+  // first read finds the correct level ALREADY on the wire: TASDeck's latch ISR
+  // dispatches microseconds after the strobe edge — slower than the console's
+  // first post-strobe read on slow-reading games (Archon reads bit 0 ~5.6 µs
+  // after the strobe) — so bit 0 must be pre-positioned during the inter-strobe
+  // gap, not written reactively in the latch ISR. In the tail-prefetch model
+  // (Rev 8) the armed record lives in currentMasks_, one ahead of what the
+  // current train is clocking out (controllerPressedMask). willAdvanceOnEdge()
+  // is false whenever preAdvanced_ is set, so the ISR must consult this instead.
+  bool preAdvanced() const { return preAdvanced_; }
+  TasFrameMasks preAdvancedMasks() const {
+    return preAdvanced_ ? currentMasks_ : TasFrameMasks{};
+  }
+
   // Latch-ISR fast path for the strobe-mode steady state: commit the record
   // the expiry service pre-popped, with no out-of-line calls. Defined in the
   // header because this build has no LTO and the commit runs inside the latch
@@ -125,6 +141,41 @@ class NesTasPlayback {
     }
     noteLatchTimestamp(nowMicros);
     return true;
+  }
+
+  // Rev 8 (v51): pop the record the *next* accepted strobe edge will serve and
+  // arm preAdvanced_, so that next edge takes the fast commit path. Called from
+  // the latch ISR's preemptible tail right after the current edge committed —
+  // replacing the mid-gap expiry-service pre-advance, which could not re-arm
+  // between the sub-8 ms burst latches of poll-wait games (Archon). Advances
+  // only the internal record pointer and staged masks: it must NOT be given the
+  // live serving mask and must not be reflected onto the data pins, because the
+  // current frame's read train has not happened yet when this runs. The caller
+  // masks interrupts across this call (the ring is single-consumer in
+  // latch-edge context, and serviceLatchPendBeforeClock can nest a latch over
+  // this tail from a clock ISR).
+  //
+  // Arms only when the next record is cleanly available. It deliberately never
+  // ends the run: the final served record (currentFrame_+1 == totalFrames_) and
+  // a not-yet-buffered record both leave preAdvanced_ clear, so the next
+  // accepted edge takes the general path and resolves Complete/Underrun there —
+  // exactly one record per edge, and never before the last record has been
+  // read out. Returns Ok when it armed, Waiting otherwise.
+  TasPlaybackResult prefetchNextRecord(TasFrameMasks& nextMasks) {
+    nextMasks = currentMasks_;
+    if (!active() || !started_ || preAdvanced_ || error_ != TasPlaybackResult::Ok) {
+      return TasPlaybackResult::Waiting;
+    }
+    if (currentFrame_ + 1 >= totalFrames_ || bufferedFrames() == 0) {
+      return TasPlaybackResult::Waiting;
+    }
+    pollCompletedInWindow_ = false;
+    const TasPlaybackResult result = advanceFrame(nextMasks);
+    lastWindowResult_ = result;
+    if (result == TasPlaybackResult::Ok) {
+      preAdvanced_ = true;
+    }
+    return result;
   }
 
   bool active() const;

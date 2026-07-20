@@ -38,7 +38,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v50";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v53";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -181,6 +181,16 @@ volatile uint32_t tasLatchIsrMaxCycles = 0;
 // too, so per-frame spikes flag the pre-head race in-band.
 volatile uint32_t tasLatchHeadLastCycles = 0;
 volatile uint32_t tasLatchHeadMaxCycles = 0;
+// Rev 8 (v51) strobe tail instrumentation. tasLatchTail* is the fast-path tail
+// span (head release to ISR return, prefetch included) — bounded by the
+// tightest latch spacing (Archon menus: 283 µs ≈ 13,584 cycles). tasLatchPrefetchMasked*
+// is the interrupts-off span around the ring pop in prefetchNextStrobeRecord —
+// the safety-critical number: it must stay far under a console read-pair spacing
+// (Golf's 2.2 µs ≈ 106 cycles) so a masked pop can never merge two reads.
+volatile uint32_t tasLatchTailLastCycles = 0;
+volatile uint32_t tasLatchTailMaxCycles = 0;
+volatile uint32_t tasLatchPrefetchMaskedLastCycles = 0;
+volatile uint32_t tasLatchPrefetchMaskedMaxCycles = 0;
 NesTasPlayback tasPlayback;
 FspTimer tasServiceTimer;
 
@@ -405,6 +415,58 @@ void setupNesPins() {
   raiseNesPinInterruptPriority();
 }
 
+// Direct interrupt vectors — bypass the FSP + Arduino dispatch layers.
+// attachInterrupt routes every NES pin edge through r_icu_isr (the FSP ICU
+// handler) and then IrqCallback (the Arduino shim) before our handler runs —
+// ~1-2 us of dispatch on EVERY clock edge. On slow-reading games that is inside
+// the bit-0 margin (compensated by pre-positioning), but on fast/dense reads
+// (2-controller games, tight read loops) it makes bits 1-7 land late and the
+// console misreads them, invisibly to the trace. TAStm32 has no such layers:
+// EXTI0_IRQHandler IS the vector. Mirror that by pointing the RAM vector table
+// (VTOR-relocated; the Arduino core already patches it the same way, see
+// IRQManager::addGenericInterrupt) straight at these wrappers. Each clears the
+// ICU request flag — the one thing r_icu_isr does that we still need, same
+// clear+DSB sequence as serviceLatchPendBeforeClock — then runs the handler with
+// only the ~12-cycle architectural NVIC entry in front of it. The NVIC pending
+// bit is auto-cleared by hardware on exception entry, so no NVIC_ClearPendingIRQ
+// is needed here (unlike the inline pend-service path).
+TASDECK_RAM_ISR void directLatchVector() {
+  R_ICU->IELSR[nesLatchIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
+  __DSB();
+  handleLatchEdge();
+}
+
+TASDECK_RAM_ISR void directPort1ClockVector() {
+  R_ICU->IELSR[nesPort1ClockIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
+  __DSB();
+  handlePort1Clock();
+}
+
+TASDECK_RAM_ISR void directPort2ClockVector() {
+  R_ICU->IELSR[nesPort2ClockIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
+  __DSB();
+  handlePort2Clock();
+}
+
+// Install the direct vectors into the live (RAM) vector table. Each ICU slot's
+// NVIC IRQn equals its IELSR slot index, and its vector lives at
+// VTOR[FIXED_IRQ_NUM(16) + slot]. Must run after attachInterrupt (which
+// configures the pin/event link and installs r_icu_isr there) and after the
+// slots are resolved. Only the three NES pin vectors are touched, so a mistake
+// here can only affect NES input — USB serial and timers keep their vectors and
+// the board stays reachable for a re-flash.
+void installNesDirectVectors() {
+  if (nesLatchIrqSlot < 0 || nesPort1ClockIrqSlot < 0 || nesPort2ClockIrqSlot < 0) {
+    return;
+  }
+  volatile uint32_t* vectorTable = reinterpret_cast<volatile uint32_t*>(SCB->VTOR);
+  vectorTable[16 + nesLatchIrqSlot] = reinterpret_cast<uint32_t>(&directLatchVector);
+  vectorTable[16 + nesPort1ClockIrqSlot] = reinterpret_cast<uint32_t>(&directPort1ClockVector);
+  vectorTable[16 + nesPort2ClockIrqSlot] = reinterpret_cast<uint32_t>(&directPort2ClockVector);
+  __DSB();
+  __ISB();
+}
+
 void raiseNesPinInterruptPriority() {
   // The console gives the controller only a few microseconds between strobe
   // and clock edges. A UART or timer interrupt that delays the latch/clock
@@ -424,6 +486,9 @@ void raiseNesPinInterruptPriority() {
     }
   }
   applyNesPinInterruptPriorities(false);
+  // Replace the FSP/Arduino dispatch shims with direct vectors now that the
+  // slots are known — this is the reaction-latency fix for fast/dense reads.
+  installNesDirectVectors();
 }
 
 // Windowed modes: the latch outranks the clocks. When edges pend behind a
@@ -756,7 +821,7 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
   snprintf(
     response,
     responseLength,
-    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu",
+    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu latch_tail_last_cyc=%lu latch_tail_max_cyc=%lu latch_prefetch_masked_last_cyc=%lu latch_prefetch_masked_max_cyc=%lu",
     commandName,
     kFirmwareId,
     kLatchEdgeMode,
@@ -800,7 +865,11 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
     static_cast<unsigned long>(tasLatchIsrLastCycles),
     static_cast<unsigned long>(tasLatchIsrMaxCycles),
     static_cast<unsigned long>(tasLatchHeadLastCycles),
-    static_cast<unsigned long>(tasLatchHeadMaxCycles));
+    static_cast<unsigned long>(tasLatchHeadMaxCycles),
+    static_cast<unsigned long>(tasLatchTailLastCycles),
+    static_cast<unsigned long>(tasLatchTailMaxCycles),
+    static_cast<unsigned long>(tasLatchPrefetchMaskedLastCycles),
+    static_cast<unsigned long>(tasLatchPrefetchMaskedMaxCycles));
 }
 
 void formatTasChunkResponse(char* response, size_t responseLength) {
@@ -1168,6 +1237,10 @@ void resetTasTrace() {
   tasLatchIsrMaxCycles = 0;
   tasLatchHeadLastCycles = 0;
   tasLatchHeadMaxCycles = 0;
+  tasLatchTailLastCycles = 0;
+  tasLatchTailMaxCycles = 0;
+  tasLatchPrefetchMaskedLastCycles = 0;
+  tasLatchPrefetchMaskedMaxCycles = 0;
 }
 
 void resumeTasTrace() {
@@ -1475,6 +1548,15 @@ void writeDataPinsForMasks(tasdeck::TasFrameMasks masks) {
   writeDataPinLevels(levels.port1High, levels.port2High);
 }
 
+// INVARIANT: never call during started strobe playback. dataLineHigh() sources
+// its between-poll bit 0 from controllerPressedMask (the frame currently being
+// clocked out), but in strobe mode the wire must instead hold the *next*
+// record's bit 0 — the clock ISR pre-positions that from preAdvancedMasks(),
+// one record ahead. Calling this mid-strobe-playback would overwrite the wire
+// with the stale current-frame bit 0 and reintroduce the v51 dropped-first-bit
+// desync. Today the only strobe caller is the frame-0 release in
+// serviceTasWindowExpiry (where current and next coincide); the started-run
+// expiry is gated off (windowExpiryDue returns false), so this holds.
 void writeDataPins() {
   writeDataPinLevels(dataLineHigh(), port2DataLineHigh());
 }
@@ -1689,6 +1771,52 @@ inline void recordLatchHeadCycles(uint32_t elapsed) {
   }
 }
 
+// Rev 8 (v51): fast-path tail span (head release to ISR return). Preemptible,
+// so clock time is included; the budget is the tightest latch spacing, not a
+// microsecond deadline. A blown tail means the next edge's prefetch was late.
+inline void recordLatchTailCycles(uint32_t elapsed) {
+  tasLatchTailLastCycles = elapsed;
+  if (elapsed > tasLatchTailMaxCycles) {
+    tasLatchTailMaxCycles = elapsed;
+  }
+}
+
+// Rev 8 (v51): interrupts-off span around the tail ring pop. The one number
+// that must stay small — a masked stretch spanning two console reads merges
+// them regardless of priority, so this must read well under a read-pair spacing
+// (Golf 2.2 µs ≈ 106 cycles at 48 MHz).
+inline void recordLatchPrefetchMaskedCycles(uint32_t elapsed) {
+  tasLatchPrefetchMaskedLastCycles = elapsed;
+  if (elapsed > tasLatchPrefetchMaskedMaxCycles) {
+    tasLatchPrefetchMaskedMaxCycles = elapsed;
+  }
+}
+
+// Rev 8 (v51): arm the fast path for the next accepted strobe edge from the
+// latch ISR's preemptible tail. Pops the record that edge will serve into the
+// playback's pre-advanced state; nothing here touches the live serving mask or
+// the data pins, so the current frame's in-flight read train is untouched. The
+// ring pop and flag stores run interrupts-off because serviceLatchPendBeforeClock
+// can retire a pended latch edge from a clock ISR over this tail — an unmasked
+// pop could nest and split the single-consumer ring. prefetchNextRecord never
+// ends the run (it declines to arm when the buffer is exhausted); the completing
+// edge resolves Complete/Underrun through the general path's existing teardown.
+inline void prefetchNextStrobeRecord() {
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  // Both timestamps are read inside the masked region: reading maskStart before
+  // __disable_irq() let a clock ISR preempting that one-instruction gap inflate
+  // the count (Archon: apparent 855 cyc / 17.8 µs, all of it a preemption before
+  // the mask, not masked time). Measured this way the span is the true
+  // interrupts-off cost of the ring pop.
+  const uint32_t maskStart = DWT->CYCCNT;
+  tasdeck::TasFrameMasks prefetchMasks = {};
+  tasPlayback.prefetchNextRecord(prefetchMasks);
+  const uint32_t maskEnd = DWT->CYCCNT;
+  __set_PRIMASK(primask);
+  recordLatchPrefetchMaskedCycles(maskEnd - maskStart);
+}
+
 TASDECK_RAM_ISR void handleLatchEdge() {
   const uint32_t cyclesAtEntry = DWT->CYCCNT;
 #if TASDECK_ISR_DEBUG_PIN >= 0
@@ -1781,6 +1909,12 @@ TASDECK_RAM_ISR void handleLatchEdge() {
         static_cast<uint8_t>(TasPlaybackResult::Ok),
         controllerDiagWindowKind,
         strobeCapture);
+      // Rev 8 (v51): arm the next edge here, in the tail, instead of from the
+      // 1 kHz expiry service. This is the change that fixes Archon — every
+      // accepted edge now leaves the next one pre-advanced regardless of latch
+      // cadence, so burst latches no longer fall to the general path.
+      prefetchNextStrobeRecord();
+      recordLatchTailCycles(DWT->CYCCNT - cyclesAtHeadRelease);
       recordLatchIsrCycles(cyclesAtEntry);
 #if TASDECK_ISR_DEBUG_PIN >= 0
       setIsrDebugPin(false);
@@ -1941,6 +2075,15 @@ TASDECK_RAM_ISR void handleLatchEdge() {
     controller2LatchedMask,
   });
   __set_PRIMASK(generalPrimask);
+  // Rev 8 (v51): a started strobe run that reached the general path (the start
+  // edge, or a sub-holdoff double-strobe that beat the tail prefetch) must still
+  // leave the next edge armed, so it falls back to the fast path rather than
+  // chaining general-path edges. No-op until started_, and gated to strobe so
+  // windowed modes keep their expiry-service pre-advance untouched. Runs after
+  // the PRIMASK release, in the preemptible region, like the fast tail.
+  if (strobeMode) {
+    prefetchNextStrobeRecord();
+  }
   recordLatchIsrCycles(cyclesAtEntry);
 
 #if TASDECK_ISR_DEBUG_PIN >= 0
@@ -1998,14 +2141,23 @@ TASDECK_RAM_ISR void handlePort1Clock() {
   }
 
   // After the 8th shift the line pre-positions bit 0 (A) for the next strobe
-  // (see dataLineHigh); same-frame re-polls arrive ~120 microseconds later
-  // and must not race the latch ISR for the first bit.
+  // (see dataLineHigh); the console reads bit 0 microseconds after the strobe —
+  // sooner than TASDeck's latch ISR can react — so the next record's bit 0 must
+  // already be on the wire when the strobe arrives. Source it from the record
+  // the next strobe will actually serve: the armed pre-advance (Rev 8 keeps it
+  // in currentMasks_, one ahead of the current train), or the staged pop when no
+  // pre-advance is armed. v51 regressed here by gating on willAdvanceOnEdge()
+  // (always false once pre-advanced), leaving the CURRENT frame's bit 0 on the
+  // wire and forcing a stale first read on every frame whose bit 0 changed.
   uint8_t betweenPollMask = controllerPressedMask;
   if (
     controllerShiftIndex >= tasdeck::kNesButtonCount &&
-    tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe &&
-    tasPlayback.willAdvanceOnEdge()) {
-    betweenPollMask = tasPlayback.stagedNextMask();
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe) {
+    if (tasPlayback.preAdvanced()) {
+      betweenPollMask = tasPlayback.preAdvancedMasks().port1;
+    } else if (tasPlayback.willAdvanceOnEdge()) {
+      betweenPollMask = tasPlayback.stagedNextMask();
+    }
   }
   const bool high = controllerShiftIndex >= tasdeck::kNesButtonCount
     ? (betweenPollMask & 0x01) == 0
@@ -2066,7 +2218,26 @@ TASDECK_RAM_ISR void handlePort2Clock() {
     serviceLatchPendBeforeClock();
   }
 
+  // Count the edge before any early-out so clock2 in TAS_STATUS stays truthful:
+  // a 1-port run on a game that still polls $4017 (Roger Rabbit) really does
+  // clock port 2, and reporting clock2=0 there would hide that from diagnostics.
   controller2ClockCount += 1;
+
+  // 1-port runs: port 2 is unused, so its data line just holds the released
+  // level the latch drives, and every bit of the read is the same (nothing
+  // pressed). Skip the rest of the shift/accounting once the pending-latch
+  // service above and the edge count have run — a game that reads $4017 anyway
+  // (a 1-player movie on a game that still polls both controllers) then costs
+  // only this minimal ISR instead of a full 8-bit port-2 read every frame,
+  // halving the read-train interrupt density that makes such runs hard to
+  // serve. The latch keeps the line released; nothing here needs to drive it.
+  if (tasPlayback.portCount() < tasdeck::kNesControllerPortCount) {
+#if TASDECK_ISR_DEBUG_PIN >= 0
+    setIsrDebugPin(false);
+#endif
+    return;
+  }
+
   if (controller2ClocksSinceLatch < 0xff) {
     controller2ClocksSinceLatch += 1;
   }
@@ -2085,12 +2256,18 @@ TASDECK_RAM_ISR void handlePort2Clock() {
     completedPoll = controller2ShiftIndex >= tasdeck::kNesButtonCount;
   }
 
+  // See handlePort1Clock: pre-position the next strobe's bit 0 from the record
+  // that strobe will serve (armed pre-advance, else staged pop), not the current
+  // frame — the fix for the v51 stale-first-bit regression, port 2.
   uint8_t betweenPollMask = controller2PressedMask;
   if (
     controller2ShiftIndex >= tasdeck::kNesButtonCount &&
-    tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe &&
-    tasPlayback.willAdvanceOnEdge()) {
-    betweenPollMask = tasPlayback.stagedNextMasks().port2;
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Strobe) {
+    if (tasPlayback.preAdvanced()) {
+      betweenPollMask = tasPlayback.preAdvancedMasks().port2;
+    } else if (tasPlayback.willAdvanceOnEdge()) {
+      betweenPollMask = tasPlayback.stagedNextMasks().port2;
+    }
   }
   const bool high = controller2ShiftIndex >= tasdeck::kNesButtonCount
     ? (betweenPollMask & 0x01) == 0

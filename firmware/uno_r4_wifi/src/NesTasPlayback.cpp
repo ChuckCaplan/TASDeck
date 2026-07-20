@@ -277,9 +277,14 @@ bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
   }
 
   if (syncMode_ == TasSyncMode::Strobe) {
-    // Every accepted edge consumes a record, so no completed-read credit is
-    // required before staging the next one for the edge to commit.
-    return true;
+    // Rev 8 (v51): a started strobe run pre-advances from the latch ISR's tail
+    // (prefetchNextRecord), not from this mid-gap service. The service could not
+    // re-arm between the sub-holdoff burst latches of poll-wait games (Archon
+    // latches every ~283 µs at menus, far inside the 8 ms holdoff), so those
+    // edges fell to the general path and its full-length PRIMASK hold merged the
+    // console's slow read train. Only the !started_ frame-0 release above still
+    // runs here; every started edge is armed by the edge before it.
+    return false;
   }
 
   return pollCompletedInWindow_;
