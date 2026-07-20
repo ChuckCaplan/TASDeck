@@ -38,7 +38,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v53";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v54";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -2218,26 +2218,17 @@ TASDECK_RAM_ISR void handlePort2Clock() {
     serviceLatchPendBeforeClock();
   }
 
-  // Count the edge before any early-out so clock2 in TAS_STATUS stays truthful:
-  // a 1-port run on a game that still polls $4017 (Roger Rabbit) really does
-  // clock port 2, and reporting clock2=0 there would hide that from diagnostics.
   controller2ClockCount += 1;
 
-  // 1-port runs: port 2 is unused, so its data line just holds the released
-  // level the latch drives, and every bit of the read is the same (nothing
-  // pressed). Skip the rest of the shift/accounting once the pending-latch
-  // service above and the edge count have run — a game that reads $4017 anyway
-  // (a 1-player movie on a game that still polls both controllers) then costs
-  // only this minimal ISR instead of a full 8-bit port-2 read every frame,
-  // halving the read-train interrupt density that makes such runs hard to
-  // serve. The latch keeps the line released; nothing here needs to drive it.
-  if (tasPlayback.portCount() < tasdeck::kNesControllerPortCount) {
-#if TASDECK_ISR_DEBUG_PIN >= 0
-    setIsrDebugPin(false);
-#endif
-    return;
-  }
-
+  // Service the port-2 read train the same way in 1-port and 2-port runs. Short-
+  // circuiting this for 1-port runs looks safe on paper — the movie never presses
+  // P2, so the line would just hold the released level the latch drives — but it
+  // changes the interrupt timing of the whole read train on a game that polls
+  // $4017 (Lode Runner does, every frame: clock2 == clock), and bit placement is
+  // exactly what this system cannot see in a trace. The 1-port serving path is
+  // also the least-tested one here; every console verification in the library was
+  // made with port 2 fully serviced, so keep doing that. The port-2 poll credit
+  // and diagnostics below stay gated on portCount as before.
   if (controller2ClocksSinceLatch < 0xff) {
     controller2ClocksSinceLatch += 1;
   }

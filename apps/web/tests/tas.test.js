@@ -245,22 +245,24 @@ test("parses paired R08 records with reversed controller-bit order", () => {
   assert.equal(tasMasksPortCount(tasFramesToMasks(result.frames)), 2);
 });
 
-test("reverses every R08 controller bit and collapses an idle second port to one player", () => {
+test("reverses every R08 controller bit and preserves an idle second port", () => {
   for (let bit = 0; bit < 8; bit += 1) {
     assert.equal(reverseByteBits(1 << bit), 1 << (7 - bit));
   }
 
-  // A 1-player movie stored in the 2-byte .r08 format (every P2 byte 0) must
-  // collapse to a single controller so it is not served as a 2-port run, which
-  // would add a redundant 8-clock port-2 read every frame for a controller that
-  // is never pressed.
+  // A 1-player movie stored in the 2-byte .r08 format (every P2 byte 0) stays
+  // two-controller. Inferring 1-port from an idle P2 would move already-verified
+  // movies onto the 1-port serving path; Lode Runner desynced that way.
   const onePlayer = tasFramesToMasks(
     parseTasFileBytes("one-player.r08", Uint8Array.from([0x80, 0x00, 0x40, 0x00])).frames,
   );
-  assert.equal(tasMasksPortCount(onePlayer), 1);
-  assert.deepEqual(onePlayer, [0x01, 0x02]);
+  assert.equal(tasMasksPortCount(onePlayer), 2);
+  assert.deepEqual(onePlayer, [
+    { p1: 0x01, p2: 0x00 },
+    { p1: 0x02, p2: 0x00 },
+  ]);
 
-  // A genuine 2-player .r08 (any non-zero P2 byte) stays two-controller.
+  // A genuine 2-player .r08 is unchanged.
   const twoPlayer = tasFramesToMasks(
     parseTasFileBytes("two-player.r08", Uint8Array.from([0x80, 0x00, 0x00, 0x40])).frames,
   );
