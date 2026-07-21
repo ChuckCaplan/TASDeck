@@ -104,7 +104,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 
 ## Background
 
-TASDeck was inspired by [TASBot](https://tas.bot/),
+TASDeck was inspired by [TAStm32](https://github.com/Ownasaurus/TAStm32), [TASBot](https://tas.bot/),
 [NESBot](https://www.instructables.com/NESBot-Arduino-Powered-Robot-beating-Super-Mario-/), and
 [VeriTAS](https://github.com/bigbass1997/VeriTAS).
 
