@@ -20,16 +20,28 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { validateMovieFile } = require("./validate-tasdeck-movie-inputs.js");
 
 // FM2 gamepad field order and the mask bit each button sets, matching
 // expand-tdmask-from-hardware-trace.js (FM2_GAMEPAD_COLUMNS / BUTTON_BITS).
 const FM2_COLUMNS = ["right", "left", "down", "up", "start", "select", "b", "a"];
 const FM2_CHAR = { right: "R", left: "L", down: "D", up: "U", start: "S", select: "s", b: "B", a: "A" };
 const BUTTON_BITS = { a: 0x01, b: 0x02, select: 0x04, start: 0x08, up: 0x10, down: 0x20, left: 0x40, right: 0x80 };
+const USAGE = "usage: node scripts/convert-bk2-to-fm2.js <movie.bk2> [--output movie.fm2] [--no-verify]";
+
+function printUsage(stream) {
+  stream.write(`${USAGE}\n`);
+}
 
 function fail(message) {
   console.error(`error: ${message}`);
   process.exit(1);
+}
+
+function failUsage(message) {
+  console.error(`error: ${message}`);
+  printUsage(process.stderr);
+  process.exit(2);
 }
 
 function parseArgs(argv) {
@@ -43,14 +55,14 @@ function parseArgs(argv) {
     } else if (arg === "--no-verify") {
       options.verify = false;
     } else if (arg === "-h" || arg === "--help") {
-      console.log("usage: node scripts/convert-bk2-to-fm2.js <movie.bk2> [--output movie.fm2] [--no-verify]");
+      printUsage(process.stdout);
       process.exit(0);
     } else {
       positional.push(arg);
     }
   }
   if (positional.length !== 1) {
-    fail("expected exactly one <movie.bk2> argument (see --help)");
+    failUsage("expected exactly one <movie.bk2> argument");
   }
   options.bk2Path = positional[0];
   if (!options.outputPath) {
@@ -228,6 +240,11 @@ function verifyAgainstTrace(bk2Path, p1Masks) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
+  try {
+    console.log(`Controller preflight passed: ${validateMovieFile(options.bk2Path)}.`);
+  } catch (error) {
+    fail(`controller preflight failed: ${error.message}`);
+  }
   const inputLog = readInputLog(options.bk2Path);
   const { fm2Rows, p1Masks } = convert(inputLog);
 

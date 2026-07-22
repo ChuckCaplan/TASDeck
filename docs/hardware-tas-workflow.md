@@ -98,6 +98,11 @@ order. For `.bk2`, it restarts the movie at frame 0 in BizHawk, writes both cont
 non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings required by the
 movie in the BizHawk installation used for the export.
 
+Before launching the emulator, both converters inspect the movie's controller configuration and
+input columns. They accept only standard NES controller buttons on ports 1 and 2 and fail on Zapper,
+Arkanoid paddle, Power Pad, Four Score/P3/P4, microphone, expansion-port, or unknown controller
+input. Those devices use protocols or data lines that TASDeck does not drive.
+
 Each converter also creates `<output>.trace.csv`. The FCEUX trace has one row per completed emulator
 poll and includes poll-level diagnostic fields. The BizHawk trace maps each emitted mask pair to its
 source BK2 movie frame.

@@ -55,6 +55,16 @@ if [[ ! -f "$rom_path" ]]; then
   exit 1
 fi
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+controller_validator="$script_dir/validate-tasdeck-movie-inputs.js"
+
+if [[ ! -f "$controller_validator" ]]; then
+  echo "Controller preflight not found: $controller_validator" >&2
+  exit 1
+fi
+
+node "$controller_validator" "$movie_path"
+
 if [[ -z "$output_path" ]]; then
   movie_name=${movie_path##*/}
   output_path="$PWD/${movie_name%.*}.tdmask"
@@ -83,7 +93,6 @@ else
   exit 1
 fi
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 lua_path="$script_dir/bizhawk-export-tasdeck-mask.lua"
 
 if [[ ! -f "$lua_path" ]]; then
