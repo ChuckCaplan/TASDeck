@@ -95,6 +95,8 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa | 1:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
 | Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
+| Double Dragon by Alyosha | 08:52 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| Double Dragon II — 2 players by Alyosha | 08:23 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Tetris — "maximum score" by r57shell & Archanfel | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
 | Pac-Man (Tengen) by Alyosha | 12:04 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2` | EverDrive N8 Pro |
 | Donkey Kong by Alyosha | 01:16 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2`, `.r08` | EverDrive N8 Pro |
