@@ -98,6 +98,16 @@ async function controllerFaceplateRect(page) {
   });
 }
 
+async function controllerBrandClearances(page) {
+  return page.locator(".controller-shell").evaluateAll((controllers) =>
+    controllers.map((controller) => {
+      const brand = controller.querySelector(".controller-brand").getBoundingClientRect();
+      const center = controller.querySelector(".controller-center").getBoundingClientRect();
+      return brand.left - center.right;
+    }),
+  );
+}
+
 test("groups playback offsets in one grid row", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/");
@@ -173,6 +183,50 @@ test.describe("iPhone portrait controller", () => {
     expect(buttonEventCount).toBe(4);
     expect(selectedText).toBe("");
   });
+
+  test("stacks two working controllers without overflowing", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeBridge(page);
+
+    await page.locator("#showBothControllers").check();
+
+    const viewport = await viewportRect(page);
+    const bodyWidth = await page.evaluate(() => document.body.scrollWidth);
+    const controllers = await page.locator(".controller-shell").evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      }),
+    );
+    expect(controllers).toHaveLength(2);
+    expect(controllers[0].y + controllers[0].height).toBeLessThan(controllers[1].y);
+    expect(controllers[0].width).toBeCloseTo(controllers[1].width, 0);
+    expect(controllers[0].width).toBeGreaterThan(viewport.width * 0.9);
+    controllers.forEach((controller) => fitsWithin(controller, viewport));
+    expect(bodyWidth).toBeLessThanOrEqual(viewport.width + 1);
+    await expect(page.locator(".show-both-control")).toContainText("Show both controllers");
+    await expect(page.locator(".controller-port-toggle")).toBeHidden();
+    await expect(page.locator("#p2Shortcuts")).toContainText("WASD");
+    const showBothControl = await elementRect(page, ".show-both-control");
+    expect(showBothControl.y).toBeGreaterThanOrEqual(
+      controllers[1].y + controllers[1].height,
+    );
+
+    await page.locator('[data-controller-slot="secondary"] [data-button="a"]').tap();
+    const buttonEvents = await page.evaluate(() =>
+      window.__fakeBridgeMessages
+        .filter((message) => message.type === "event")
+        .map((message) => message.event),
+    );
+    expect(buttonEvents.at(-2)).toMatchObject({ button: "a", action: "down", controllerPort: 2 });
+    expect(buttonEvents.at(-1)).toMatchObject({ button: "a", action: "up", controllerPort: 2 });
+
+    await page.setViewportSize({ width: 844, height: 390 });
+    await expect(page.locator(".controller-shell")).toHaveCount(1);
+    await expect(page.locator('[data-controller-port="1"]')).toBeVisible();
+    await expect(page.locator('[data-controller-port="2"]')).toBeVisible();
+    await expect(page.locator("#showBothControllers")).toBeHidden();
+  });
 });
 
 test.describe("iPhone landscape controller", () => {
@@ -202,6 +256,7 @@ test.describe("iPhone landscape controller", () => {
     expect(portTwoButton.x + portTwoButton.width).toBeCloseTo(faceplate.right, 0);
     await expect(page.locator('[data-controller-port="1"]')).toBeVisible();
     await expect(page.locator('[data-controller-port="2"]')).toBeVisible();
+    await expect(page.locator("#showBothControllers")).toBeHidden();
     await page.locator('[data-controller-port="2"]').tap();
     await expect(page.locator('[data-controller-port="2"]')).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(".top-bar")).toBeHidden();
@@ -229,6 +284,19 @@ test.describe("desktop controller", () => {
     expect(brand.x + brand.width).toBeLessThan(actions.x + actions.width);
   });
 
+  test("keeps compact dual-controller branding clear at normal and 90% zoom widths", async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto("/");
+    await page.locator("#showBothControllers").check();
+
+    let clearances = await controllerBrandClearances(page);
+    clearances.forEach((clearance) => expect(clearance).toBeGreaterThan(4));
+
+    await page.setViewportSize({ width: Math.round(1920 / 0.9), height: 1080 });
+    clearances = await controllerBrandClearances(page);
+    clearances.forEach((clearance) => expect(clearance).toBeGreaterThan(4));
+  });
+
   test("supports keyboard chords for controller input", async ({ page }) => {
     await installFakeBridge(page);
     await connectFakeBridge(page);
@@ -251,6 +319,100 @@ test.describe("desktop controller", () => {
     expect(logText).toContain("P1 A down");
     expect(logText).toContain("P1 A up");
     expect(logText).toContain("P1 RIGHT up");
+  });
+
+  test("enables independent P2 keyboard controls only in dual view", async ({ page }) => {
+    await installFakeBridge(page);
+    await connectFakeBridge(page);
+
+    await page.keyboard.press("g");
+    let buttonEvents = await page.evaluate(() =>
+      window.__fakeBridgeMessages.filter((message) => message.type === "event"),
+    );
+    expect(buttonEvents).toEqual([]);
+
+    await page.locator("#showBothControllers").check();
+    await expect(page.locator(".controller-shell")).toHaveCount(2);
+    await expect(page.locator(".controller-port-toggle")).toBeHidden();
+    await expect(page.locator(".shortcut-note > .show-both-control")).toBeVisible();
+    const controllerRects = await page.locator(".controller-shell").evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      }),
+    );
+    expect(controllerRects[0].y + controllerRects[0].height).toBeLessThan(controllerRects[1].y);
+    expect(controllerRects[0].width).toBeCloseTo(controllerRects[1].width, 0);
+    const controlStage = await elementRect(page, ".control-stage");
+    expect(controllerRects[0].width).toBeLessThanOrEqual(681);
+    expect(controllerRects[0].width).toBeLessThan(controlStage.width * 0.85);
+    expect(controllerRects[0].width).toBeGreaterThan(controlStage.width * 0.7);
+    await expect(page.locator("#p2Shortcuts")).toContainText("WASD");
+    await expect(page.locator("#p2Shortcuts")).toContainText("F");
+    await expect(page.locator("#p2Shortcuts")).toContainText("G");
+    await expect(page.locator("#p2Shortcuts")).toContainText("R");
+    await expect(page.locator("#p2Shortcuts")).toContainText("T");
+    const showBothControl = await elementRect(page, ".show-both-control");
+    const shortcutNote = await elementRect(page, ".shortcut-note");
+    const secondaryController = await elementRect(
+      page,
+      '[data-controller-slot="secondary"] .controller-shell',
+    );
+    fitsWithin(showBothControl, shortcutNote);
+    expect(showBothControl.y).toBeGreaterThanOrEqual(
+      secondaryController.y + secondaryController.height,
+    );
+    const checkboxStyles = await page.locator("#showBothControllers").evaluate((checkbox) => {
+      const checkboxStyle = window.getComputedStyle(checkbox);
+      const labelStyle = window.getComputedStyle(checkbox.closest("label"));
+      return {
+        accentColor: checkboxStyle.accentColor,
+        labelOutline: labelStyle.outlineStyle,
+      };
+    });
+    expect(checkboxStyles.accentColor).toBe("rgb(51, 56, 66)");
+    expect(checkboxStyles.labelOutline).toBe("none");
+
+    await page.keyboard.down("ArrowRight");
+    await page.keyboard.down("x");
+    await page.keyboard.down("d");
+    await page.keyboard.down("g");
+
+    await expect(page.locator("#controllerState")).toHaveText("P1: RIGHT + A");
+    await expect(page.locator("#controllerState2")).toHaveText("P2: RIGHT + A");
+    await expect(
+      page.locator('[data-controller-slot="primary"] [data-button="a"]'),
+    ).toHaveClass(/pressed/);
+    await expect(
+      page.locator('[data-controller-slot="secondary"] [data-button="a"]'),
+    ).toHaveClass(/pressed/);
+
+    await page.keyboard.up("g");
+    await page.keyboard.up("d");
+    await page.keyboard.up("x");
+    await page.keyboard.up("ArrowRight");
+
+    buttonEvents = await page.evaluate(() =>
+      window.__fakeBridgeMessages
+        .filter((message) => message.type === "event")
+        .map((message) => message.event),
+    );
+    expect(buttonEvents).toEqual([
+      expect.objectContaining({ button: "right", action: "down", controllerPort: 1 }),
+      expect.objectContaining({ button: "a", action: "down", controllerPort: 1 }),
+      expect.objectContaining({ button: "right", action: "down", controllerPort: 2 }),
+      expect.objectContaining({ button: "a", action: "down", controllerPort: 2 }),
+      expect.objectContaining({ button: "a", action: "up", controllerPort: 2 }),
+      expect.objectContaining({ button: "right", action: "up", controllerPort: 2 }),
+      expect.objectContaining({ button: "a", action: "up", controllerPort: 1 }),
+      expect.objectContaining({ button: "right", action: "up", controllerPort: 1 }),
+    ]);
+
+    await page.locator("#showBothControllers").uncheck();
+    await expect(page.locator(".controller-shell")).toHaveCount(1);
+    await expect(page.locator("#showBothControllers")).not.toBeChecked();
+    await expect(page.locator(".controller-port-toggle")).toBeVisible();
+    await expect(page.locator("#p2Shortcuts")).toBeHidden();
   });
 
   test("routes selected controller port through the shared controller", async ({ page }) => {

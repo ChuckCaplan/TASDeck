@@ -40,19 +40,23 @@ scripts in `scripts/` (see the [Installation guide](INSTALL.md)); an `.r08` can 
 directly with no conversion, defaulting to a per-strobe mode that matches default TAStm32
 replay semantics.
 
-During hardware TAS playback, the on-screen controller lights up the buttons for the selected NES port, so you can watch the inputs as they're sent to the NES, and a run timer shows elapsed and
-total time — exact for .tdmask movies, and estimated for.r08. The event log can capture firmware traces for diagnosing
-playback alignment and hardware timing.
+During hardware TAS playback, the on-screen controller lights up the buttons for the selected NES
+port. The `Show both controllers` checkbox stacks both input streams vertically, using compact
+controllers on larger screens and full-width controllers in phone portrait. The compact phone
+landscape view keeps one controller with the P1/P2 selector. A run timer shows elapsed
+and total time — exact for `.tdmask`
+movies, and estimated for `.r08`. The event log can capture firmware traces for diagnosing playback
+alignment and hardware timing.
 
-Keyboard input uses common NES emulator mapping:
+Keyboard input uses the common NES emulator mapping for the selected controller. When both controllers are visible, that mapping controls P1 and a second mapping is enabled for P2:
 
-| NES button | Keyboard |
-| --- | --- |
-| D-pad | Arrow keys |
-| `B` | `Z` |
-| `A` | `X` |
-| `Start` | `Enter` |
-| `Select` | `Shift` |
+| NES button | P1 / selected controller | P2 in dual view |
+| --- | --- | --- |
+| D-pad | Arrow keys | `WASD` |
+| `B` | `Z` | `F` |
+| `A` | `X` | `G` |
+| `Start` | `Enter` | `T` |
+| `Select` | `Shift` | `R` |
 
 ## How It Fits Together
 

@@ -675,6 +675,24 @@ test.describe("hardware TAS streaming UI", () => {
     await expect(page.locator('[data-button="b"]')).not.toHaveClass(/tas-pressed/);
     await expect(page.locator("#controllerState")).toHaveText("P1 TAS: A");
 
+    await page.locator("#showBothControllers").check();
+    await expect(
+      page.locator('[data-controller-slot="primary"] [data-button="a"]'),
+    ).toHaveClass(/tas-pressed/);
+    await expect(
+      page.locator('[data-controller-slot="primary"] [data-button="b"]'),
+    ).not.toHaveClass(/tas-pressed/);
+    await expect(
+      page.locator('[data-controller-slot="secondary"] [data-button="a"]'),
+    ).not.toHaveClass(/tas-pressed/);
+    await expect(
+      page.locator('[data-controller-slot="secondary"] [data-button="b"]'),
+    ).toHaveClass(/tas-pressed/);
+    await expect(page.locator("#controllerState")).toHaveText("P1 TAS: A");
+    await expect(page.locator("#controllerState2")).toHaveText("P2 TAS: B");
+    await expect(page.locator(".controller-port-toggle")).toBeHidden();
+
+    await page.locator("#showBothControllers").uncheck();
     await page.click('[data-controller-port="2"]');
     await expect(page.locator('[data-button="a"]')).not.toHaveClass(/tas-pressed/);
     await expect(page.locator('[data-button="b"]')).toHaveClass(/tas-pressed/);

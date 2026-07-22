@@ -196,8 +196,77 @@ h2 {
 
 .nes-controller {
   display: grid;
+  position: relative;
+  width: 100%;
+  min-width: 0;
   justify-items: center;
   gap: 12px;
+}
+
+.show-both-control {
+  display: inline-flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.show-both-control input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--button-face);
+  cursor: pointer;
+}
+
+.show-both-control input:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.controller-display {
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  gap: 12px;
+}
+
+.controller-slot {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  justify-items: center;
+  gap: 12px;
+  container-type: inline-size;
+}
+
+.nes-controller.dual-controllers .controller-display {
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.nes-controller.dual-controllers .controller-port-toggle {
+  display: none;
+}
+
+@media (min-width: 601px) {
+  .nes-controller.dual-controllers .controller-shell,
+  .nes-controller.dual-controllers .device-state {
+    width: min(84%, 680px);
+  }
+
+  .nes-controller.dual-controllers .controller-brand {
+    font-size: clamp(0.75rem, 2.5cqw, 1.35rem);
+  }
 }
 
 .controller-shell {
@@ -605,6 +674,15 @@ h2 {
   color: var(--muted);
   font-size: 0.78rem;
   line-height: 1.35;
+}
+
+.shortcut-note strong {
+  color: var(--ink);
+  font-size: 0.72rem;
+}
+
+.p2-shortcuts:not(.hidden) {
+  display: contents;
 }
 
 .shortcut-note kbd {
@@ -1097,6 +1175,21 @@ h2 {
     font-size: 0.66rem;
   }
 
+  .nes-controller.dual-controllers .controller-display {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .nes-controller.dual-controllers .controller-slot {
+    gap: 6px;
+  }
+
+  .nes-controller.dual-controllers .device-state {
+    min-height: 40px;
+    padding: 10px 12px;
+    font-size: 0.86rem;
+  }
+
 }
 
 @media (max-height: 520px) and (orientation: landscape) {
@@ -1154,6 +1247,11 @@ h2 {
 
   .controller-port-toggle {
     width: clamp(82px, 17%, 154px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .show-both-control {
+    display: none;
   }
 
   .controller-port-toggle button {
@@ -1170,4 +1268,13 @@ h2 {
   .shortcut-note {
     display: none;
   }
+
+  .nes-controller.dual-controllers .controller-display {
+    grid-template-columns: 1fr;
+  }
+
+  .nes-controller.dual-controllers [data-controller-slot="secondary"] {
+    display: none;
+  }
+
 }

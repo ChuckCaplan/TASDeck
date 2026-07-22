@@ -26,65 +26,82 @@
       <section class="layout-grid" aria-label="NES controls and TAS playback">
         <section class="control-stage" aria-label="NES controller">
           <article class="nes-device nes-controller" data-device="controller">
-            <div class="controller-shell" aria-label="NES controller">
-              <div class="dpad" aria-label="D-pad">
-                <button type="button" class="pad-button up" data-button="up" aria-label="Up"></button>
-                <button type="button" class="pad-button left" data-button="left" aria-label="Left"></button>
-                <span class="pad-center" aria-hidden="true"></span>
-                <button type="button" class="pad-button right" data-button="right" aria-label="Right"></button>
-                <button type="button" class="pad-button down" data-button="down" aria-label="Down"></button>
-              </div>
+            <div class="controller-display" id="controllerDisplay">
+              <div class="controller-slot" data-controller-slot="primary">
+                <div class="controller-shell" aria-label="NES controller">
+                  <div class="dpad" aria-label="D-pad">
+                    <button type="button" class="pad-button up" data-button="up" aria-label="Up"></button>
+                    <button type="button" class="pad-button left" data-button="left" aria-label="Left"></button>
+                    <span class="pad-center" aria-hidden="true"></span>
+                    <button type="button" class="pad-button right" data-button="right" aria-label="Right"></button>
+                    <button type="button" class="pad-button down" data-button="down" aria-label="Down"></button>
+                  </div>
 
-              <div class="controller-center" aria-hidden="true">
-                <div class="center-ridges">
-                  <span></span>
-                  <span></span>
+                  <div class="controller-center" aria-hidden="true">
+                    <div class="center-ridges">
+                      <span></span>
+                      <span></span>
+                    </div>
+                    <div class="menu-labels">
+                      <span>SELECT</span>
+                      <span>START</span>
+                    </div>
+                  </div>
+
+                  <div class="menu-pocket">
+                    <button type="button" class="menu-button" data-button="select" aria-label="Select">
+                      <span class="visually-hidden">Select</span>
+                    </button>
+                    <button type="button" class="menu-button" data-button="start" aria-label="Start">
+                      <span class="visually-hidden">Start</span>
+                    </button>
+                  </div>
+
+                  <div class="controller-brand" aria-hidden="true">TASDeck</div>
+
+                  <div class="controller-port-toggle" aria-label="Controller view">
+                    <button type="button" data-controller-port="1" aria-pressed="true">P1</button>
+                    <button type="button" data-controller-port="2" aria-pressed="false">P2</button>
+                  </div>
+
+                  <div class="action-buttons">
+                    <div class="action-button-wrap">
+                      <button type="button" class="round-button" data-button="b" aria-label="B">
+                        <span class="visually-hidden">B</span>
+                      </button>
+                      <span aria-hidden="true">B</span>
+                    </div>
+                    <div class="action-button-wrap">
+                      <button type="button" class="round-button" data-button="a" aria-label="A">
+                        <span class="visually-hidden">A</span>
+                      </button>
+                      <span aria-hidden="true">A</span>
+                    </div>
+                  </div>
                 </div>
-                <div class="menu-labels">
-                  <span>SELECT</span>
-                  <span>START</span>
-                </div>
-              </div>
-
-              <div class="menu-pocket">
-                <button type="button" class="menu-button" data-button="select" aria-label="Select">
-                  <span class="visually-hidden">Select</span>
-                </button>
-                <button type="button" class="menu-button" data-button="start" aria-label="Start">
-                  <span class="visually-hidden">Start</span>
-                </button>
-              </div>
-
-              <div class="controller-brand" aria-hidden="true">TASDeck</div>
-
-              <div class="controller-port-toggle" aria-label="Controller port">
-                <button type="button" data-controller-port="1" aria-pressed="true">P1</button>
-                <button type="button" data-controller-port="2" aria-pressed="false">P2</button>
-              </div>
-
-              <div class="action-buttons">
-                <div class="action-button-wrap">
-                  <button type="button" class="round-button" data-button="b" aria-label="B">
-                    <span class="visually-hidden">B</span>
-                  </button>
-                  <span aria-hidden="true">B</span>
-                </div>
-                <div class="action-button-wrap">
-                  <button type="button" class="round-button" data-button="a" aria-label="A">
-                    <span class="visually-hidden">A</span>
-                  </button>
-                  <span aria-hidden="true">A</span>
-                </div>
+                <p class="device-state" id="controllerState" data-controller-state>Idle</p>
               </div>
             </div>
-            <p class="device-state" id="controllerState">Idle</p>
             <p class="shortcut-note" aria-label="Keyboard shortcuts">
               <span>Keyboard:</span>
+              <strong>P1</strong>
               <kbd>Arrows</kbd><span>D-pad</span>
               <kbd>Z</kbd><span>B</span>
               <kbd>X</kbd><span>A</span>
               <kbd>Enter</kbd><span>Start</span>
               <kbd>Shift</kbd><span>Select</span>
+              <span class="p2-shortcuts hidden" id="p2Shortcuts">
+                <strong>P2</strong>
+                <kbd>WASD</kbd><span>D-pad</span>
+                <kbd>F</kbd><span>B</span>
+                <kbd>G</kbd><span>A</span>
+                <kbd>T</kbd><span>Start</span>
+                <kbd>R</kbd><span>Select</span>
+              </span>
+              <label class="show-both-control" for="showBothControllers">
+                <input type="checkbox" id="showBothControllers" />
+                <span>Show both controllers</span>
+              </label>
             </p>
           </article>
         </section>

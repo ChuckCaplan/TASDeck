@@ -40,7 +40,7 @@ const RUN_TIMER_MIN_RATE_MS = 5000;
 const RUN_TIMER_ESTIMATE_REFRESH_MS = 10000;
 const HARDWARE_TAS_PAUSE_MESSAGE =
   "Hardware TAS playback already buffered on the Arduino will continue. This only pauses/stops sending more TAS chunks from the bridge.";
-const KEYBOARD_BUTTONS = new Map([
+const PRIMARY_KEYBOARD_BUTTONS = new Map([
   ["ArrowUp", "up"],
   ["ArrowDown", "down"],
   ["ArrowLeft", "left"],
@@ -51,12 +51,26 @@ const KEYBOARD_BUTTONS = new Map([
   ["ShiftLeft", "select"],
   ["ShiftRight", "select"],
 ]);
+const PLAYER_TWO_KEYBOARD_BUTTONS = new Map([
+  ["KeyW", "up"],
+  ["KeyS", "down"],
+  ["KeyA", "left"],
+  ["KeyD", "right"],
+  ["KeyF", "b"],
+  ["KeyG", "a"],
+  ["KeyT", "start"],
+  ["KeyR", "select"],
+]);
 
 const state = {
   connected: false,
   connecting: false,
   selectedControllerPort: 1,
-  pressed: new Set(),
+  dualControllerMode: false,
+  pressed: {
+    1: new Set(),
+    2: new Set(),
+  },
   tas: {
     fileName: "None",
     frames: [],
@@ -103,7 +117,10 @@ const state = {
       baselineClock: null,
       baselineClock2: null,
       baselineLatch: null,
-      buttons: new Set(),
+      buttonsByPort: {
+        1: new Set(),
+        2: new Set(),
+      },
       currentMask: null,
       frameIndex: -1,
       masks: [],
@@ -120,8 +137,11 @@ const elements = {
   connectionLabel: document.querySelector("#connectionLabel"),
   connectionDetail: document.querySelector("#connectionDetail"),
   toggleConnection: document.querySelector("#toggleConnection"),
+  controller: document.querySelector('[data-device="controller"]'),
+  controllerDisplay: document.querySelector("#controllerDisplay"),
   controllerPortButtons: document.querySelectorAll("[data-controller-port]"),
-  controllerState: document.querySelector("#controllerState"),
+  showBothControllers: document.querySelector("#showBothControllers"),
+  p2Shortcuts: document.querySelector("#p2Shortcuts"),
   tasFile: document.querySelector("#tasFile"),
   playButton: document.querySelector("#playButton"),
   pauseButton: document.querySelector("#pauseButton"),
@@ -596,9 +616,9 @@ const nesTransport = {
     return networkTransport.send(event);
   },
 };
-const buttonElements = new Map();
 const activeButtonInputs = new Map();
 const activeKeyboardInputs = new Map();
+const landscapeControllerQuery = window.matchMedia("(max-height: 520px) and (orientation: landscape)");
 
 function formatButtons(buttons) {
   if (!buttons || buttons.size === 0) {
@@ -750,18 +770,33 @@ async function copyEventLog() {
   await copyEventLogText(eventLogText());
 }
 
-function sendButton(button, action, source = "manual") {
-  if (action === "down") {
-    state.pressed.add(button);
-  } else {
-    state.pressed.delete(button);
+function pressedButtonsForPort(controllerPort) {
+  return state.pressed[controllerPort];
+}
+
+function controllerPortForElement(element) {
+  const slot = element.closest("[data-controller-slot]");
+  if (slot?.dataset.controllerSlot === "secondary") {
+    return 2;
   }
 
+  return state.dualControllerMode ? 1 : state.selectedControllerPort;
+}
+
+function sendButton(button, action, source = "manual", controllerPort = state.selectedControllerPort) {
+  const pressed = pressedButtonsForPort(controllerPort);
+  if (action === "down") {
+    pressed.add(button);
+  } else {
+    pressed.delete(button);
+  }
+
+  updateAllButtonVisuals();
   updateDeviceStates();
   nesTransport.send({
     type: "button",
     device: "controller",
-    controllerPort: state.selectedControllerPort,
+    controllerPort,
     button,
     action,
     source,
@@ -769,11 +804,15 @@ function sendButton(button, action, source = "manual") {
   });
 }
 
-function bindControllerButtons() {
-  document.querySelectorAll('[data-device="controller"] [data-button]').forEach((button) => {
+function bindControllerButtons(root = document) {
+  root.querySelectorAll("[data-button]").forEach((button) => {
+    if (!button.closest('[data-device="controller"]')) {
+      return;
+    }
+
     const buttonName = button.dataset.button;
-    const key = buttonName;
-    buttonElements.set(buttonName, button);
+    const slotName = button.closest("[data-controller-slot]")?.dataset.controllerSlot || "primary";
+    const key = `${slotName}:${buttonName}`;
 
     const press = (event) => {
       if (event.pointerType === "mouse" && event.button !== 0) {
@@ -785,15 +824,17 @@ function bindControllerButtons() {
         return;
       }
 
+      const controllerPort = controllerPortForElement(button);
       activeButtonInputs.set(key, {
         element: button,
         pointerId: event.pointerId,
         button: buttonName,
+        controllerPort,
       });
-      updateButtonVisual(buttonName);
+      updateAllButtonVisuals();
       button.setPointerCapture?.(event.pointerId);
-      if (!state.pressed.has(buttonName)) {
-        sendButton(buttonName, "down");
+      if (!pressedButtonsForPort(controllerPort).has(buttonName)) {
+        sendButton(buttonName, "down", "manual", controllerPort);
       }
     };
 
@@ -843,43 +884,119 @@ function bindControllerPortSelector() {
         return;
       }
 
-      if (port === state.selectedControllerPort) {
+      if (!state.dualControllerMode && port === state.selectedControllerPort) {
         return;
       }
 
       releaseAllInputs("controller_switch");
+      state.dualControllerMode = false;
       state.selectedControllerPort = port;
+      syncControllerDisplay();
       updateControllerPortSelector();
       renderTasControllerPreview();
     });
+  });
+
+  elements.showBothControllers.addEventListener("change", () => {
+    const showBoth = elements.showBothControllers.checked && !landscapeControllerQuery.matches;
+    if (showBoth === state.dualControllerMode) {
+      elements.showBothControllers.checked = showBoth;
+      return;
+    }
+
+    releaseAllInputs("controller_switch");
+    state.dualControllerMode = showBoth;
+    syncControllerDisplay();
+    updateControllerPortSelector();
+    renderTasControllerPreview();
   });
 }
 
 function updateControllerPortSelector() {
   elements.controllerPortButtons.forEach((button) => {
-    const selected = Number(button.dataset.controllerPort) === state.selectedControllerPort;
+    const selected =
+      !state.dualControllerMode && Number(button.dataset.controllerPort) === state.selectedControllerPort;
     button.classList.toggle("selected", selected);
     button.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+  elements.showBothControllers.checked = state.dualControllerMode;
+}
+
+function createSecondaryController() {
+  const primaryShell = elements.controllerDisplay.querySelector(
+    '[data-controller-slot="primary"] .controller-shell',
+  );
+  const secondarySlot = document.createElement("div");
+  const secondaryShell = primaryShell.cloneNode(true);
+  const secondaryState = document.createElement("p");
+
+  secondarySlot.className = "controller-slot";
+  secondarySlot.dataset.controllerSlot = "secondary";
+  secondaryShell.setAttribute("aria-label", "NES controller P2");
+  secondaryShell.querySelector(".controller-port-toggle")?.remove();
+  secondaryShell.querySelectorAll("[data-button]").forEach((button) => {
+    button.setAttribute("aria-label", `P2 ${button.getAttribute("aria-label")}`);
+  });
+  secondaryState.className = "device-state";
+  secondaryState.id = "controllerState2";
+  secondaryState.dataset.controllerState = "";
+  secondaryState.textContent = "P2: None";
+  secondarySlot.append(secondaryShell, secondaryState);
+  elements.controllerDisplay.append(secondarySlot);
+  bindControllerButtons(secondaryShell);
+}
+
+function syncControllerDisplay() {
+  const secondarySlot = elements.controllerDisplay.querySelector('[data-controller-slot="secondary"]');
+  if (state.dualControllerMode && !secondarySlot) {
+    createSecondaryController();
+  } else if (!state.dualControllerMode && secondarySlot) {
+    secondarySlot.remove();
+  }
+
+  elements.controller.classList.toggle("dual-controllers", state.dualControllerMode);
+  elements.p2Shortcuts.classList.toggle("hidden", !state.dualControllerMode);
+  updateAllButtonVisuals();
+  updateDeviceStates();
+}
+
+function bindControllerOrientation() {
+  landscapeControllerQuery.addEventListener("change", () => {
+    if (!landscapeControllerQuery.matches || !state.dualControllerMode) {
+      return;
+    }
+
+    releaseAllInputs("controller_layout");
+    state.dualControllerMode = false;
+    syncControllerDisplay();
+    updateControllerPortSelector();
+    renderTasControllerPreview();
   });
 }
 
 function releaseAllInputs(source = "release") {
   clearActiveButtonInputs();
   clearActiveKeyboardInputs();
-  [...state.pressed].forEach((button) => {
-    sendButton(button, "up", source);
+  [1, 2].forEach((controllerPort) => {
+    [...pressedButtonsForPort(controllerPort)].forEach((button) => {
+      sendButton(button, "up", source, controllerPort);
+    });
   });
 }
 
 function updateDeviceStates() {
-  const port = state.selectedControllerPort;
-  if (state.tas.preview.active) {
-    const manualText = state.pressed.size > 0 ? ` · Manual: ${formatButtons(state.pressed)}` : "";
-    elements.controllerState.textContent = `P${port} TAS: ${formatButtons(state.tas.preview.buttons)}${manualText}`;
-    return;
-  }
+  document.querySelectorAll("[data-controller-state]").forEach((controllerState) => {
+    const port = controllerPortForElement(controllerState);
+    const pressed = pressedButtonsForPort(port);
+    if (state.tas.preview.active) {
+      const manualText = pressed.size > 0 ? ` · Manual: ${formatButtons(pressed)}` : "";
+      const previewButtons = state.tas.preview.buttonsByPort[port];
+      controllerState.textContent = `P${port} TAS: ${formatButtons(previewButtons)}${manualText}`;
+      return;
+    }
 
-  elements.controllerState.textContent = `P${port}: ${formatButtons(state.pressed)}`;
+    controllerState.textContent = `P${port}: ${formatButtons(pressed)}`;
+  });
 }
 
 function startTasControllerPreview(runId, status) {
@@ -970,7 +1087,8 @@ function stopTasControllerPreview() {
   preview.baselineClock = null;
   preview.baselineClock2 = null;
   preview.baselineLatch = null;
-  preview.buttons.clear();
+  preview.buttonsByPort[1].clear();
+  preview.buttonsByPort[2].clear();
   preview.currentMask = null;
   preview.frameIndex = -1;
   preview.masks = [];
@@ -1158,11 +1276,13 @@ function hardwareCounterDelta(value, baseline) {
 
 function renderTasControllerPreview() {
   const preview = state.tas.preview;
-  const mask = preview.currentMask === null
-    ? 0
-    : tasMaskPortValue(preview.currentMask, state.selectedControllerPort);
-  preview.buttons = new Set(preview.active ? maskToButtons(mask) : []);
-  buttonElements.forEach((_element, button) => updateButtonVisual(button));
+  [1, 2].forEach((controllerPort) => {
+    const mask = preview.currentMask === null
+      ? 0
+      : tasMaskPortValue(preview.currentMask, controllerPort);
+    preview.buttonsByPort[controllerPort] = new Set(preview.active ? maskToButtons(mask) : []);
+  });
+  updateAllButtonVisuals();
   updateDeviceStates();
 }
 
@@ -1186,9 +1306,9 @@ function releaseActiveButton(key, source = "manual", pointerId = undefined) {
   if (active.pointerId !== undefined && active.element.hasPointerCapture?.(active.pointerId)) {
     active.element.releasePointerCapture(active.pointerId);
   }
-  updateButtonVisual(active.button);
-  if (!isKeyboardButtonActive(active.button)) {
-    sendButton(active.button, "up", source);
+  updateAllButtonVisuals();
+  if (!isKeyboardButtonActive(active.button, active.controllerPort)) {
+    sendButton(active.button, "up", source, active.controllerPort);
   }
   return true;
 }
@@ -1207,15 +1327,14 @@ function releasePointerButtons(event, source = "manual") {
 }
 
 function clearActiveButtonInputs() {
-  const buttons = new Set([...activeButtonInputs.values()].map((active) => active.button));
   activeButtonInputs.clear();
-  buttons.forEach(updateButtonVisual);
+  updateAllButtonVisuals();
 }
 
 function bindKeyboardControls() {
   window.addEventListener("keydown", (event) => {
-    const button = keyboardButtonForEvent(event);
-    if (!button || isEditableKeyboardTarget(event.target)) {
+    const input = keyboardInputForEvent(event);
+    if (!input || isEditableKeyboardTarget(event.target)) {
       return;
     }
 
@@ -1224,59 +1343,86 @@ function bindKeyboardControls() {
       return;
     }
 
-    activeKeyboardInputs.set(event.code, button);
-    updateButtonVisual(button);
-    if (!state.pressed.has(button)) {
-      sendButton(button, "down", "keyboard");
+    activeKeyboardInputs.set(event.code, input);
+    updateAllButtonVisuals();
+    if (!pressedButtonsForPort(input.controllerPort).has(input.button)) {
+      sendButton(input.button, "down", "keyboard", input.controllerPort);
     }
   });
 
   window.addEventListener("keyup", (event) => {
-    const button = activeKeyboardInputs.get(event.code);
-    if (!button) {
+    const input = activeKeyboardInputs.get(event.code);
+    if (!input) {
       return;
     }
 
     event.preventDefault();
     activeKeyboardInputs.delete(event.code);
-    updateButtonVisual(button);
-    if (!isKeyboardButtonActive(button) && !isPointerButtonActive(button)) {
-      sendButton(button, "up", "keyboard");
+    updateAllButtonVisuals();
+    if (
+      !isKeyboardButtonActive(input.button, input.controllerPort) &&
+      !isPointerButtonActive(input.button, input.controllerPort)
+    ) {
+      sendButton(input.button, "up", "keyboard", input.controllerPort);
     }
   });
 }
 
-function keyboardButtonForEvent(event) {
-  return KEYBOARD_BUTTONS.get(event.code) || "";
+function keyboardInputForEvent(event) {
+  const primaryButton = PRIMARY_KEYBOARD_BUTTONS.get(event.code);
+  if (primaryButton) {
+    return {
+      button: primaryButton,
+      controllerPort: state.dualControllerMode ? 1 : state.selectedControllerPort,
+    };
+  }
+
+  const playerTwoButton = state.dualControllerMode
+    ? PLAYER_TWO_KEYBOARD_BUTTONS.get(event.code)
+    : "";
+  return playerTwoButton ? { button: playerTwoButton, controllerPort: 2 } : null;
 }
 
 function isEditableKeyboardTarget(target) {
   return Boolean(
-    target?.closest?.("input, select, textarea") ||
+    target?.closest?.('input:not([type="checkbox"]), select, textarea') ||
       target?.isContentEditable,
   );
 }
 
 function clearActiveKeyboardInputs() {
-  const buttons = new Set(activeKeyboardInputs.values());
   activeKeyboardInputs.clear();
-  buttons.forEach(updateButtonVisual);
+  updateAllButtonVisuals();
 }
 
-function isKeyboardButtonActive(button, exceptCode = "") {
-  return [...activeKeyboardInputs.entries()].some(([code, activeButton]) => {
-    return code !== exceptCode && activeButton === button;
+function isKeyboardButtonActive(button, controllerPort, exceptCode = "") {
+  return [...activeKeyboardInputs.entries()].some(([code, activeInput]) => {
+    return (
+      code !== exceptCode &&
+      activeInput.button === button &&
+      activeInput.controllerPort === controllerPort
+    );
   });
 }
 
-function isPointerButtonActive(button) {
-  return [...activeButtonInputs.values()].some((active) => active.button === button);
+function isPointerButtonActive(button, controllerPort) {
+  return [...activeButtonInputs.values()].some((active) => {
+    return active.button === button && active.controllerPort === controllerPort;
+  });
 }
 
-function updateButtonVisual(button) {
-  const element = buttonElements.get(button);
-  element?.classList.toggle("pressed", isPointerButtonActive(button) || isKeyboardButtonActive(button));
-  element?.classList.toggle("tas-pressed", state.tas.preview.buttons.has(button));
+function updateAllButtonVisuals() {
+  document.querySelectorAll('[data-device="controller"] [data-button]').forEach((buttonElement) => {
+    const button = buttonElement.dataset.button;
+    const controllerPort = controllerPortForElement(buttonElement);
+    const manuallyPressed =
+      isPointerButtonActive(button, controllerPort) ||
+      isKeyboardButtonActive(button, controllerPort);
+    const tasPressed =
+      state.tas.preview.active && state.tas.preview.buttonsByPort[controllerPort].has(button);
+    buttonElement.classList.toggle("pressed", manuallyPressed);
+    buttonElement.classList.toggle("tas-pressed", tasPressed);
+  });
 }
 
 function bindConnection() {
@@ -2391,6 +2537,7 @@ function bindInputSafety() {
 function init() {
   bindControllerButtons();
   bindControllerPortSelector();
+  bindControllerOrientation();
   bindKeyboardControls();
   bindConnection();
   bindPlayback();
