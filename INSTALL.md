@@ -212,7 +212,7 @@ npm run check
 You can also run the same check script directly:
 
 ```sh
-bash scripts/check.sh
+sh scripts/check.sh
 ```
 
 This runs:

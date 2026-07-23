@@ -16,7 +16,7 @@ This project has three pieces:
   response to console latch/clock polling. The firmware does not start Wi-Fi, run WebSocket, or serve
   the web UI.
 
-The repository intentionally keeps tooling light. The root `package.json` has one runtime
+The repository intentionally keeps tooling light. The root `package.json` has one optional runtime
 dependency, `serialport`, for native Windows COM-port support. Dev tooling is installed with
 `npm install` when linting or Playwright UI tests need local packages.
 
@@ -74,6 +74,9 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `apps/web/tests/tas.test.js`: Web helper tests.
 - `apps/web/tests/transport.test.js`: Web transport command-formatting tests.
 - `apps/web/tests/bridge-server.test.js`: Middleware, WebSocket, serial, upload, and trace tests.
+- `apps/web/tests/convert-bk2-to-tasdeck-mask.test.js`: BizHawk BK2 converter wrapper tests.
+- `apps/web/tests/convert-fm2-to-tasdeck-mask.test.js`: FCEUX FM2 converter wrapper tests, including
+  Windows Git Bash argument and path translation.
 - `apps/web/tests/expand-tdmask-from-hardware-trace.test.js`: Hardware-trace expansion tests.
 - `apps/web/tests/ui/*.spec.js`: Playwright UI regression tests.
 - `playwright.config.js`: Playwright web-server and browser test configuration.
@@ -91,6 +94,7 @@ target is `arduino:renesas_uno:unor4wifi`.
   shift behavior.
 - `firmware/uno_r4_wifi/tests/protocol_test.cpp`: Host-compiled firmware protocol tests.
 - `scripts/test.sh`: Web and firmware protocol tests.
+- `scripts/test-firmware.sh`: Host-compiled firmware protocol test runner.
 - `scripts/compile-firmware.sh`: Arduino compile command.
 - `scripts/upload-firmware.sh`: Arduino upload command with `--port` and `ARDUINO_PORT` support.
 - `scripts/check.sh`: Full local verification.

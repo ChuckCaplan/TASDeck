@@ -229,25 +229,38 @@ class SerialBridge {
       }
     });
     handle.onError((error) => {
-      if (!this.disconnecting && this.handle === handle) {
-        this.broadcastBridge(`Arduino serial read failed: ${error.message}`);
-      }
-    });
-    handle.onClose(() => {
       if (this.handle !== handle) {
         return;
       }
-
-      this.handle = null;
-      this.portPath = "";
-      this.readBuffer = "";
-      this.serialReady = false;
-      this.rejectSerialWaiters(new Error("Arduino USB serial disconnected"));
-      this.rejectTasWaiters(new Error("Arduino USB serial disconnected"));
-      this.clearHeldButtons();
-      this.broadcastBridge("Arduino USB serial disconnected");
-      this.broadcastStatus();
+      if (!this.disconnecting) {
+        this.broadcastBridge(`Arduino serial read failed: ${error.message}`);
+      }
+      if (this.handleSerialDisconnect(handle)) {
+        void this.closeSerialHandle(handle, {
+          timeoutMs: SERIAL_HANDLE_CLOSE_TIMEOUT_MS,
+        });
+      }
     });
+    handle.onClose(() => {
+      this.handleSerialDisconnect(handle);
+    });
+  }
+
+  handleSerialDisconnect(handle) {
+    if (this.handle !== handle) {
+      return false;
+    }
+
+    this.handle = null;
+    this.portPath = "";
+    this.readBuffer = "";
+    this.serialReady = false;
+    this.rejectSerialWaiters(new Error("Arduino USB serial disconnected"));
+    this.rejectTasWaiters(new Error("Arduino USB serial disconnected"));
+    this.clearHeldButtons();
+    this.broadcastBridge("Arduino USB serial disconnected");
+    this.broadcastStatus();
+    return true;
   }
 
   async closeSerialHandle(handle, options = {}) {
@@ -1940,7 +1953,7 @@ function encodeWebSocketFrame(payload, opcode = 0x1) {
 async function findSerialPort(explicitPort, options = {}) {
   const platform = options.platform || process.platform;
   if (explicitPort) {
-    await assertSerialPortExists(explicitPort, platform);
+    await assertSerialPortExists(explicitPort, platform, options.serialPortApi);
     return platform === "win32" ? normalizeWindowsSerialPortPath(explicitPort) : explicitPort;
   }
 
@@ -1958,9 +1971,28 @@ async function findSerialPort(explicitPort, options = {}) {
   return candidates[0];
 }
 
-async function assertSerialPortExists(portPath, platform = process.platform) {
+async function assertSerialPortExists(portPath, platform = process.platform, serialPortApi) {
   if (platform === "win32") {
-    normalizeWindowsSerialPortPath(portPath);
+    const normalizedPort = normalizeWindowsSerialPortPath(portPath);
+    let ports;
+    try {
+      const SerialPort = resolveSerialPortClass(serialPortApi);
+      ports = await SerialPort.list();
+    } catch {
+      // An explicit port may still be usable when Windows enumeration fails.
+      return;
+    }
+
+    const portExists = ports.some((port) => {
+      try {
+        return normalizeWindowsSerialPortPath(port.path) === normalizedPort;
+      } catch {
+        return false;
+      }
+    });
+    if (!portExists) {
+      throw new Error(`Serial port not found: ${normalizedPort}`);
+    }
     return;
   }
 
@@ -2059,7 +2091,13 @@ function resolveSerialPortClass(serialPortApi) {
   if (typeof serialPortApi === "function") {
     return serialPortApi;
   }
-  return require("serialport").SerialPort;
+  try {
+    return require("serialport").SerialPort;
+  } catch (error) {
+    throw new Error(
+      `Windows COM port support needs the serial backend. Run: npm install (${error.message})`,
+    );
+  }
 }
 
 class WindowsSerialHandle {

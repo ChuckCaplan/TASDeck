@@ -1,10 +1,13 @@
 const assert = require("node:assert/strict");
 const { Buffer } = require("node:buffer");
+const { execFile } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const process = require("node:process");
 const test = require("node:test");
+const { promisify } = require("node:util");
 
 const {
   SerialBridge,
@@ -23,6 +26,8 @@ const {
   tasTraceStreamEnabled,
 } = require("../../../scripts/bridge-server.js");
 const { tasRunChecksum } = require("../src/tas.js");
+
+const execFileAsync = promisify(execFile);
 
 class FakeWindowsSerialPort extends EventEmitter {
   static instances = [];
@@ -69,6 +74,12 @@ class FakeWindowsSerialPort extends EventEmitter {
     this.isOpen = false;
     this.emit("close");
     callback();
+  }
+}
+
+class FailingListWindowsSerialPort extends FakeWindowsSerialPort {
+  static list() {
+    return Promise.reject(new Error("Windows port enumeration failed"));
   }
 }
 
@@ -133,8 +144,52 @@ test("normalizes and prioritizes Windows Arduino COM ports", async () => {
   );
 });
 
+test("explains how to install a missing Windows serial backend", async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-missing-serialport-"));
+  try {
+    const isolatedBridgePath = path.join(tempDir, "scripts", "bridge-server.js");
+    const isolatedTasPath = path.join(tempDir, "apps", "web", "src", "tas.js");
+    const isolatedTransportPath = path.join(tempDir, "apps", "web", "src", "transport.js");
+    await fsp.mkdir(path.dirname(isolatedBridgePath), { recursive: true });
+    await fsp.mkdir(path.dirname(isolatedTasPath), { recursive: true });
+    await fsp.copyFile(path.resolve("scripts/bridge-server.js"), isolatedBridgePath);
+    await fsp.copyFile(path.resolve("apps/web/src/tas.js"), isolatedTasPath);
+    await fsp.copyFile(path.resolve("apps/web/src/transport.js"), isolatedTransportPath);
+
+    await assert.rejects(
+      execFileAsync(
+        process.execPath,
+        [
+          "-e",
+          `require(process.argv[1])
+            .findSerialPort("", { platform: "win32" })
+            .catch((error) => {
+              process.stderr.write(error.message);
+              process.exitCode = 1;
+            });`,
+          isolatedBridgePath,
+        ],
+        {
+          cwd: tempDir,
+          env: { ...process.env, NODE_PATH: "" },
+        },
+      ),
+      (error) => {
+        assert.match(error.stderr, /Windows COM port support needs the serial backend/);
+        assert.match(error.stderr, /npm install/);
+        return true;
+      },
+    );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("connects, exchanges status, drains, and closes through the Windows COM backend", async () => {
   FakeWindowsSerialPort.instances = [];
+  FakeWindowsSerialPort.ports = [
+    { path: "COM12", manufacturer: "Arduino LLC", vendorId: "2341" },
+  ];
   const bridge = new SerialBridge({
     platform: "win32",
     serialPort: "com12",
@@ -167,8 +222,40 @@ test("connects, exchanges status, drains, and closes through the Windows COM bac
   assert.equal(bridge.isConnected(), false);
 });
 
+test("rejects an explicit Windows COM port that is not present", async () => {
+  FakeWindowsSerialPort.instances = [];
+  FakeWindowsSerialPort.ports = [
+    { path: "COM8", manufacturer: "Arduino LLC", vendorId: "2341" },
+  ];
+  const bridge = new SerialBridge({
+    platform: "win32",
+    serialPort: "COM9",
+    serialPortApi: { SerialPort: FakeWindowsSerialPort },
+  });
+
+  await assert.rejects(bridge.connect(), /Serial port not found: COM9/);
+  assert.equal(FakeWindowsSerialPort.instances.length, 0);
+});
+
+test("tries an explicit Windows COM port when enumeration fails", async () => {
+  FakeWindowsSerialPort.instances = [];
+  const bridge = new SerialBridge({
+    platform: "win32",
+    serialPort: "COM10",
+    serialPortApi: { SerialPort: FailingListWindowsSerialPort },
+  });
+
+  await bridge.connect();
+  assert.equal(bridge.isConnected(), true);
+  assert.equal(bridge.portPath, "COM10");
+  await bridge.disconnect({ release: false });
+});
+
 test("clears Windows bridge state when a COM device disconnects", async () => {
   FakeWindowsSerialPort.instances = [];
+  FakeWindowsSerialPort.ports = [
+    { path: "COM8", manufacturer: "Arduino LLC", vendorId: "2341" },
+  ];
   const bridge = new SerialBridge({
     platform: "win32",
     serialPort: "COM8",
@@ -183,6 +270,29 @@ test("clears Windows bridge state when a COM device disconnects", async () => {
   assert.equal(bridge.handle, null);
   assert.equal(bridge.portPath, "");
   assert.equal(bridge.serialReady, false);
+});
+
+test("clears and closes Windows bridge state when a COM device errors", async () => {
+  FakeWindowsSerialPort.instances = [];
+  FakeWindowsSerialPort.ports = [
+    { path: "COM9", manufacturer: "Arduino LLC", vendorId: "2341" },
+  ];
+  const bridge = new SerialBridge({
+    platform: "win32",
+    serialPort: "COM9",
+    serialPortApi: { SerialPort: FakeWindowsSerialPort },
+  });
+
+  await bridge.connect();
+  const port = FakeWindowsSerialPort.instances[0];
+  port.emit("error", new Error("device read failed"));
+  await Promise.resolve();
+
+  assert.equal(bridge.isConnected(), false);
+  assert.equal(bridge.handle, null);
+  assert.equal(bridge.portPath, "");
+  assert.equal(bridge.serialReady, false);
+  assert.equal(port.closeCalls, 1);
 });
 
 test("uses the native browser launcher on each desktop platform", () => {
