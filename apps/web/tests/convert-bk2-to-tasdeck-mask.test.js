@@ -16,6 +16,10 @@ const td2pHeader = Buffer.from([
   0x00, 0x00, 0x00, 0x01,
 ]);
 
+function execBash(script, args = [], options = {}) {
+  return execFileAsync("bash", [script, ...args], options);
+}
+
 function storedZip(entries) {
   const localParts = [];
   const centralParts = [];
@@ -103,7 +107,7 @@ printf 'complete frames=1 movie_frames=1 lag_frames=0 reset_frames=0 power_frame
       { mode: 0o755 },
     );
 
-    const { stdout } = await execFileAsync(scriptPath, [moviePath, romPath, outputPath], {
+    const { stdout } = await execBash(scriptPath, [moviePath, romPath, outputPath], {
       env: { ...process.env, BIZHAWK_BIN: "", PATH: `${tempDir}${path.delimiter}${process.env.PATH}` },
     });
 
@@ -141,7 +145,7 @@ test("rejects an Arkanoid controller before starting EmuHawk", async () => {
     await writeFile(emuHawkPath, `#!/usr/bin/env bash\ntouch "${markerPath}"\n`, { mode: 0o755 });
 
     await assert.rejects(
-      execFileAsync(scriptPath, [moviePath, romPath, outputPath], {
+      execBash(scriptPath, [moviePath, romPath, outputPath], {
         env: { ...process.env, BIZHAWK_BIN: emuHawkPath },
       }),
       (error) => {
@@ -159,6 +163,6 @@ test("rejects an Arkanoid controller before starting EmuHawk", async () => {
 });
 
 test("documents the BizHawk override in help output", async () => {
-  const { stderr } = await execFileAsync(scriptPath, ["--help"]);
+  const { stderr } = await execBash(scriptPath, ["--help"]);
   assert.match(stderr, /BIZHAWK_BIN=\/path\/to\/EmuHawk\.exe/);
 });

@@ -18,6 +18,10 @@ const fm2ConverterPath = path.resolve("scripts/convert-fm2-to-tasdeck-mask.sh");
 const validatorPath = path.resolve("scripts/validate-tasdeck-movie-inputs.js");
 const bk2ToFm2ConverterPath = path.resolve("scripts/convert-bk2-to-fm2.js");
 
+function execBash(script, args = [], options = {}) {
+  return execFileAsync("bash", [script, ...args], options);
+}
+
 const standardFm2 = `version 3
 fourscore 0
 microphone 0
@@ -118,7 +122,7 @@ test("FM2 converter rejects a Zapper before starting FCEUX", async () => {
     await writeFile(fceuxPath, `#!/usr/bin/env bash\ntouch "${markerPath}"\n`, { mode: 0o755 });
 
     await assert.rejects(
-      execFileAsync(fm2ConverterPath, [moviePath, romPath, outputPath], {
+      execBash(fm2ConverterPath, [moviePath, romPath, outputPath], {
         env: { ...process.env, FCEUX_BIN: fceuxPath },
       }),
       (error) => {
