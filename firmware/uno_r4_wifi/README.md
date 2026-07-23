@@ -153,6 +153,16 @@ Find the upload port with `arduino-cli board list`. You can also set it with:
 ARDUINO_PORT=/dev/cu.usbmodemXXXX npm run upload:firmware
 ```
 
+On Windows from Git Bash, use the reported COM port:
+
+```sh
+ARDUINO_PORT=COM3 npm run upload:firmware
+```
+
+Firmware upload requires an explicit port because it is handled by Arduino CLI. This is separate
+from running TASDeck: `npm start` automatically looks up the Arduino at connection time on macOS,
+Linux, and Windows, including smart COM-port ranking on Windows.
+
 ## Forced-A Timing Diagnostic
 
 Upload the diagnostic firmware:

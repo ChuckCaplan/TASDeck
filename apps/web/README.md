@@ -15,6 +15,10 @@ npm start
 Your default browser opens at `http://localhost:8000`. The middleware also prints LAN URLs that can
 be opened from an iPhone on the same Wi-Fi network.
 
+When you press `Connect`, the middleware automatically looks up the Arduino serial device on macOS,
+Linux, and Windows. Windows COM ports are ranked using their Arduino and USB metadata, so a COM-port
+environment variable is not normally needed.
+
 For long runs on macOS, `caffeinate -d npm start` prevents idle sleep from interrupting the
 middleware. This is not an npm script because `caffeinate` is macOS-specific; see the root README
 and hardware TAS workflow for continuous trace-stream usage.
@@ -31,10 +35,17 @@ To serve without opening a browser:
 npm run serve:web
 ```
 
-To force a specific Arduino serial device:
+If multiple serial devices are attached or automatic lookup chooses the wrong one, force a specific
+device on macOS or Linux:
 
 ```sh
 SERIAL_PORT=/dev/cu.usbmodemXXXX npm start
+```
+
+On Windows, use the COM port reported by `arduino-cli board list` as the override:
+
+```sh
+SERIAL_PORT=COM3 npm start
 ```
 
 ## Hardware Bridge

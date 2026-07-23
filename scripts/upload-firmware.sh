@@ -4,11 +4,17 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
+if [ "${1:-}" = "--diagnostic" ]; then
+  TASDECK_DIAGNOSTIC_FORCE_A=1
+  TASDECK_ISR_DEBUG_PIN=9
+  shift
+fi
+
 PORT="${ARDUINO_PORT:-}"
 
 if [ "${1:-}" = "--port" ]; then
   if [ $# -lt 2 ]; then
-    echo "Usage: npm run upload:firmware -- --port /dev/cu.usbmodemXXXX" >&2
+    echo "Usage: npm run upload:firmware -- --port <serial-port>" >&2
     exit 2
   fi
   PORT="$2"
@@ -19,8 +25,8 @@ fi
 if [ -z "$PORT" ]; then
   echo "Missing Arduino port." >&2
   echo "Find it with: arduino-cli board list" >&2
-  echo "Then run: npm run upload:firmware -- --port /dev/cu.usbmodemXXXX" >&2
-  echo "Or set: ARDUINO_PORT=/dev/cu.usbmodemXXXX npm run upload:firmware" >&2
+  echo "Then run: npm run upload:firmware -- --port <serial-port>" >&2
+  echo "Or set ARDUINO_PORT to the serial port before running npm run upload:firmware." >&2
   exit 2
 fi
 

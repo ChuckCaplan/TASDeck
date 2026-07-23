@@ -8,7 +8,8 @@ Usage:
   scripts/convert-fm2-to-tasdeck-mask.sh <rom.nes> <movie.fm2> [output.tdmask]
 
 Environment:
-  FCEUX_BIN=/path/to/fceux   Override the fceux executable.
+  FCEUX_BIN=/path/to/fceux   Override the FCEUX executable. On Windows,
+                              use a Git Bash path such as /c/FCEUX/fceux64.exe.
 
 Output:
   Defaults to the current working directory, with the FM2 base name and a
@@ -83,10 +84,16 @@ if [[ -n "${FCEUX_BIN:-}" ]]; then
   fceux_bin=$FCEUX_BIN
 elif command -v fceux >/dev/null 2>&1; then
   fceux_bin=$(command -v fceux)
+elif command -v fceux.exe >/dev/null 2>&1; then
+  fceux_bin=$(command -v fceux.exe)
+elif command -v fceux64.exe >/dev/null 2>&1; then
+  fceux_bin=$(command -v fceux64.exe)
+elif command -v fceux32.exe >/dev/null 2>&1; then
+  fceux_bin=$(command -v fceux32.exe)
 elif [[ -x /opt/homebrew/bin/fceux ]]; then
   fceux_bin=/opt/homebrew/bin/fceux
 else
-  echo "Could not find fceux. Set FCEUX_BIN=/path/to/fceux." >&2
+  echo "Could not find FCEUX. Put fceux, fceux.exe, or fceux64.exe on PATH, or set FCEUX_BIN." >&2
   exit 1
 fi
 
@@ -102,6 +109,32 @@ rm -f -- "$output_path"
 rm -f -- "$trace_output_path"
 rm -f -- "$completion_path"
 
+windows_git_bash=false
+case "${OSTYPE:-}:${MSYSTEM:-}" in
+  cygwin*:*|msys*:*|mingw*:*|*:MINGW*|*:MSYS*|*:UCRT*|*:CLANG*)
+    windows_git_bash=true
+    ;;
+esac
+
+# Native Windows programs cannot use Git Bash paths stored in custom
+# environment variables. Translate every path that FCEUX or its Lua script
+# receives. Command-line options also differ between the native Win32 and
+# Qt/SDL frontends.
+native_path() {
+  if $windows_git_bash; then
+    cygpath -aw -- "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+native_fm2_path=$(native_path "$fm2_path")
+native_rom_path=$(native_path "$rom_path")
+native_output_path=$(native_path "$output_path")
+native_trace_output_path=$(native_path "$trace_output_path")
+native_completion_path=$(native_path "$completion_path")
+native_lua_path=$(native_path "$lua_path")
+
 echo "FM2:    $fm2_path"
 echo "ROM:    $rom_path"
 echo "Output: $output_path"
@@ -109,15 +142,26 @@ echo "Trace:  $trace_output_path"
 echo "FCEUX:  $fceux_bin"
 
 fceux_status=0
-TASDECK_MASK_OUTPUT="$output_path" \
-TASDECK_MASK_TRACE_OUTPUT="$trace_output_path" \
-TASDECK_MASK_COMPLETION_OUTPUT="$completion_path" \
-  "$fceux_bin" \
-    --no-config 1 \
-    --sound 0 \
-    --playmov "$fm2_path" \
-    --loadlua "$lua_path" \
-    "$rom_path" || fceux_status=$?
+if $windows_git_bash; then
+  TASDECK_MASK_OUTPUT="$native_output_path" \
+  TASDECK_MASK_TRACE_OUTPUT="$native_trace_output_path" \
+  TASDECK_MASK_COMPLETION_OUTPUT="$native_completion_path" \
+    "$fceux_bin" \
+      -readonly 1 \
+      -playmovie "$native_fm2_path" \
+      -lua "$native_lua_path" \
+      "$native_rom_path" || fceux_status=$?
+else
+  TASDECK_MASK_OUTPUT="$native_output_path" \
+  TASDECK_MASK_TRACE_OUTPUT="$native_trace_output_path" \
+  TASDECK_MASK_COMPLETION_OUTPUT="$native_completion_path" \
+    "$fceux_bin" \
+      --no-config 1 \
+      --sound 0 \
+      --playmov "$native_fm2_path" \
+      --loadlua "$native_lua_path" \
+      "$native_rom_path" || fceux_status=$?
+fi
 
 if [[ ! -s "$completion_path" ]]; then
   echo "FCEUX did not report a completed TASDeck export (exit $fceux_status)." >&2

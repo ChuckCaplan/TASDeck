@@ -80,6 +80,19 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
   "movie.tdmask"
 ```
 
+On Windows, download the native [FCEUX Win64 build](https://fceux.com/web/download.html), put
+`fceux64.exe` on `PATH`, and run that same command from Git Bash. The wrapper uses the native
+Windows FCEUX command-line options and translates its Git Bash input, output, trace, completion, and
+Lua-script paths automatically. Override the executable with a Git Bash path when needed:
+
+```sh
+FCEUX_BIN=/c/FCEUX/fceux64.exe \
+  scripts/convert-fm2-to-tasdeck-mask.sh \
+  "movie.fm2" \
+  "game.nes" \
+  "movie.tdmask"
+```
+
 On Windows, use the BizHawk converter for an NES `.bk2` movie. Put `EmuHawk.exe` on `PATH` and run it
 from Git Bash:
 

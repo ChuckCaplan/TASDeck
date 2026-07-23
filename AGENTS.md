@@ -7,17 +7,18 @@ This project has three pieces:
 - `apps/web`: A dependency-free browser control deck for manual NES input, versioned `TD2P`
   `.tdmask` and raw `.r08` validation/upload/control, event-log copy/trace controls, and a WebSocket transport
   through middleware.
-- `scripts/bridge-server.js`: Dependency-free Node middleware that serves the web app, accepts
-  browser WebSocket events, owns the USB serial port, sends firmware protocol commands, and streams
-  bridge-owned hardware TAS chunks.
+- `scripts/bridge-server.js`: Node middleware that serves the web app, accepts browser WebSocket
+  events, owns the USB serial port, sends firmware protocol commands, and streams bridge-owned
+  hardware TAS chunks. It uses native file handles plus `stty` on macOS/Linux and the `serialport`
+  package for Windows COM ports.
 - `firmware/uno_r4_wifi`: Arduino UNO R4 WiFi firmware for the hardware bridge side. It accepts a
   tested USB serial command protocol, stores controller state, and drives NES controller data in
   response to console latch/clock polling. The firmware does not start Wi-Fi, run WebSocket, or serve
   the web UI.
 
-The repository intentionally keeps tooling light. There is a root `package.json`, but there are no
-runtime npm dependencies. Dev tooling is installed with `npm install` when linting or Playwright UI
-tests need local packages.
+The repository intentionally keeps tooling light. The root `package.json` has one runtime
+dependency, `serialport`, for native Windows COM-port support. Dev tooling is installed with
+`npm install` when linting or Playwright UI tests need local packages.
 
 ## How To Run
 

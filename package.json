@@ -4,24 +4,30 @@
   "private": true,
   "license": "MIT",
   "description": "Browser TAS control deck, USB serial middleware, and Arduino UNO R4 serial firmware for NES input experiments.",
+  "engines": {
+    "node": "^20.19.0 || ^22.13.0 || >=24"
+  },
   "scripts": {
     "start": "node scripts/bridge-server.js",
     "start:web": "node scripts/bridge-server.js",
     "serve:web": "node scripts/bridge-server.js --no-open",
     "lint": "npm run lint:web",
     "lint:web": "eslint apps/web/src apps/web/tests scripts/*.js eslint.config.js",
-    "test": "scripts/test.sh",
+    "test": "bash scripts/test.sh",
     "test:web": "node --test apps/web/tests/*.test.js",
     "test:ui": "playwright test",
-    "test:firmware": "c++ -std=c++17 -Wall -Wextra -Werror -Ifirmware/uno_r4_wifi/src firmware/uno_r4_wifi/src/NesControllerState.cpp firmware/uno_r4_wifi/src/NesDeckProtocol.cpp firmware/uno_r4_wifi/src/NesTasPlayback.cpp firmware/uno_r4_wifi/tests/protocol_test.cpp -o /tmp/tasdeck_protocol_test && /tmp/tasdeck_protocol_test",
-    "compile:firmware": "scripts/compile-firmware.sh",
-    "compile:firmware:diagnostic": "TASDECK_DIAGNOSTIC_FORCE_A=1 TASDECK_ISR_DEBUG_PIN=9 scripts/compile-firmware.sh",
-    "upload:firmware": "scripts/upload-firmware.sh",
-    "upload:firmware:diagnostic": "TASDECK_DIAGNOSTIC_FORCE_A=1 TASDECK_ISR_DEBUG_PIN=9 scripts/upload-firmware.sh",
-    "check": "scripts/check.sh"
+    "test:firmware": "bash scripts/test-firmware.sh",
+    "compile:firmware": "bash scripts/compile-firmware.sh",
+    "compile:firmware:diagnostic": "bash scripts/compile-firmware.sh --diagnostic",
+    "upload:firmware": "bash scripts/upload-firmware.sh",
+    "upload:firmware:diagnostic": "bash scripts/upload-firmware.sh --diagnostic",
+    "check": "bash scripts/check.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "eslint": "^10.7.0"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0"
   }
 }

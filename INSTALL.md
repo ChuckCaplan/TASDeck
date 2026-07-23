@@ -67,8 +67,10 @@ Signal direction:
 
 ## Software Prerequisites
 
-These commands assume macOS with Homebrew. Equivalent tools can be installed another way on Linux or
-Windows, but the project scripts are documented for a shell environment.
+TASDeck's converter and verification scripts require a POSIX-compatible shell. macOS and Linux
+provide one by default. On Windows, use Git Bash as described below.
+
+### macOS
 
 Install Apple's command line tools first so `git` and `c++` are available:
 
@@ -103,6 +105,77 @@ arduino-cli version
 fceux --help
 ```
 
+### Windows (Git Bash)
+
+Use Git Bash for repository commands because the verification, firmware, and movie-conversion
+scripts execute `.sh` files. After setup, `npm start` can also be launched from PowerShell or
+Command Prompt.
+
+Install these prerequisites:
+
+- [Node.js](https://nodejs.org/en/download).
+- [Git for Windows](https://git-scm.com/install/windows), including Git Bash.
+- [MSYS2](https://www.msys2.org/), which supplies the GNU `c++` compiler used by the host firmware
+  tests.
+- [Arduino CLI for Windows](https://arduino.github.io/arduino-cli/latest/installation/), with the
+  directory containing `arduino-cli.exe` added to the Windows user `Path`.
+- The native [FCEUX Win64 build](https://fceux.com/web/download.html) if you will convert `.fm2`
+  movies. Extract it and add the directory containing `fceux64.exe` to the Windows user `Path`.
+- [BizHawk for Windows](https://github.com/TASEmulators/BizHawk/releases/latest) if you will convert
+  `.bk2` movies. Download the Windows x64 archive, extract it, and add the directory containing
+  `EmuHawk.exe` to the Windows user `Path`.
+
+Open the **MSYS2 UCRT64** terminal and install the C++ compiler:
+
+```sh
+pacman -Syu
+pacman -S --needed mingw-w64-ucrt-x86_64-gcc
+```
+
+If the first update tells you to close the terminal, reopen the MSYS2 UCRT64 terminal and run both
+commands again. Add `C:\msys64\ucrt64\bin` to the Windows user `Path`, then close and reopen Git
+Bash so `c++` is available there.
+
+Download the Windows Arduino CLI executable from the Arduino CLI installation page, put it in a
+permanent directory, and add that directory to the Windows user `Path`.
+
+From a newly opened Git Bash window, confirm every tool is available:
+
+```sh
+git --version
+node --version
+npm --version
+bash --version
+c++ --version
+arduino-cli version
+```
+
+If you installed FCEUX for FM2 conversion, confirm Git Bash can find the native executable:
+
+```sh
+command -v fceux64.exe
+```
+
+If you installed BizHawk for BK2 conversion, confirm Git Bash can find its executable:
+
+```sh
+command -v EmuHawk.exe
+```
+
+Install the Arduino core for the UNO R4 WiFi:
+
+```sh
+arduino-cli core update-index
+arduino-cli core install arduino:renesas_uno
+```
+
+Continue with the clone and dependency-installation sections below, running their commands from Git
+Bash. The repository enforces LF line endings for `.sh` files so a normal Windows checkout remains
+executable by Bash.
+
+`npm install` installs the cross-platform serial backend used for native Windows COM ports; macOS
+and Linux continue to use their POSIX serial-device backend.
+
 ## Clone TASDeck
 
 Clone the repository and enter it:
@@ -114,9 +187,9 @@ cd TASDeck
 
 Replace `<repo-url>` with the TASDeck repository URL.
 
-## Install Project Tooling
+## Install Project Dependencies
 
-Install the npm development dependencies:
+Install the npm dependencies:
 
 ```sh
 npm install
@@ -125,7 +198,7 @@ npm install
 Install Playwright's browser binaries for the UI tests:
 
 ```sh
-npx playwright install
+npx playwright install chromium
 ```
 
 ## Run Verification
@@ -139,7 +212,7 @@ npm run check
 You can also run the same check script directly:
 
 ```sh
-./scripts/check.sh
+bash scripts/check.sh
 ```
 
 This runs:
@@ -164,6 +237,12 @@ On macOS the port usually looks like `/dev/cu.usbmodemXXXX`. Upload the firmware
 
 ```sh
 npm run upload:firmware -- --port /dev/cu.usbmodemXXXX
+```
+
+On Windows, run the upload from Git Bash and use the COM port reported by Arduino CLI:
+
+```sh
+npm run upload:firmware -- --port COM3
 ```
 
 You can also set the port with an environment variable:
@@ -197,6 +276,18 @@ current working directory using the FM2 base name. The converter also writes
 `<output>.trace.csv` next to the `.tdmask`; use that CSV if troubleshooting is needed to compare
 firmware poll traces against the emulator-exported mask stream.
 
+On Windows, run the same command from Git Bash with the native FCEUX Win64 build. The converter finds
+`fceux64.exe` on `PATH` and translates all Git Bash paths before starting FCEUX. To select an
+executable elsewhere, use a Git Bash path:
+
+```sh
+FCEUX_BIN=/c/FCEUX/fceux64.exe \
+  scripts/convert-fm2-to-tasdeck-mask.sh \
+  "movie.fm2" \
+  "game.nes" \
+  "movie.tdmask"
+```
+
 For an NES BizHawk `.bk2` movie on Windows, put `EmuHawk.exe` on `PATH` and run the converter from
 Git Bash:
 
@@ -222,10 +313,30 @@ Start the middleware and web app:
 npm start
 ```
 
-The middleware auto-detects common Arduino serial devices. To force a specific port:
+No serial-port setting is normally required. When you press `Connect`, the middleware scans for the
+Arduino on macOS, Linux, and Windows. On Windows it enumerates COM ports and prioritizes devices
+identified as an Arduino or UNO R4 by their Windows USB metadata, followed by other USB serial
+devices. It scans again on a later connection attempt, so reconnecting still works if Windows
+assigns the board a different COM number.
+
+If multiple serial devices are attached or automatic lookup selects the wrong one, override it on
+macOS or Linux with:
 
 ```sh
 SERIAL_PORT=/dev/cu.usbmodemXXXX npm start
+```
+
+On Windows, find the desired override with `arduino-cli board list`, then set it from Git Bash:
+
+```sh
+SERIAL_PORT=COM3 npm start
+```
+
+From PowerShell, the equivalent is:
+
+```powershell
+$env:SERIAL_PORT = "COM3"
+npm start
 ```
 
 Open `http://localhost:8000` on the computer. The server also prints LAN URLs that can be opened from
@@ -298,6 +409,18 @@ can watch which buttons are being sent to the console as it plays.
 
 - If firmware upload fails, re-check the port from `arduino-cli board list` and close Serial Monitor.
 - If tests fail because Playwright cannot find a browser, run `npx playwright install`.
+- On Windows, if `bash`, `c++`, or `arduino-cli` is not found, confirm Git Bash,
+  `C:\msys64\ucrt64\bin`, and the Arduino CLI directory are on `Path`, then reopen Git Bash.
+- On Windows, if FM2 conversion cannot start FCEUX or never writes its completion marker, close any
+  running FCEUX instance and confirm `command -v fceux64.exe` finds the native Win64 build. Use
+  `FCEUX_BIN=/c/path/to/fceux64.exe` when it is not on `Path`.
+- On Windows, if automatic Arduino lookup cannot connect, close Arduino Serial Monitor and any
+  other program using the COM port, then press `Connect` again. If multiple serial devices are
+  attached, confirm the Arduino port with `arduino-cli board list` and override automatic lookup
+  with `SERIAL_PORT=COM3 npm start` using the reported port.
+- On Windows, if a shell script reports `sh\r` or `$'\r'`, update the checkout to a revision that
+  includes `.gitattributes` and check out the affected `.sh` files again so Git writes them with LF
+  endings.
 - If the NES sees stuck buttons, disconnect and reconnect after confirming each button release logs
   an `up` event.
 - If no port 1 controller input is detected, re-check `GND`, `D2`, `D3`, and `D6` with the wiring

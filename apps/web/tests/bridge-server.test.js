@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const { Buffer } = require("node:buffer");
+const { EventEmitter } = require("node:events");
 const fsp = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -7,11 +8,14 @@ const test = require("node:test");
 
 const {
   SerialBridge,
+  browserOpenCommand,
   decodeWebSocketFrame,
   fileTimestamp,
   formatTasTraceRowsForFile,
   handleWebSocketBuffer,
   isCandidateSerialDevice,
+  listCandidateSerialPorts,
+  normalizeWindowsSerialPortPath,
   parseArgs,
   parseTasSerialLine,
   parseTasTraceRows,
@@ -19,6 +23,54 @@ const {
   tasTraceStreamEnabled,
 } = require("../../../scripts/bridge-server.js");
 const { tasRunChecksum } = require("../src/tas.js");
+
+class FakeWindowsSerialPort extends EventEmitter {
+  static instances = [];
+
+  static ports = [];
+
+  static list() {
+    return Promise.resolve(this.ports);
+  }
+
+  constructor(options) {
+    super();
+    this.options = options;
+    this.isOpen = false;
+    this.writes = [];
+    this.drainCalls = 0;
+    this.closeCalls = 0;
+    FakeWindowsSerialPort.instances.push(this);
+  }
+
+  open(callback) {
+    this.isOpen = true;
+    callback();
+  }
+
+  write(data, callback) {
+    const bytes = Buffer.from(data);
+    this.writes.push(bytes);
+    callback();
+    if (bytes.toString("utf8") === "STATUS\n") {
+      Promise.resolve().then(() => {
+        this.emit("data", Buffer.from("OK status fw=test-win32\n"));
+      });
+    }
+  }
+
+  drain(callback) {
+    this.drainCalls += 1;
+    callback();
+  }
+
+  close(callback) {
+    this.closeCalls += 1;
+    this.isOpen = false;
+    this.emit("close");
+    callback();
+  }
+}
 
 function encodeMaskedWebSocketFrame(payload, options = {}) {
   const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
@@ -57,6 +109,95 @@ test("detects likely Arduino USB serial devices", () => {
   assert.equal(isCandidateSerialDevice("ttyUSB1"), true);
   assert.equal(isCandidateSerialDevice("cu.Bluetooth-Incoming-Port"), false);
   assert.equal(isCandidateSerialDevice("disk4"), false);
+  assert.equal(isCandidateSerialDevice("COM12", "win32"), true);
+  assert.equal(isCandidateSerialDevice("\\\\.\\COM4", "win32"), true);
+  assert.equal(isCandidateSerialDevice("LPT1", "win32"), false);
+});
+
+test("normalizes and prioritizes Windows Arduino COM ports", async () => {
+  FakeWindowsSerialPort.ports = [
+    { path: "COM7", friendlyName: "Standard Serial over Bluetooth link" },
+    { path: "COM11", manufacturer: "Arduino LLC", vendorId: "2341" },
+    { path: "LPT1", manufacturer: "Printer" },
+  ];
+
+  assert.equal(normalizeWindowsSerialPortPath("com12"), "COM12");
+  assert.equal(normalizeWindowsSerialPortPath("\\\\.\\COM14"), "COM14");
+  assert.throws(() => normalizeWindowsSerialPortPath("/dev/ttyACM0"), /must look like COM3/);
+  assert.deepEqual(
+    await listCandidateSerialPorts({
+      platform: "win32",
+      serialPortApi: { SerialPort: FakeWindowsSerialPort },
+    }),
+    ["COM11", "COM7"],
+  );
+});
+
+test("connects, exchanges status, drains, and closes through the Windows COM backend", async () => {
+  FakeWindowsSerialPort.instances = [];
+  const bridge = new SerialBridge({
+    platform: "win32",
+    serialPort: "com12",
+    serialPortApi: { SerialPort: FakeWindowsSerialPort },
+  });
+
+  await bridge.connect();
+
+  const port = FakeWindowsSerialPort.instances[0];
+  assert.equal(bridge.isConnected(), true);
+  assert.equal(bridge.portPath, "COM12");
+  assert.deepEqual(port.options, {
+    path: "COM12",
+    baudRate: 115200,
+    dataBits: 8,
+    stopBits: 1,
+    parity: "none",
+    rtscts: false,
+    xon: false,
+    xoff: false,
+    xany: false,
+    autoOpen: false,
+  });
+  assert.deepEqual(port.writes.map((bytes) => bytes.toString("utf8")), ["STATUS\n", "STATUS\n"]);
+
+  await bridge.disconnect({ release: false });
+
+  assert.equal(port.drainCalls, 1);
+  assert.equal(port.closeCalls, 1);
+  assert.equal(bridge.isConnected(), false);
+});
+
+test("clears Windows bridge state when a COM device disconnects", async () => {
+  FakeWindowsSerialPort.instances = [];
+  const bridge = new SerialBridge({
+    platform: "win32",
+    serialPort: "COM8",
+    serialPortApi: { SerialPort: FakeWindowsSerialPort },
+  });
+
+  await bridge.connect();
+  const port = FakeWindowsSerialPort.instances[0];
+  port.isOpen = false;
+  port.emit("close", new Error("device disconnected"));
+
+  assert.equal(bridge.handle, null);
+  assert.equal(bridge.portPath, "");
+  assert.equal(bridge.serialReady, false);
+});
+
+test("uses the native browser launcher on each desktop platform", () => {
+  assert.deepEqual(browserOpenCommand("http://localhost:8000", "darwin"), {
+    command: "open",
+    args: ["http://localhost:8000"],
+  });
+  assert.deepEqual(browserOpenCommand("http://localhost:8000", "win32"), {
+    command: "explorer.exe",
+    args: ["http://localhost:8000"],
+  });
+  assert.deepEqual(browserOpenCommand("http://localhost:8000", "linux"), {
+    command: "xdg-open",
+    args: ["http://localhost:8000"],
+  });
 });
 
 test("parses bridge server command line options", () => {

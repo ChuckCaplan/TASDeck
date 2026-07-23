@@ -92,6 +92,8 @@ const CONTENT_TYPES = {
 class SerialBridge {
   constructor(options = {}) {
     this.requestedPort = options.serialPort || "";
+    this.platform = options.platform || process.platform;
+    this.serialPortApi = options.serialPortApi || null;
     this.logDir = options.logDir || EVENT_LOG_DIR;
     this.clients = new Set();
     this.buttonHolders = new Map(controllerButtonKeys().map((key) => [key, new Set()]));
@@ -170,8 +172,13 @@ class SerialBridge {
   async connectSerial() {
     let handle;
     try {
-      const portPath = await findSerialPort(this.requestedPort);
-      await configureSerialPort(portPath);
+      const portPath = await findSerialPort(this.requestedPort, {
+        platform: this.platform,
+        serialPortApi: this.serialPortApi,
+      });
+      if (this.platform !== "win32") {
+        await configureSerialPort(portPath, this.platform);
+      }
 
       const flags = fs.constants.O_RDWR | (fs.constants.O_NOCTTY || 0);
       handle = await this.openSerialHandle(portPath, flags);
@@ -194,15 +201,53 @@ class SerialBridge {
   }
 
   async openSerialHandle(portPath, flags) {
-    const handle = await fsp.open(portPath, flags);
-    await configureSerialPort(portPath);
+    let handle;
+    if (this.platform === "win32") {
+      handle = await openWindowsSerialHandle(portPath, this.serialPortApi);
+    } else {
+      handle = await fsp.open(portPath, flags);
+      await configureSerialPort(portPath, this.platform);
+    }
+
     this.handle = handle;
     this.portPath = portPath;
     this.readBuffer = "";
     this.serialReady = false;
     this.disconnecting = false;
-    this.startReadLoop(handle);
+    if (this.platform === "win32") {
+      this.startWindowsSerialEvents(handle);
+    } else {
+      this.startReadLoop(handle);
+    }
     return handle;
+  }
+
+  startWindowsSerialEvents(handle) {
+    handle.onData((bytes) => {
+      if (this.handle === handle) {
+        this.handleSerialBytes(bytes);
+      }
+    });
+    handle.onError((error) => {
+      if (!this.disconnecting && this.handle === handle) {
+        this.broadcastBridge(`Arduino serial read failed: ${error.message}`);
+      }
+    });
+    handle.onClose(() => {
+      if (this.handle !== handle) {
+        return;
+      }
+
+      this.handle = null;
+      this.portPath = "";
+      this.readBuffer = "";
+      this.serialReady = false;
+      this.rejectSerialWaiters(new Error("Arduino USB serial disconnected"));
+      this.rejectTasWaiters(new Error("Arduino USB serial disconnected"));
+      this.clearHeldButtons();
+      this.broadcastBridge("Arduino USB serial disconnected");
+      this.broadcastStatus();
+    });
   }
 
   async closeSerialHandle(handle, options = {}) {
@@ -1431,8 +1476,12 @@ class SerialBridge {
     this.tasWaiters = [];
   }
 
-  waitForDrain() {
-    return this.writeQueue.catch(() => {});
+  async waitForDrain() {
+    await this.writeQueue.catch(() => {});
+    const handle = this.handle;
+    if (handle && typeof handle.drain === "function") {
+      await handle.drain().catch(() => {});
+    }
   }
 
   async startReadLoop(handle) {
@@ -1888,23 +1937,33 @@ function encodeWebSocketFrame(payload, opcode = 0x1) {
   return Buffer.concat([header, payloadBuffer]);
 }
 
-async function findSerialPort(explicitPort) {
+async function findSerialPort(explicitPort, options = {}) {
+  const platform = options.platform || process.platform;
   if (explicitPort) {
-    await assertSerialPortExists(explicitPort);
-    return explicitPort;
+    await assertSerialPortExists(explicitPort, platform);
+    return platform === "win32" ? normalizeWindowsSerialPortPath(explicitPort) : explicitPort;
   }
 
-  const candidates = await listCandidateSerialPorts();
+  const candidates = await listCandidateSerialPorts({
+    platform,
+    serialPortApi: options.serialPortApi,
+  });
   if (candidates.length === 0) {
+    const example = platform === "win32" ? "COM3" : "/dev/cu.usbmodemXXXX";
     throw new Error(
-      "No Arduino USB serial port found. Set SERIAL_PORT=/dev/cu.usbmodemXXXX before starting the server.",
+      `No Arduino USB serial port found. Set SERIAL_PORT=${example} before starting the server.`,
     );
   }
 
   return candidates[0];
 }
 
-async function assertSerialPortExists(portPath) {
+async function assertSerialPortExists(portPath, platform = process.platform) {
+  if (platform === "win32") {
+    normalizeWindowsSerialPortPath(portPath);
+    return;
+  }
+
   try {
     await fsp.stat(portPath);
   } catch {
@@ -1912,7 +1971,17 @@ async function assertSerialPortExists(portPath) {
   }
 }
 
-async function listCandidateSerialPorts() {
+async function listCandidateSerialPorts(options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform === "win32") {
+    const SerialPort = resolveSerialPortClass(options.serialPortApi);
+    const ports = await SerialPort.list();
+    return ports
+      .filter((port) => isCandidateSerialDevice(port.path, platform))
+      .sort(compareWindowsSerialPorts)
+      .map((port) => normalizeWindowsSerialPortPath(port.path));
+  }
+
   let entries;
   try {
     entries = await fsp.readdir("/dev");
@@ -1926,7 +1995,11 @@ async function listCandidateSerialPorts() {
     .map((entry) => path.join("/dev", entry));
 }
 
-function isCandidateSerialDevice(entry) {
+function isCandidateSerialDevice(entry, platform = process.platform) {
+  if (platform === "win32") {
+    return /^(?:\\\\\.\\)?COM[1-9]\d*:?\s*$/i.test(String(entry || ""));
+  }
+
   return [
     /^cu\.usbmodem/i,
     /^cu\.usbserial/i,
@@ -1943,12 +2016,156 @@ function compareSerialDevices(left, right) {
   return leftScore - rightScore || left.localeCompare(right);
 }
 
-function configureSerialPort(portPath) {
-  if (process.platform === "win32") {
-    throw new Error("The dependency-free serial bridge currently supports macOS and Linux serial devices.");
+function normalizeWindowsSerialPortPath(portPath) {
+  const match = /^(?:\\\\\.\\)?COM([1-9]\d*):?$/i.exec(String(portPath || "").trim());
+  if (!match) {
+    throw new Error(`Windows serial port must look like COM3: ${portPath}`);
+  }
+  return `COM${Number(match[1])}`;
+}
+
+function compareWindowsSerialPorts(left, right) {
+  const score = windowsSerialPortScore(left) - windowsSerialPortScore(right);
+  if (score !== 0) {
+    return score;
   }
 
-  const args = serialPortSttyArgs(portPath);
+  const leftNumber = Number(/\d+/.exec(left.path)?.[0] || Number.MAX_SAFE_INTEGER);
+  const rightNumber = Number(/\d+/.exec(right.path)?.[0] || Number.MAX_SAFE_INTEGER);
+  return leftNumber - rightNumber || String(left.path).localeCompare(String(right.path));
+}
+
+function windowsSerialPortScore(port) {
+  const metadata = [
+    port.manufacturer,
+    port.friendlyName,
+    port.pnpId,
+    port.vendorId,
+  ].filter(Boolean).join(" ");
+
+  if (/\b(?:arduino|uno\s*r4|2341|2a03)\b/i.test(metadata)) {
+    return 0;
+  }
+  if (/\busb\b/i.test(metadata)) {
+    return 1;
+  }
+  return 2;
+}
+
+function resolveSerialPortClass(serialPortApi) {
+  if (serialPortApi?.SerialPort) {
+    return serialPortApi.SerialPort;
+  }
+  if (typeof serialPortApi === "function") {
+    return serialPortApi;
+  }
+  return require("serialport").SerialPort;
+}
+
+class WindowsSerialHandle {
+  constructor(port) {
+    this.port = port;
+    this.dataListeners = new Set();
+    this.errorListeners = new Set();
+    this.closeListeners = new Set();
+
+    port.on("data", (bytes) => {
+      this.dataListeners.forEach((listener) => listener(bytes));
+    });
+    port.on("error", (error) => {
+      this.errorListeners.forEach((listener) => listener(error));
+    });
+    port.on("close", (error) => {
+      this.closeListeners.forEach((listener) => listener(error));
+    });
+  }
+
+  onData(listener) {
+    this.dataListeners.add(listener);
+  }
+
+  onError(listener) {
+    this.errorListeners.add(listener);
+  }
+
+  onClose(listener) {
+    this.closeListeners.add(listener);
+  }
+
+  writeData(data) {
+    return new Promise((resolve, reject) => {
+      this.port.write(data, (error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  drain() {
+    return new Promise((resolve, reject) => {
+      this.port.drain((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  close() {
+    if (!this.port.isOpen) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve, reject) => {
+      this.port.close((error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+}
+
+function openWindowsSerialHandle(portPath, serialPortApi) {
+  const SerialPort = resolveSerialPortClass(serialPortApi);
+  const port = new SerialPort({
+    path: normalizeWindowsSerialPortPath(portPath),
+    baudRate: SERIAL_BAUD,
+    dataBits: 8,
+    stopBits: 1,
+    parity: "none",
+    rtscts: false,
+    xon: false,
+    xoff: false,
+    xany: false,
+    autoOpen: false,
+  });
+  const handle = new WindowsSerialHandle(port);
+
+  return new Promise((resolve, reject) => {
+    port.open((error) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(handle);
+      }
+    });
+  });
+}
+
+function configureSerialPort(portPath, platform = process.platform) {
+  if (platform === "win32") {
+    return Promise.resolve();
+  }
+
+  const args = serialPortSttyArgs(portPath, platform);
 
   return new Promise((resolve, reject) => {
     const child = childProcess.spawn("stty", args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -1970,8 +2187,8 @@ function configureSerialPort(portPath) {
   });
 }
 
-function serialPortSttyArgs(portPath) {
-  const deviceFlag = process.platform === "darwin" ? "-f" : "-F";
+function serialPortSttyArgs(portPath, platform = process.platform) {
+  const deviceFlag = platform === "darwin" ? "-f" : "-F";
   return [
     deviceFlag,
     portPath,
@@ -1989,6 +2206,11 @@ function serialPortSttyArgs(portPath) {
 }
 
 async function writeSerialData(handle, data) {
+  if (typeof handle.writeData === "function") {
+    await handle.writeData(data);
+    return;
+  }
+
   if (handle.write.length <= 1) {
     await handle.write(data.toString("utf8"));
     return;
@@ -2460,7 +2682,7 @@ function printHelp() {
 Options:
   --host <host>          Host to bind. Default: HOST or 0.0.0.0
   --port <port>          Port to bind. Default: PORT or ${DEFAULT_PORT}
-  --serial-port <path>   Arduino serial device. Default: SERIAL_PORT or ARDUINO_PORT
+  --serial-port <port>   Override automatic Arduino lookup. Also accepts SERIAL_PORT or ARDUINO_PORT
   --no-open              Do not open the local browser
 
 The server serves apps/web and exposes the USB middleware at /bridge.`);
@@ -2488,13 +2710,23 @@ function lanAddresses() {
 }
 
 function openBrowser(url) {
-  const command = process.platform === "darwin" ? "open" : "xdg-open";
-  const child = childProcess.spawn(command, [url], {
+  const { command, args } = browserOpenCommand(url);
+  const child = childProcess.spawn(command, args, {
     detached: true,
     stdio: "ignore",
   });
   child.on("error", () => {});
   child.unref();
+}
+
+function browserOpenCommand(url, platform = process.platform) {
+  if (platform === "darwin") {
+    return { command: "open", args: [url] };
+  }
+  if (platform === "win32") {
+    return { command: "explorer.exe", args: [url] };
+  }
+  return { command: "xdg-open", args: [url] };
 }
 
 function sleep(ms) {
@@ -2592,6 +2824,8 @@ if (require.main === module) {
 
 module.exports = {
   SerialBridge,
+  WindowsSerialHandle,
+  browserOpenCommand,
   configureSerialPort,
   createServer,
   decodeWebSocketFrame,
@@ -2602,6 +2836,8 @@ module.exports = {
   handleWebSocketBuffer,
   isCandidateSerialDevice,
   listCandidateSerialPorts,
+  normalizeWindowsSerialPortPath,
+  openWindowsSerialHandle,
   parseArgs,
   parseTasSerialLine,
   parseTasTraceRows,

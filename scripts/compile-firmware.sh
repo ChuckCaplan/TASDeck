@@ -4,6 +4,17 @@ set -eu
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
+if [ "${1:-}" = "--diagnostic" ]; then
+  TASDECK_DIAGNOSTIC_FORCE_A=1
+  TASDECK_ISR_DEBUG_PIN=9
+  shift
+fi
+
+if [ $# -gt 0 ]; then
+  echo "Usage: npm run compile:firmware[:diagnostic]" >&2
+  exit 2
+fi
+
 EXTRA_FLAGS="${ARDUINO_EXTRA_FLAGS:-}"
 
 append_extra_flag() {
