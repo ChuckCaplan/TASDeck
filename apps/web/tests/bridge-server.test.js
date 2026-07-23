@@ -115,11 +115,11 @@ function encodeMaskedWebSocketFrame(payload, options = {}) {
 }
 
 test("detects likely Arduino USB serial devices", () => {
-  assert.equal(isCandidateSerialDevice("cu.usbmodem1051DB36B9C82"), true);
-  assert.equal(isCandidateSerialDevice("ttyACM0"), true);
-  assert.equal(isCandidateSerialDevice("ttyUSB1"), true);
-  assert.equal(isCandidateSerialDevice("cu.Bluetooth-Incoming-Port"), false);
-  assert.equal(isCandidateSerialDevice("disk4"), false);
+  assert.equal(isCandidateSerialDevice("cu.usbmodem1051DB36B9C82", "darwin"), true);
+  assert.equal(isCandidateSerialDevice("ttyACM0", "linux"), true);
+  assert.equal(isCandidateSerialDevice("ttyUSB1", "linux"), true);
+  assert.equal(isCandidateSerialDevice("cu.Bluetooth-Incoming-Port", "darwin"), false);
+  assert.equal(isCandidateSerialDevice("disk4", "darwin"), false);
   assert.equal(isCandidateSerialDevice("COM12", "win32"), true);
   assert.equal(isCandidateSerialDevice("\\\\.\\COM4", "win32"), true);
   assert.equal(isCandidateSerialDevice("LPT1", "win32"), false);

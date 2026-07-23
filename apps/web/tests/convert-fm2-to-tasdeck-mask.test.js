@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { Buffer } = require("node:buffer");
 const { execFile } = require("node:child_process");
+const { existsSync } = require("node:fs");
 const { mkdtemp, readFile, rm, writeFile } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -26,8 +27,24 @@ port2 0
 |0|........|........||
 `;
 
+function resolveBashExecutable() {
+  const names = process.platform === "win32" ? ["bash.exe", "bash"] : ["bash"];
+  for (const directoryEntry of (process.env.PATH || "").split(path.delimiter)) {
+    const directory = directoryEntry.replace(/^"(.*)"$/, "$1");
+    for (const name of names) {
+      const candidate = path.join(directory, name);
+      if (directory && existsSync(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return "bash";
+}
+
+const bashExecutable = resolveBashExecutable();
+
 function execBash(script, args = [], options = {}) {
-  return execFileAsync("bash", [script, ...args], options);
+  return execFileAsync(bashExecutable, [script, ...args], options);
 }
 
 test("uses native FCEUX arguments and paths from Windows Git Bash", async () => {
