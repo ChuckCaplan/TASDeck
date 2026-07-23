@@ -68,7 +68,18 @@ shift
 if [[ "\${1:-}" == "--" ]]; then
   shift
 fi
-printf 'WIN:%s\\n' "$1"
+input=$1
+case "$input" in
+  /[A-Za-z]/*)
+    drive=$(printf '%s' "\${input:1:1}" | tr '[:lower:]' '[:upper:]')
+    rest=\${input:3}
+    rest=\${rest//\\//\\\\}
+    printf 'WIN:%s:\\\\%s\\n' "$drive" "$rest"
+    ;;
+  *)
+    printf 'WIN:%s\\n' "$input"
+    ;;
+esac
 `,
       { mode: 0o755 },
     );
