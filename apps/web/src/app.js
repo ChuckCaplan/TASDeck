@@ -17,6 +17,7 @@ const {
 
 const EVENT_LOG_LIMIT = 120;
 const SERIAL_CONNECT_TIMEOUT_MS = 25000;
+const HARDWARE_TAS_RESPONSE_TIMEOUT_MS = 30000;
 const EVENT_LOG_SAVE_TIMEOUT_MS = 5000;
 const COPY_LOG_LABEL = "Copy";
 const COPY_LOG_COPIED_LABEL = "Copied";
@@ -573,7 +574,7 @@ class NetworkBridgeTransport {
         timer: window.setTimeout(() => {
           this.tasWaiters = this.tasWaiters.filter((item) => item !== waiter);
           reject(new Error("Timed out waiting for Arduino TAS response"));
-        }, 5000),
+        }, HARDWARE_TAS_RESPONSE_TIMEOUT_MS),
       };
 
       this.tasWaiters.push(waiter);

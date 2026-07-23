@@ -209,6 +209,10 @@ class SerialBridge {
       await configureSerialPort(portPath, this.platform);
     }
 
+    // Never let a write queued for an old USB handle block or spill into a
+    // reconnect. writeCommand also captures the handle that owned each
+    // command, so an old queue can finish safely after this reset.
+    this.writeQueue = Promise.resolve();
     this.handle = handle;
     this.portPath = portPath;
     this.readBuffer = "";
@@ -1365,12 +1369,16 @@ class SerialBridge {
   }
 
   writeCommand(command) {
+    const handle = this.handle;
     const write = this.writeQueue.then(async () => {
-      if (!this.handle) {
+      if (!handle) {
         throw new Error("Arduino USB serial is not connected");
       }
+      if (this.handle !== handle) {
+        throw new Error("Arduino USB serial connection changed before the command was sent");
+      }
 
-      await writeSerialData(this.handle, Buffer.from(`${command}\n`));
+      await writeSerialData(handle, Buffer.from(`${command}\n`));
     });
 
     this.writeQueue = write.catch(() => {});
@@ -1380,14 +1388,25 @@ class SerialBridge {
     });
   }
 
-  sendFirmwareTasCommand(command, matcher) {
-    const responsePromise = this.waitForTasResponse(matcher);
-    return this.writeCommand(command)
-      .catch((error) => {
-        this.rejectTasWaiters(error);
-        throw error;
-      })
-      .then(() => responsePromise);
+  async sendFirmwareTasCommand(command, matcher) {
+    // Register before writing so an immediate Arduino response cannot be
+    // missed, but do not spend the response timeout while a Windows write is
+    // still queued or draining to the COM device.
+    const responseWaiter = this.registerResponseWaiter(
+      "tasWaiters",
+      matcher,
+      "Timed out waiting for Arduino TAS response",
+    );
+    try {
+      await this.writeCommand(command);
+    } catch (error) {
+      responseWaiter.reject(error);
+      await responseWaiter.promise.catch(() => {});
+      throw error;
+    }
+
+    responseWaiter.startTimeout(BRIDGE_TAS_WAITER_TIMEOUT_MS);
+    return responseWaiter.promise;
   }
 
   async requestFirmwareStatus(timeoutMs) {
@@ -1395,18 +1414,29 @@ class SerialBridge {
     let lastError = null;
 
     while (Date.now() < deadline && this.handle) {
-      const attemptTimeout = Math.min(SERIAL_STATUS_ATTEMPT_TIMEOUT_MS, Math.max(1, deadline - Date.now()));
-      const responsePromise = this.waitForSerialLine((line) => /^OK\s+status\b/i.test(line), attemptTimeout);
+      // As with TAS commands, listen before writing but start the response
+      // timer only after the bytes have drained to the device. This prevents
+      // a slow Windows COM write from queuing duplicate STATUS commands.
+      const responseWaiter = this.registerResponseWaiter(
+        "serialWaiters",
+        (line) => /^OK\s+status\b/i.test(line),
+        "Timed out waiting for Arduino firmware status",
+      );
       try {
         await this.writeCommand("STATUS");
       } catch (error) {
-        this.rejectSerialWaiters(error);
-        await responsePromise.catch(() => {});
+        responseWaiter.reject(error);
+        await responseWaiter.promise.catch(() => {});
         throw error;
       }
 
+      const attemptTimeout = Math.min(
+        SERIAL_STATUS_ATTEMPT_TIMEOUT_MS,
+        Math.max(1, deadline - Date.now()),
+      );
+      responseWaiter.startTimeout(attemptTimeout);
       try {
-        return await responsePromise;
+        return await responseWaiter.promise;
       } catch (error) {
         lastError = error;
       }
@@ -1416,19 +1446,13 @@ class SerialBridge {
   }
 
   waitForSerialLine(matcher, timeoutMs) {
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        matcher,
-        resolve,
-        reject,
-        timer: setTimeout(() => {
-          this.serialWaiters = this.serialWaiters.filter((item) => item !== waiter);
-          reject(new Error("Timed out waiting for Arduino firmware status"));
-        }, timeoutMs),
-      };
-
-      this.serialWaiters.push(waiter);
-    });
+    const waiter = this.registerResponseWaiter(
+      "serialWaiters",
+      matcher,
+      "Timed out waiting for Arduino firmware status",
+    );
+    waiter.startTimeout(timeoutMs);
+    return waiter.promise;
   }
 
   resolveSerialWaiters(line) {
@@ -1453,19 +1477,61 @@ class SerialBridge {
   }
 
   waitForTasResponse(matcher) {
-    return new Promise((resolve, reject) => {
-      const waiter = {
-        matcher,
-        resolve,
-        reject,
-        timer: setTimeout(() => {
-          this.tasWaiters = this.tasWaiters.filter((item) => item !== waiter);
-          reject(new Error("Timed out waiting for Arduino TAS response"));
-        }, BRIDGE_TAS_WAITER_TIMEOUT_MS),
-      };
+    const waiter = this.registerResponseWaiter(
+      "tasWaiters",
+      matcher,
+      "Timed out waiting for Arduino TAS response",
+    );
+    waiter.startTimeout(BRIDGE_TAS_WAITER_TIMEOUT_MS);
+    return waiter.promise;
+  }
 
-      this.tasWaiters.push(waiter);
+  registerResponseWaiter(waiterProperty, matcher, timeoutMessage) {
+    let resolvePromise;
+    let rejectPromise;
+    const promise = new Promise((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
     });
+    const waiter = {
+      matcher,
+      timer: null,
+      settled: false,
+      resolve: (value) => {
+        if (waiter.settled) {
+          return;
+        }
+        waiter.settled = true;
+        clearTimeout(waiter.timer);
+        resolvePromise(value);
+      },
+      reject: (error) => {
+        if (waiter.settled) {
+          return;
+        }
+        waiter.settled = true;
+        clearTimeout(waiter.timer);
+        rejectPromise(error);
+      },
+    };
+    this[waiterProperty].push(waiter);
+
+    return {
+      promise,
+      startTimeout: (timeoutMs) => {
+        if (waiter.settled || waiter.timer) {
+          return;
+        }
+        waiter.timer = setTimeout(() => {
+          this[waiterProperty] = this[waiterProperty].filter((item) => item !== waiter);
+          waiter.reject(new Error(timeoutMessage));
+        }, timeoutMs);
+      },
+      reject: (error) => {
+        this[waiterProperty] = this[waiterProperty].filter((item) => item !== waiter);
+        waiter.reject(error);
+      },
+    };
   }
 
   resolveTasWaiters(message) {
@@ -2130,8 +2196,8 @@ class WindowsSerialHandle {
     this.closeListeners.add(listener);
   }
 
-  writeData(data) {
-    return new Promise((resolve, reject) => {
+  async writeData(data) {
+    await new Promise((resolve, reject) => {
       this.port.write(data, (error) => {
         if (error) {
           reject(error);
@@ -2140,6 +2206,10 @@ class WindowsSerialHandle {
         }
       });
     });
+    // SerialPort write callbacks can run before the operating system has
+    // transmitted the bytes. FlushFileBuffers-backed drain is required on
+    // Windows before response timing or a subsequent protocol command.
+    await this.drain();
   }
 
   drain() {

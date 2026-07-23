@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const process = require("node:process");
 const test = require("node:test");
+const { setImmediate } = require("node:timers");
 const { promisify } = require("node:util");
 
 const {
@@ -214,12 +215,91 @@ test("connects, exchanges status, drains, and closes through the Windows COM bac
     autoOpen: false,
   });
   assert.deepEqual(port.writes.map((bytes) => bytes.toString("utf8")), ["STATUS\n", "STATUS\n"]);
+  assert.equal(port.drainCalls, 2);
 
   await bridge.disconnect({ release: false });
 
-  assert.equal(port.drainCalls, 1);
+  assert.equal(port.drainCalls, 3);
   assert.equal(port.closeCalls, 1);
   assert.equal(bridge.isConnected(), false);
+});
+
+test("does not replay queued commands through a replacement serial handle", async () => {
+  FakeWindowsSerialPort.instances = [];
+  let releaseOldWrite;
+  const oldWrites = [];
+  const oldHandle = {
+    writeData(data) {
+      oldWrites.push(data.toString("utf8"));
+      return new Promise((resolve) => {
+        releaseOldWrite = resolve;
+      });
+    },
+  };
+  const bridge = new SerialBridge({
+    platform: "win32",
+    serialPortApi: { SerialPort: FakeWindowsSerialPort },
+  });
+  bridge.handle = oldHandle;
+  bridge.portPath = "COM8";
+  bridge.serialReady = true;
+
+  const activeWrite = bridge.writeCommand("BUTTON a down");
+  await Promise.resolve();
+  const staleWrite = bridge.writeCommand("TAS_BEGIN 3 poll");
+
+  await bridge.openSerialHandle("COM12", 0);
+  await bridge.writeCommand("STATUS");
+
+  releaseOldWrite();
+  await activeWrite;
+  await assert.rejects(staleWrite, /connection changed/);
+
+  const replacementPort = FakeWindowsSerialPort.instances[0];
+  assert.deepEqual(oldWrites, ["BUTTON a down\n"]);
+  assert.deepEqual(
+    replacementPort.writes.map((bytes) => bytes.toString("utf8")),
+    ["STATUS\n"],
+  );
+  assert.equal(replacementPort.drainCalls, 1);
+
+  await bridge.disconnect({ release: false });
+});
+
+test("starts a TAS response timeout after the serial write completes", async () => {
+  let releaseWrite;
+  const bridge = new SerialBridge();
+  bridge.handle = {
+    writeData() {
+      return new Promise((resolve) => {
+        releaseWrite = resolve;
+      });
+    },
+  };
+  bridge.portPath = "/dev/cu.usbmodem-test";
+  bridge.serialReady = true;
+
+  const responseTask = bridge.sendFirmwareTasCommand(
+    "TAS_BEGIN 3 poll",
+    (message) => message.command === "tas_begin",
+  );
+  await Promise.resolve();
+
+  assert.equal(bridge.tasWaiters.length, 1);
+  assert.equal(bridge.tasWaiters[0].timer, null);
+
+  releaseWrite();
+  await new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+  assert.notEqual(bridge.tasWaiters[0].timer, null);
+
+  bridge.handleSerialBytes(Buffer.from(
+    "OK tas_begin active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=512 sync=poll error=ok\n",
+  ));
+  const response = await responseTask;
+  assert.equal(response.command, "tas_begin");
+  assert.equal(bridge.tasWaiters.length, 0);
 });
 
 test("rejects an explicit Windows COM port that is not present", async () => {
