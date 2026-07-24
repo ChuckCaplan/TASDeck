@@ -109,6 +109,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Arkanoid — "warpless" by eien86 | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro |
 | Ghosts 'n Goblins - Arc & Koh1fds | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
 | Lode Runner by Alyosha | 17:42 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| Tiger-Heli | 12:54 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Monopoly by Alyosha | 00:31 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Disney's The Little Mermaid - McBobX | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
 
