@@ -80,7 +80,7 @@ constexpr uint8_t kTasAnomalyTornTrain = 1;      // strobe hit a mid-shift regis
 constexpr uint8_t kTasAnomalyLineMismatch = 2;   // pre-advanced first bit absent at strobe
 constexpr uint8_t kTasAnomalyClockedMismatch = 3;  // reconstructed wire != served mask
 constexpr uint8_t kTasAnomalyReRead = 4;         // 3rd poll in one window (counted only)
-constexpr uint8_t kTasAnomalyReReadStorm = 5;    // 5th poll in one window
+constexpr uint8_t kTasAnomalyReReadStorm = 5;    // 5th poll in one window (counted only)
 constexpr uint8_t kPort1LatchPin = 2;
 constexpr uint8_t kPort1ClockPin = 3;
 constexpr uint8_t kPort1DataPin = 6;
@@ -1256,16 +1256,22 @@ void noteTasAnomaly(uint8_t kind) {
   // Called from the pin ISRs when a poll looks corrupted. Record the first
   // event, then let the ring capture a little more context and freeze it so
   // the evidence survives until the user presses Trace — however late.
-  // Single guard re-reads (kind 4) are counted but do not freeze: the console
+  // Guard re-reads (kinds 4 and 5) are counted but do not freeze: the console
   // performs them legitimately when DPCM DMA corrupts its own read of a
-  // healthy line, and burning the freeze on one could hide a later fault.
+  // healthy line, and DMC-heavy re-read-until-match games (Zelda-class) burst
+  // past the storm threshold every few seconds while serving stays bit-perfect,
+  // so freezing on them buries the ring in benign captures and drowns the
+  // serial link in back-to-back auto trace dumps. Genuinely unstable serving
+  // still trips kinds 2/3, which detect it directly.
   tasAnomalyCount += 1;
   tasAnomalyPendingMark = 1;
-  const bool freezeWorthy = kind != kTasAnomalyReRead;
+  const bool freezeWorthy = kind != kTasAnomalyReRead && kind != kTasAnomalyReReadStorm;
   // Freeze-worthy events own anomaly_kind/anomaly_seq. A benign re-read only
   // fills them provisionally while nothing worse has been seen, so a later
   // real fault still reports its own kind and sequence.
-  if (tasAnomalyKind == 0 || (freezeWorthy && tasAnomalyKind == kTasAnomalyReRead)) {
+  const bool provisionalKind =
+    tasAnomalyKind == kTasAnomalyReRead || tasAnomalyKind == kTasAnomalyReReadStorm;
+  if (tasAnomalyKind == 0 || (freezeWorthy && provisionalKind)) {
     tasAnomalyKind = kind;
     tasAnomalySequence = tasTraceNextSequence;
   }
