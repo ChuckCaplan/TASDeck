@@ -38,7 +38,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v54";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v63";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -160,6 +160,14 @@ volatile int8_t nesPort2ClockIrqSlot = -1;
 // True while strobe-mode NVIC priorities are applied (clocks 0, latch 1).
 // Gates the clock ISRs' software strobe-first ordering check.
 volatile bool nesStrobePrioritiesActive = false;
+// The Arduino/FSP vectors installed by attachInterrupt dispatch directly to
+// the lean window callbacks. Strobe runs temporarily replace only these three
+// entries with the RAM-resident direct vectors; poll/latch runs restore them.
+volatile uint32_t nesWindowLatchVector = 0;
+volatile uint32_t nesWindowPort1ClockVector = 0;
+volatile uint32_t nesWindowPort2ClockVector = 0;
+volatile bool nesWindowVectorsSaved = false;
+volatile bool nesStrobeVectorsActive = false;
 // Set when playback ends on its own (Complete/Underrun) while strobe
 // priorities are installed; loop() restores the windowed layout. Deferred to
 // main context because completion surfaces inside the latch ISR (which must
@@ -299,6 +307,7 @@ void noteTasAnomalyMasked(uint8_t kind);
 void drainStrobeEdgeTraceEvents();
 void recordTasTraceEntry(const TasTraceEntry& source);
 void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask);
+void recordWindowTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask);
 void restoreDiagnosticForcedMask();
 void raiseNesPinInterruptPriority();
 void applyNesPinInterruptPriorities(bool strobeMode);
@@ -311,9 +320,11 @@ bool port2DataLineHigh();
 bool latchLineHigh();
 void latchControllers();
 void handlePort1Latch();
-void handleLatchEdge();
 void handlePort1Clock();
 void handlePort2Clock();
+void handleStrobeLatchEdge();
+void handleStrobePort1Clock();
+void handleStrobePort2Clock();
 void setIsrDebugPin(bool high);
 
 }  // namespace
@@ -415,7 +426,9 @@ void setupNesPins() {
   raiseNesPinInterruptPriority();
 }
 
-// Direct interrupt vectors — bypass the FSP + Arduino dispatch layers.
+// Strobe-mode direct interrupt vectors bypass the FSP + Arduino dispatch
+// layers. Windowed modes deliberately retain the hardware-proven pre-v50 FSP
+// path registered above.
 // attachInterrupt routes every NES pin edge through r_icu_isr (the FSP ICU
 // handler) and then IrqCallback (the Arduino shim) before our handler runs —
 // ~1-2 us of dispatch on EVERY clock edge. On slow-reading games that is inside
@@ -430,41 +443,71 @@ void setupNesPins() {
 // only the ~12-cycle architectural NVIC entry in front of it. The NVIC pending
 // bit is auto-cleared by hardware on exception entry, so no NVIC_ClearPendingIRQ
 // is needed here (unlike the inline pend-service path).
-TASDECK_RAM_ISR void directLatchVector() {
+TASDECK_RAM_ISR void directStrobeLatchVector() {
   R_ICU->IELSR[nesLatchIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
   __DSB();
-  handleLatchEdge();
+  handleStrobeLatchEdge();
 }
 
-TASDECK_RAM_ISR void directPort1ClockVector() {
+TASDECK_RAM_ISR void directStrobePort1ClockVector() {
   R_ICU->IELSR[nesPort1ClockIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
   __DSB();
-  handlePort1Clock();
+  handleStrobePort1Clock();
 }
 
-TASDECK_RAM_ISR void directPort2ClockVector() {
+TASDECK_RAM_ISR void directStrobePort2ClockVector() {
   R_ICU->IELSR[nesPort2ClockIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
   __DSB();
-  handlePort2Clock();
+  handleStrobePort2Clock();
 }
 
-// Install the direct vectors into the live (RAM) vector table. Each ICU slot's
-// NVIC IRQn equals its IELSR slot index, and its vector lives at
-// VTOR[FIXED_IRQ_NUM(16) + slot]. Must run after attachInterrupt (which
-// configures the pin/event link and installs r_icu_isr there) and after the
-// slots are resolved. Only the three NES pin vectors are touched, so a mistake
-// here can only affect NES input — USB serial and timers keep their vectors and
-// the board stays reachable for a re-flash.
-void installNesDirectVectors() {
+// Save the live FSP vector entries after attachInterrupt has registered the
+// lean window callbacks. Restoring these entries selects the window path with
+// no per-edge mode branch.
+void saveNesWindowVectors() {
+  if (
+    nesWindowVectorsSaved ||
+    nesLatchIrqSlot < 0 ||
+    nesPort1ClockIrqSlot < 0 ||
+    nesPort2ClockIrqSlot < 0) {
+    return;
+  }
+  volatile uint32_t* vectorTable =
+    reinterpret_cast<volatile uint32_t*>(SCB->VTOR);
+  nesWindowLatchVector = vectorTable[16 + nesLatchIrqSlot];
+  nesWindowPort1ClockVector = vectorTable[16 + nesPort1ClockIrqSlot];
+  nesWindowPort2ClockVector = vectorTable[16 + nesPort2ClockIrqSlot];
+  nesWindowVectorsSaved = true;
+}
+
+void installNesStrobeVectors() {
   if (nesLatchIrqSlot < 0 || nesPort1ClockIrqSlot < 0 || nesPort2ClockIrqSlot < 0) {
     return;
   }
   volatile uint32_t* vectorTable = reinterpret_cast<volatile uint32_t*>(SCB->VTOR);
-  vectorTable[16 + nesLatchIrqSlot] = reinterpret_cast<uint32_t>(&directLatchVector);
-  vectorTable[16 + nesPort1ClockIrqSlot] = reinterpret_cast<uint32_t>(&directPort1ClockVector);
-  vectorTable[16 + nesPort2ClockIrqSlot] = reinterpret_cast<uint32_t>(&directPort2ClockVector);
+  vectorTable[16 + nesLatchIrqSlot] =
+    reinterpret_cast<uint32_t>(&directStrobeLatchVector);
+  vectorTable[16 + nesPort1ClockIrqSlot] =
+    reinterpret_cast<uint32_t>(&directStrobePort1ClockVector);
+  vectorTable[16 + nesPort2ClockIrqSlot] =
+    reinterpret_cast<uint32_t>(&directStrobePort2ClockVector);
   __DSB();
   __ISB();
+  nesStrobeVectorsActive = true;
+}
+
+void restoreNesWindowVectors() {
+  if (!nesWindowVectorsSaved || !nesStrobeVectorsActive) {
+    return;
+  }
+  volatile uint32_t* vectorTable =
+    reinterpret_cast<volatile uint32_t*>(SCB->VTOR);
+  vectorTable[16 + nesLatchIrqSlot] = nesWindowLatchVector;
+  vectorTable[16 + nesPort1ClockIrqSlot] = nesWindowPort1ClockVector;
+  vectorTable[16 + nesPort2ClockIrqSlot] = nesWindowPort2ClockVector;
+  __DSB();
+  __ISB();
+  nesStrobeVectorsActive = false;
 }
 
 void raiseNesPinInterruptPriority() {
@@ -485,10 +528,8 @@ void raiseNesPinInterruptPriority() {
       nesPort2ClockIrqSlot = static_cast<int8_t>(slot);  // P2 clock (D8)
     }
   }
+  saveNesWindowVectors();
   applyNesPinInterruptPriorities(false);
-  // Replace the FSP/Arduino dispatch shims with direct vectors now that the
-  // slots are known — this is the reaction-latency fix for fast/dense reads.
-  installNesDirectVectors();
 }
 
 // Windowed modes: the latch outranks the clocks. When edges pend behind a
@@ -521,6 +562,11 @@ void applyNesPinInterruptPriorities(bool strobeMode) {
   }
   nesStrobePrioritiesActive = strobeMode;
   nesStrobePriorityRestorePending = false;
+  if (strobeMode) {
+    installNesStrobeVectors();
+  } else {
+    restoreNesWindowVectors();
+  }
 }
 
 // Runs from loop(). Completion cannot restore the windowed priorities where
@@ -717,7 +763,7 @@ void formatStatusResponse(char* response, size_t responseLength) {
   snprintf(
     response,
     responseLength,
-    "OK status fw=%s transport=%s latch_edge=%s clock_edge=%s forced=%02X debug_pin=%d pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u latch=%lu clock=%lu clock2=%lu tas_active=%u tas_output_enabled=%u tas_start_delay_polls=%lu tas_ready=%u tas_start_requested=%u tas_started=%u tas_complete=%u tas_current=%lu tas_total=%lu tas_received=%lu tas_buffered=%u tas_ports=%u tas_sync=%s tas_error=%s",
+    "OK status fw=%s transport=%s latch_edge=%s clock_edge=%s forced=%02X debug_pin=%d pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u latch=%lu clock=%lu clock2=%lu tas_active=%u tas_output_enabled=%u tas_start_delay_polls=%lu tas_ready=%u tas_start_requested=%u tas_started=%u tas_complete=%u tas_current=%lu tas_total=%lu tas_received=%lu tas_buffered=%u tas_ports=%u tas_sync=%s tas_irq_path=%s tas_error=%s",
     kFirmwareId,
     kTransportMode,
     kLatchEdgeMode,
@@ -748,6 +794,7 @@ void formatStatusResponse(char* response, size_t responseLength) {
     tasBufferedFramesSnapshot,
     tasPlayback.portCount(),
     tasSyncModeName(tasSyncModeSnapshot),
+    nesStrobeVectorsActive ? "strobe_direct" : "window_fsp",
     tasPlaybackResultName(tasErrorSnapshot));
 }
 
@@ -821,7 +868,7 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
   snprintf(
     response,
     responseLength,
-    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu latch_tail_last_cyc=%lu latch_tail_max_cyc=%lu latch_prefetch_masked_last_cyc=%lu latch_prefetch_masked_max_cyc=%lu",
+    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s irq_path=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu latch_tail_last_cyc=%lu latch_tail_max_cyc=%lu latch_prefetch_masked_last_cyc=%lu latch_prefetch_masked_max_cyc=%lu",
     commandName,
     kFirmwareId,
     kLatchEdgeMode,
@@ -852,6 +899,7 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
     static_cast<unsigned long>(startDelayPollsSnapshot),
     static_cast<unsigned long>(latchWindowSnapshot),
     tasSyncModeName(syncModeSnapshot),
+    nesStrobeVectorsActive ? "strobe_direct" : "window_fsp",
     latchCountSnapshot,
     clockCountSnapshot,
     clock2CountSnapshot,
@@ -1380,6 +1428,67 @@ void drainStrobeEdgeTraceEvents() {
   }
 }
 
+// Keep window trace publication in one out-of-line function, as it was before
+// v50. The modern two-stage stack entry plus recordTasTraceEntry() otherwise
+// gets inlined into both window clock handlers and expands their hot path.
+void recordWindowTasTrace(
+  TasPlaybackResult result,
+  uint32_t tasFrame,
+  uint8_t port,
+  uint8_t polledMask,
+  uint8_t clockedMask) {
+  if (tasTraceFrozen) {
+    return;
+  }
+
+  const uint16_t index = tasTraceHead;
+  TasTraceEntry& entry = tasTrace[index];
+  const uint32_t timestampMicros = micros();
+  entry.timestampMicros = 0;
+  tasTraceCompilerBarrier();
+  entry.tasFrame = tasFrame;
+  entry.latchCount = controllerLatchCount;
+  entry.clockCount =
+    port == 2 ? controller2ClockCount : controllerClockCount;
+  entry.clocksSinceLatch =
+    port == 2 ? controller2ClocksSinceLatch : controllerClocksSinceLatch;
+  entry.polledMask = polledMask;
+  entry.nextMask =
+    port == 2 ? controller2PressedMask : controllerPressedMask;
+  entry.latchedMask =
+    port == 2 ? controller2LatchedMask : controllerLatchedMask;
+  entry.shiftIndex =
+    port == 2 ? controller2ShiftIndex : controllerShiftIndex;
+  entry.result = static_cast<uint8_t>(result);
+  entry.clockedMask = clockedMask;
+  entry.diag = static_cast<uint8_t>(
+    ((port == 2
+        ? controller2DiagLineLowAtLatch
+        : controllerDiagLineLowAtLatch) &
+      0x01) |
+    (controllerDiagWindowKind << 1) |
+    (tasAnomalyPendingMark != 0 ? 0x10 : 0));
+  entry.port = port;
+  tasAnomalyPendingMark = 0;
+
+  tasTraceCompilerBarrier();
+  entry.timestampMicros = timestampMicros == 0 ? 1 : timestampMicros;
+  tasTraceCompilerBarrier();
+  tasTraceHead =
+    static_cast<uint16_t>((tasTraceHead + 1) % kTasTraceCapacity);
+  if (tasTraceCount < kTasTraceCapacity) {
+    tasTraceCount += 1;
+  }
+  tasTraceNextSequence += 1;
+
+  if (tasTraceFreezeCountdown > 0) {
+    tasTraceFreezeCountdown -= 1;
+    if (tasTraceFreezeCountdown == 0) {
+      tasTraceFrozen = true;
+    }
+  }
+}
+
 void recordTasTrace(TasPlaybackResult result, uint32_t tasFrame, uint8_t port, uint8_t polledMask, uint8_t clockedMask) {
   TasTraceEntry entry = {};
   entry.timestampMicros = micros();
@@ -1602,10 +1711,6 @@ void latchControllers() {
   controller2ClockedMask = 0;
 }
 
-void handlePort1Latch() {
-  handleLatchEdge();
-}
-
 // Pre-reset snapshot of the inter-strobe interval that just ended, shared by
 // the strobe fast path and the general edge path. Plain fields, no default
 // initializers: the general path declares one unconditionally, and windowed
@@ -1823,7 +1928,121 @@ inline void prefetchNextStrobeRecord() {
   recordLatchPrefetchMaskedCycles(maskEnd - maskStart);
 }
 
-TASDECK_RAM_ISR void handleLatchEdge() {
+// Windowed latch callback: the pre-v50/e28c40b path that is hardware-proven
+// through SMB3 Total Control's ACE handoff. It stays in flash behind the stock
+// FSP dispatch and contains no strobe-mode branch, PRIMASK span, or DWT work.
+void handlePort1Latch() {
+#if TASDECK_ISR_DEBUG_PIN >= 0
+  setIsrDebugPin(true);
+#endif
+  const uint16_t pinsAtEntry = R_PORT1->PIDR;
+  const uint32_t previousLatchMicros = controllerLastLatchMicros;
+  const uint32_t latchMicros = micros();
+  const bool sameHardwareWindow =
+    latchWithinCurrentWindow(latchMicros, previousLatchMicros);
+  tasdeck::TasFrameMasks firstBitMasks = {
+    controllerPressedMask,
+    controller2PressedMask,
+  };
+  if (
+    kDiagnosticForcedMask == 0 &&
+    !sameHardwareWindow &&
+    tasPlayback.willAdvanceOnEdge()) {
+    firstBitMasks = tasPlayback.stagedNextMasks();
+  }
+
+  writeDataPinsForMasks(firstBitMasks);
+  controllerDiagLineLowAtLatch =
+    (pinsAtEntry & kPort1DataBit) == 0 ? 1 : 0;
+  controller2DiagLineLowAtLatch =
+    (pinsAtEntry & kPort2DataBit) == 0 ? 1 : 0;
+
+  const uint8_t shiftAtStrobe = controllerShiftIndex;
+  if (
+    tasOutputEnabled &&
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
+    shiftAtStrobe >= 1 &&
+    shiftAtStrobe < tasdeck::kNesButtonCount) {
+    noteTasAnomaly(kTasAnomalyTornTrain);
+  }
+  const uint8_t shift2AtStrobe = controller2ShiftIndex;
+  if (
+    tasOutputEnabled &&
+    tasPlayback.syncMode() == tasdeck::TasSyncMode::Poll &&
+    shift2AtStrobe >= 1 &&
+    shift2AtStrobe < tasdeck::kNesButtonCount) {
+    noteTasAnomaly(kTasAnomalyTornTrain);
+  }
+
+  controllerLatchCount += 1;
+  controllerClocksSinceLatch = 0;
+  controllerClockedMask = 0;
+  controller2ClocksSinceLatch = 0;
+  controller2ClockedMask = 0;
+  controllerLastLatchMicros = latchMicros;
+
+  if (
+    kDiagnosticForcedMask == 0 &&
+    tasPlayback.active() &&
+    !sameHardwareWindow) {
+    controllerPollsInWindow = 0;
+    controller2PollsInWindow = 0;
+    tasdeck::TasFrameMasks nextMasks = {
+      controllerPressedMask,
+      controller2PressedMask,
+    };
+    const TasPlaybackResult result =
+      tasPlayback.onLatchEdge(latchMicros, nextMasks);
+    tasPlayback.noteLatchObserved();
+    if (
+      result == TasPlaybackResult::Ok ||
+      result == TasPlaybackResult::Complete ||
+      result == TasPlaybackResult::Underrun) {
+      controllerPressedMask = nextMasks.port1;
+      controller2PressedMask = nextMasks.port2;
+    }
+    if (
+      result == TasPlaybackResult::Complete ||
+      result == TasPlaybackResult::Underrun) {
+      tasOutputEnabled = false;
+    }
+    const tasdeck::TasEdgeKind kind = tasPlayback.lastEdgeKind();
+    controllerDiagWindowKind = static_cast<uint8_t>(kind);
+    if (
+      tasOutputEnabled &&
+      (kind == tasdeck::TasEdgeKind::PreAdvanced ||
+        kind == tasdeck::TasEdgeKind::AdvancedAtEdge ||
+        kind == tasdeck::TasEdgeKind::Started)) {
+      const uint8_t expectedLow =
+        (controllerPressedMask & 0x01) != 0 ? 1 : 0;
+      if (controllerDiagLineLowAtLatch != expectedLow) {
+        noteTasAnomaly(kTasAnomalyLineMismatch);
+      }
+      const uint8_t expected2Low =
+        (controller2PressedMask & 0x01) != 0 ? 1 : 0;
+      if (controller2DiagLineLowAtLatch != expected2Low) {
+        noteTasAnomaly(kTasAnomalyLineMismatch);
+      }
+    }
+  }
+
+  controllerLatchedMask = controllerPressedMask;
+  controllerShiftIndex = 0;
+  controller2LatchedMask = controller2PressedMask;
+  controller2ShiftIndex = 0;
+  writeDataPinsForMasks({
+    controllerLatchedMask,
+    controller2LatchedMask,
+  });
+
+#if TASDECK_ISR_DEBUG_PIN >= 0
+  setIsrDebugPin(false);
+#endif
+}
+
+// Strobe-only latch handler. It is reached only through the direct strobe
+// vector selected at TAS_BEGIN, so window timing cannot perturb this path.
+TASDECK_RAM_ISR void handleStrobeLatchEdge() {
   const uint32_t cyclesAtEntry = DWT->CYCCNT;
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
@@ -2116,10 +2335,81 @@ TASDECK_RAM_ISR void serviceLatchPendBeforeClock() {
   R_ICU->IELSR[slot] &= ~R_ICU_IELSR_IR_Msk;
   __DSB();
   NVIC_ClearPendingIRQ(irq);
-  handleLatchEdge();
+  handleStrobeLatchEdge();
 }
 
-TASDECK_RAM_ISR void handlePort1Clock() {
+// Pre-v50/e28c40b port-1 clock callback paired with the window latch handler.
+// No strobe pending-service branch or next-strobe bookkeeping.
+void handlePort1Clock() {
+#if TASDECK_ISR_DEBUG_PIN >= 0
+  setIsrDebugPin(true);
+#endif
+
+  controllerClockCount += 1;
+  if (controllerClocksSinceLatch < 0xff) {
+    controllerClocksSinceLatch += 1;
+  }
+  bool completedPoll = false;
+
+  if (latchLineHigh()) {
+    controllerLatchedMask = controllerPressedMask;
+    controllerShiftIndex = 0;
+    controllerClockedMask = 0;
+  } else if (controllerShiftIndex < tasdeck::kNesButtonCount) {
+    if ((R_PORT1->PIDR & kPort1DataBit) == 0) {
+      controllerClockedMask = static_cast<uint8_t>(
+        controllerClockedMask |
+        static_cast<uint8_t>(1 << controllerShiftIndex));
+    }
+    controllerShiftIndex = static_cast<uint8_t>(controllerShiftIndex + 1);
+    completedPoll = controllerShiftIndex >= tasdeck::kNesButtonCount;
+  }
+
+  const bool high = controllerShiftIndex >= tasdeck::kNesButtonCount
+    ? (controllerPressedMask & 0x01) == 0
+    : (controllerLatchedMask &
+        static_cast<uint8_t>(1 << controllerShiftIndex)) == 0;
+
+  if (high) {
+    driveDataPinHigh();
+  } else {
+    driveDataPinLow();
+  }
+
+  if (completedPoll) {
+    tasPlayback.notePollCompleted(1);
+    if (controllerPollsInWindow < 0xff) {
+      controllerPollsInWindow += 1;
+    }
+    if (tasOutputEnabled) {
+      if (controllerClockedMask != controllerLatchedMask) {
+        noteTasAnomaly(kTasAnomalyClockedMismatch);
+      }
+      if (controllerPollsInWindow == 3) {
+        noteTasAnomaly(kTasAnomalyReRead);
+      } else if (controllerPollsInWindow == 5) {
+        noteTasAnomaly(kTasAnomalyReReadStorm);
+      }
+    }
+    const bool traceActive =
+      tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
+    if (traceActive) {
+      recordWindowTasTrace(
+        tasPlayback.lastWindowResult(),
+        tasPlayback.currentFrame(),
+        1,
+        controllerLatchedMask,
+        controllerClockedMask);
+    }
+    controllerClockedMask = 0;
+  }
+
+#if TASDECK_ISR_DEBUG_PIN >= 0
+  setIsrDebugPin(false);
+#endif
+}
+
+TASDECK_RAM_ISR __attribute__((noinline)) void handleStrobePort1Clock() {
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
 #endif
@@ -2216,7 +2506,80 @@ TASDECK_RAM_ISR void handlePort1Clock() {
 #endif
 }
 
-TASDECK_RAM_ISR void handlePort2Clock() {
+// Pre-v50/e28c40b port-2 clock handler. TD2P remains a two-port stream even
+// while P2 is idle, so both controller lines retain the proven lean path.
+void handlePort2Clock() {
+#if TASDECK_ISR_DEBUG_PIN >= 0
+  setIsrDebugPin(true);
+#endif
+
+  controller2ClockCount += 1;
+  if (controller2ClocksSinceLatch < 0xff) {
+    controller2ClocksSinceLatch += 1;
+  }
+  bool completedPoll = false;
+
+  if (latchLineHigh()) {
+    controller2LatchedMask = controller2PressedMask;
+    controller2ShiftIndex = 0;
+    controller2ClockedMask = 0;
+  } else if (controller2ShiftIndex < tasdeck::kNesButtonCount) {
+    if ((R_PORT1->PIDR & kPort2DataBit) == 0) {
+      controller2ClockedMask = static_cast<uint8_t>(
+        controller2ClockedMask |
+        static_cast<uint8_t>(1 << controller2ShiftIndex));
+    }
+    controller2ShiftIndex = static_cast<uint8_t>(controller2ShiftIndex + 1);
+    completedPoll = controller2ShiftIndex >= tasdeck::kNesButtonCount;
+  }
+
+  const bool high = controller2ShiftIndex >= tasdeck::kNesButtonCount
+    ? (controller2PressedMask & 0x01) == 0
+    : (controller2LatchedMask &
+        static_cast<uint8_t>(1 << controller2ShiftIndex)) == 0;
+
+  if (high) {
+    drivePort2DataPinHigh();
+  } else {
+    drivePort2DataPinLow();
+  }
+
+  if (completedPoll) {
+    if (tasPlayback.portCount() >= tasdeck::kNesControllerPortCount) {
+      tasPlayback.notePollCompleted(2);
+      if (controller2PollsInWindow < 0xff) {
+        controller2PollsInWindow += 1;
+      }
+      if (tasOutputEnabled) {
+        if (controller2ClockedMask != controller2LatchedMask) {
+          noteTasAnomaly(kTasAnomalyClockedMismatch);
+        }
+        if (controller2PollsInWindow == 3) {
+          noteTasAnomaly(kTasAnomalyReRead);
+        } else if (controller2PollsInWindow == 5) {
+          noteTasAnomaly(kTasAnomalyReReadStorm);
+        }
+      }
+      const bool traceActive =
+        tasPlayback.started() || tasPlayback.startDelayRemaining() > 0;
+      if (traceActive) {
+        recordWindowTasTrace(
+          tasPlayback.lastWindowResult(),
+          tasPlayback.currentFrame(),
+          2,
+          controller2LatchedMask,
+          controller2ClockedMask);
+      }
+    }
+    controller2ClockedMask = 0;
+  }
+
+#if TASDECK_ISR_DEBUG_PIN >= 0
+  setIsrDebugPin(false);
+#endif
+}
+
+TASDECK_RAM_ISR __attribute__((noinline)) void handleStrobePort2Clock() {
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
 #endif

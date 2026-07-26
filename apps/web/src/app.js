@@ -1099,12 +1099,14 @@ function stopTasControllerPreview() {
   renderTasControllerPreview();
 }
 
-// Run timer: elapsed time is measured from the hardware status stream; the
-// total is exact when the TD2P v2 header carries the source movie's frame count
-// and an estimate otherwise (one record per video frame until enough of the run
-// has played to measure the real record-consumption rate, which absorbs lag
-// frames and multi-latch games). Exact runs hold at the movie duration during
-// a one-second grace period because status polling can report success late.
+// Run timer: elapsed time is measured from the hardware status stream. TD2P v2
+// supplies a frame-exact source-movie duration, while other formats estimate
+// the duration (one record per video frame until enough of the run has played
+// to measure the real record-consumption rate, which absorbs lag frames and
+// multi-latch games). Every displayed total remains approximate for real
+// hardware because console loading and no-read gaps can differ from the source
+// movie. Source-counted runs hold at the movie duration during a one-second
+// grace period because status polling can report success late.
 function startRunTimer(currentRecord) {
   const timer = state.tas.runTimer;
   if (timer.running) {
@@ -1254,8 +1256,8 @@ function renderRunTimer() {
   }
 
   const timer = state.tas.runTimer;
-  const { elapsedMs, totalMs, exact } = runTimerDurations();
-  let text = `${formatRunTime(elapsedMs)} / ${exact ? "" : "~"}${formatRunTime(totalMs)}`;
+  const { elapsedMs, totalMs } = runTimerDurations();
+  let text = `${formatRunTime(elapsedMs)} / ~${formatRunTime(totalMs)}`;
   if (timer.running && window.performance.now() - timer.lastAdvanceMs > RUN_TIMER_STALL_MS) {
     text += " · console not reading input";
   }

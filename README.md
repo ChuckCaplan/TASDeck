@@ -44,9 +44,9 @@ During hardware TAS playback, the on-screen controller lights up the buttons for
 port. The `Show both controllers` checkbox stacks both input streams vertically, using compact
 controllers on larger screens and full-width controllers in phone portrait. The compact phone
 landscape view keeps one controller with the P1/P2 selector. A run timer shows elapsed
-and total time — exact for `.tdmask`
-movies, and estimated for `.r08`. The event log can capture firmware traces for diagnosing playback
-alignment and hardware timing.
+time and an approximate total for every movie format because real-hardware loading and
+no-read gaps can differ from the source movie. The event log can capture firmware traces for
+diagnosing playback alignment and hardware timing.
 
 Keyboard input uses the common NES emulator mapping for the selected controller. When both controllers are visible, that mapping controls P1 and a second mapping is enabled for P2:
 
@@ -75,7 +75,7 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 - [Hardware TAS playback and troubleshooting](docs/hardware-tas-workflow.md) — understand the
   `.tdmask` and `.r08` formats and perform advanced trace-based desync diagnosis.
 - [Firmware guide](firmware/uno_r4_wifi/README.md) — pin assignments, serial protocol, firmware
-  behavior, compilation, upload, and diagnostic builds.
+  behavior, compilation, upload, automatic per-mode interrupt paths, and diagnostic builds.
 - [Web app guide](apps/web/README.md) — browser controls, middleware connection, TAS playback
   options, event-log tracing, and web-specific test commands.
 - [Contributor and agent guide](AGENTS.md) — repository architecture, development constraints,
@@ -96,7 +96,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Super Mario Bros. 2 (FDS / Japan) — "SMB2J ACE Total Control example" | 14:44 | [GitHub](https://github.com/threecreepio/smb2j-ace-tc) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 2 (USA) — "warpless" by Aglar, andrewg & Alyosha | 18:24 | [6366M](https://tasvideos.org/6366M) | `.bk2` | EverDrive N8 Pro |
 | Super Mario Bros. 2 (USA) — "warps" by Aglar & andrewg | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro |
-| Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa | 1:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
+| Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
 | Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
 | The Legend of Zelda — Baxter & jprofit22 | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |

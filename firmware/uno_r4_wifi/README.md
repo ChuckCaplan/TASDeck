@@ -35,7 +35,7 @@ The tested parser lives in `src/NesDeckProtocol.cpp`, the controller-state helpe
 The current serial build reports this firmware id in the boot banner and `STATUS` response:
 
 ```txt
-fw=tasdeck-uno-r4-serial-latchwin-v47 transport=serial
+fw=tasdeck-uno-r4-serial-latchwin-v63 transport=serial
 ```
 
 ## NES Pins
@@ -118,6 +118,15 @@ residency, entry to return — in strobe mode preempting clock ISRs are included
 head budget — and `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's
 entry-to-PRIMASK-release span, the number that must beat the console's second post-strobe read.
 The bridge copies all four into `.trace` headers and the `.stream.csv` footer.
+
+The same firmware also selects the interrupt-handler path automatically at `TAS_BEGIN`. `poll` and
+`latch` use the lean window callbacks through the stock Arduino/FSP dispatch path, preserving the
+timing that works through SMB3 Total Control's ACE handoff. `strobe` switches the three NES pin
+vectors to the RAM-resident direct handlers needed by fast per-strobe `.r08` playback. Canceling or
+finishing a strobe run restores the window vectors. This selection is based only on the existing
+sync mode; there is no game list, movie-specific firmware, or mode branch on every NES edge.
+`TAS_STATUS` reports the active selection as `irq_path=window_fsp` or
+`irq_path=strobe_direct`.
 
 `TAS_TRACE [count] [start]` reads from the firmware's trace ring. The ring stores the latest 384
 rows, and each firmware response returns up to 12 rows so the middleware

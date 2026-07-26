@@ -533,7 +533,7 @@ test.describe("hardware TAS streaming UI", () => {
     expect(upload.syncMode).toBe("strobe");
   });
 
-  test("shows an exact run time for TD2P v2 and an estimate otherwise", async ({ page }) => {
+  test("marks every replay end time as approximate", async ({ page }) => {
     await page.goto("/");
 
     // v1 tdmask carries no source frame count: the total is an estimate.
@@ -544,7 +544,8 @@ test.describe("hardware TAS streaming UI", () => {
     });
     await expect(page.locator("#runTimer")).toHaveText("0:00 / ~0:02");
 
-    // v2 tdmask with a 3600-frame source movie (~59.9 s): the total is exact.
+    // A v2 tdmask carries a frame-exact source duration, but real-hardware
+    // loading and no-read gaps can still make the playback end time differ.
     const v2Header = Buffer.from([
       0x54, 0x44, 0x32, 0x50, 0x02, 0x02, 0x0d, 0x0a, 0x00, 0x00, 0x0e, 0x10,
     ]);
@@ -554,7 +555,7 @@ test.describe("hardware TAS streaming UI", () => {
       buffer: Buffer.concat([v2Header, Buffer.from([0x01, 0x00, 0x01, 0x00])]),
     });
     await expect(page.locator("#playbackStatusText")).toContainText("2 masks");
-    await expect(page.locator("#runTimer")).toHaveText("0:00 / 1:00");
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / ~1:00");
 
     const renderExactRunAt = (elapsedMs) =>
       page.evaluate((elapsed) => {
@@ -571,9 +572,9 @@ test.describe("hardware TAS streaming UI", () => {
     const exactTotalMs = (3600 / 60.0988) * 1000;
 
     // Do not flash 1:01 while completion status is less than a second late.
-    expect(await renderExactRunAt(exactTotalMs + 700)).toBe("1:00 / 1:00");
+    expect(await renderExactRunAt(exactTotalMs + 700)).toBe("1:00 / ~1:00");
     // A genuine overrun longer than the grace period remains visible.
-    expect(await renderExactRunAt(exactTotalMs + 1200)).toBe("1:01 / 1:00");
+    expect(await renderExactRunAt(exactTotalMs + 1200)).toBe("1:01 / ~1:00");
 
     // An r08 load has no frame count either and stays an estimate.
     await page.setInputFiles("#tasFile", {
@@ -623,8 +624,9 @@ test.describe("hardware TAS streaming UI", () => {
     // than adjusting every second near the finish.
     expect(await renderAt(20000, 900)).toBe("0:20 / ~0:27");
     expect(await renderAt(25000, 1100)).toBe("0:25 / ~0:27");
-    // Completion replaces the last estimate with the measured duration.
-    expect(await renderAt(26000, 1200, true)).toBe("0:26 / 0:26");
+    // Completion replaces the last estimate with the measured duration, while
+    // the end-time display keeps the same approximate marker as every format.
+    expect(await renderAt(26000, 1200, true)).toBe("0:26 / ~0:26");
   });
 
   test("play arms the Arduino, then Start begins playback", async ({ page }) => {
@@ -853,8 +855,9 @@ test.describe("hardware TAS streaming UI", () => {
     });
 
     await expect(page.locator("#playbackStatus")).toContainText("Hardware TAS playback complete");
-    // A completed run keeps the measured duration as its total (no ~ estimate).
-    await expect(page.locator("#runTimer")).toHaveText("0:00 / 0:00");
+    // A completed run keeps the measured duration while retaining the
+    // approximate marker used by every end-time display.
+    await expect(page.locator("#runTimer")).toHaveText("0:00 / ~0:00");
     await expect(page.locator("#diagTasFrame")).toHaveCount(0);
     await expect(page.locator("#eventLog")).toContainText("Hardware TAS playback complete");
   });
