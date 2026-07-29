@@ -36,9 +36,13 @@ Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
 port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. A
 `.tdmask` is generated from an `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movie using the converter
-scripts in `scripts/` (see the [Installation guide](INSTALL.md)); an `.r08` can be played
-directly with no conversion, defaulting to a per-strobe mode that matches default TAStm32
-replay semantics.
+scripts in `scripts/` (see the [Installation guide](INSTALL.md)) rather than loaded into the web UI
+directly; an `.r08` can be played as-is with no conversion, defaulting to a per-strobe mode that
+matches default TAStm32 replay semantics.
+
+TASDeck drives standard NES controllers on either port. Zapper, Arkanoid paddle, Power Pad, Four
+Score, microphone, and expansion-port input are outside its scope, and the converters reject movies
+that use them.
 
 During hardware TAS playback, the on-screen controller lights up the buttons for the selected NES
 port. The `Show both controllers` checkbox stacks both input streams vertically, using compact

@@ -143,6 +143,13 @@ This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt
 causing the game to reread until two consecutive values match. Serving a new mask for every poll
 would drift the stream, while serving one mask per latch window gives each reread the same value.
 
+That coalescing is also a hard boundary. Because `poll` and `latch` collapse every read inside a
+window onto one mask, they cannot carry a movie that delivers a *different* byte to each read within
+a single frame — the Super Mario Bros. 3 ["game end
+glitch"](https://tasvideos.org/7245S) arbitrary-code-execution run writes its payload that way. Such
+a movie needs `strobe` mode together with a source dump holding one record per latch; a frame-model
+export of it cannot work in any mode, because the per-read variation is already gone from the data.
+
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
@@ -194,6 +201,41 @@ Trace filenames use local time and its UTC offset:
 The trace header records details such as the TAS filename, bridge run ID, original and effective
 mask counts, skip and delay values, captured range, and recent firmware status.
 
+## When The Trace Is Clean
+
+A trace can show that every mask TASDeck served matched the converter's expected stream, bit for bit,
+with correct record alignment and no anomalies — and the run still desynchronized. This is a real
+outcome, not a sign the trace was captured wrong. It means the divergence is console-side: TASDeck
+delivered the movie faithfully and the console did something the emulator did not. Once serving
+verifies clean, stop looking for a firmware bug and start looking at the hardware.
+
+The usual console-side causes:
+
+- **Lag-frame placement.** The console takes one more or one fewer lag frame than the emulator at
+  some transition, which shifts the game's RNG phase and breaks a manipulation much later. The first
+  visible symptom can be minutes after the actual divergence, so the trace is more reliable than the
+  screen for locating it. Comparing the inter-latch gap histograms of a winning and a losing run
+  finds the exact record where poll cadence first differs.
+- **Power-on phase.** The above is often decided at boot. Because a lag frame is a threshold
+  crossing on a continuously varying power-on phase, the result can be stable across several boots
+  and then flip, so a handful of identical runs is not proof of determinism. Boot-cycle at least
+  three or four times before concluding a movie cannot sync.
+- **The flash cart.** An EverDrive N8 Pro leaves the console in a different startup state than an
+  original cartridge. A reproducible failure at a fixed location is worth retesting on a real
+  cartridge when one is available.
+- **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern cannot be
+  reproduced by any replay device.
+- **Mapper-specific behavior.** Some titles are documented as failing on every replay device, not
+  only this one. Nightshade is the standing example: TASVideos testing reports it syncing about one
+  attempt in twenty at one startup offset and somewhat better at another, with MMC3 mapper clocking
+  the suspected cause. See [NES Console Test
+  Runs](https://tasvideos.org/Forum/Topics/18797). Check whether a stubborn game already has a
+  reputation before treating it as a TASDeck problem.
+
+When a run fails the same way repeatedly, note the record number where the trace's poll cadence
+first departs from a known-good run. That number identifies the retry point and often makes a failed
+attempt cost minutes instead of the movie's full length.
+
 ## Continuous Trace Capture
 
 For focused diagnosis, start TASDeck with continuous firmware trace capture enabled:
@@ -206,6 +248,22 @@ This writes one `<timestamp>_<name>.stream.csv` per run. Streaming is disabled b
 near-constant USB serial responses can add interrupt pressure during long hardware runs. When
 enabled, the bridge pages rows only while the mask buffer is comfortably full, marks overwritten
 ranges with `# gap:` comments, and performs a bounded final drain after playback stops or completes.
+
+Streaming competes with record upload for the one serial link. The bridge pauses paging whenever the
+firmware reports the mask buffer is not comfortably full, which keeps upload ahead of playback in
+normal use, but that check reads a status value that can itself go stale when the link is busy, so it
+is a safeguard rather than a guarantee.
+
+The load depends on how many trace rows the run generates. Windowed modes emit one row per completed
+poll; `strobe` mode emits one row per port per accepted latch edge, so a two-port strobe-mode `.r08`
+produces by far the most rows and carries the most risk. One such run has been observed to starve the
+upload badly enough that the mask buffer drained to empty and playback stalled a few hundred records
+in — while the trace showed every served mask as correct, which looks like a desync and is not one.
+Single-port runs have streamed for tens of thousands of records without trouble.
+
+Streaming a two-port run is therefore worth trying but worth watching. If playback stalls early and
+the trace shows correct masks up to the stall, suspect starvation rather than a desync, and recapture
+with the event log's `Trace` button, which reads the ring once instead of paging it continuously.
 
 On macOS, prevent idle sleep during long runs with:
 

@@ -289,10 +289,31 @@ hardware-flow changes:
   overflow off screen.
 - Layout remains usable at desktop width, tablet width, and narrow mobile width.
 
-## Current Limitations
+## Known Constraints
 
-- The web UI does not accept raw FM2 or BK2 files; convert the movie plus its
-  matching ROM to `.tdmask` first.
-- Frame-model `.tdmask` playback depends on console and emulator lag/poll behavior matching closely.
-  Per-strobe `.r08` playback handles multiple consumed reads within one frame, but it cannot recover
-  when the console accepts a different number of strobes than the replay encodes.
+User-facing guidance on console-side sync failures lives in [When The Trace Is
+Clean](docs/hardware-tas-workflow.md#when-the-trace-is-clean); keep those authoritative and do not duplicate them here. These
+are the constraints that shape implementation decisions:
+
+- Windowed playback deliberately coalesces every controller read inside a latch window into one
+  mask. This is what keeps DPCM re-read games in sync, and it is also why the windowed modes can
+  never carry input that varies per read within one frame. That class of movie requires `strobe`
+  mode and a per-latch source dump; it is an architectural boundary, not a bug to fix in the
+  windowed path.
+- Frame-model `.tdmask` playback depends on console and emulator lag and poll behavior matching
+  closely. Per-strobe `.r08` playback handles multiple consumed reads within one frame, but neither
+  can recover when the console accepts a different number of strobes than the replay encodes.
+- Port count is user-supplied configuration and must never be inferred from the data. A stream whose
+  port 2 bytes are all zero is still a two-port stream, and collapsing it to one port changes latch
+  and clock handling enough to desynchronize a run whose serving is otherwise byte-perfect.
+- `.r08` carries no header, so frame-versus-latch semantics, port count, and ROM identity cannot be
+  validated at load time. Import relies on the replay-device convention documented in
+  [`.r08` Format](docs/hardware-tas-workflow.md#r08-format).
+- The web UI does not accept raw FM2 or BK2 files; convert the movie plus its matching ROM to
+  `.tdmask` first.
+- The bridge serves record upload and trace streaming over one serial link with no arbitration
+  beyond a buffer-level backoff that reads a status value which can go stale under load. High
+  trace-row rates — worst case a two-port `strobe` run, which emits a row per port per latch edge —
+  have been observed to starve the upload into a buffer underrun that resembles a desync. Treat
+  strict upload priority as the real fix if this is revisited; see [Continuous Trace
+  Capture](docs/hardware-tas-workflow.md#continuous-trace-capture).
