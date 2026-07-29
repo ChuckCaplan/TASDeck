@@ -11,6 +11,6 @@ module.exports = defineConfig({
   webServer: {
     command: "node scripts/bridge-server.js --host 127.0.0.1 --no-open",
     url: "http://127.0.0.1:8000",
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
   },
 });
