@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same PR makes an in-flight run obsolete. Keyed by PR
+# number, not branch name, so same-named branches on different forks stay
+# distinct. Pushes to main fall back to run_id and never cancel, so every
+# commit keeps its own completed check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # The versions package.json declares support for.
+        node-version: [22, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run test:web
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Playwright starts the bridge server itself via the webServer config.
+      - run: npm run test:ui
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  firmware:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Pinned so a core release cannot silently change the compiled binary.
+      ARDUINO_CORE: arduino:renesas_uno@1.6.0
+    steps:
+      - uses: actions/checkout@v7
+
+      # Host-compiled protocol/playback tests: plain sh and c++, so this job
+      # needs no board, no core, and no npm ci. npm is only the script runner,
+      # which keeps the command defined in one place.
+      - run: npm run test:firmware
+
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.5.1
+      - name: Cache Arduino cores
+        uses: actions/cache@v6
+        with:
+          path: ~/.arduino15
+          # Core version belongs in the key: cache is not re-saved on an exact
+          # hit, so a constant key would pin the core to the first run's version.
+          key: arduino15-${{ env.ARDUINO_CORE }}-${{ runner.os }}
+      - name: Install renesas_uno core
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install "$ARDUINO_CORE"
+
+      - run: npm run compile:firmware
+      - run: npm run compile:firmware:diagnostic

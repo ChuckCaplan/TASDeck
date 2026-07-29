@@ -5,7 +5,7 @@
   "license": "MIT",
   "description": "Browser TAS control deck, USB serial middleware, and Arduino UNO R4 serial firmware for NES input experiments.",
   "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "node": "^22.13.0 || >=24"
   },
   "scripts": {
     "start": "node scripts/bridge-server.js",
