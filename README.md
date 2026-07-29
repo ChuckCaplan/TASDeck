@@ -92,6 +92,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Game and run | Time | Link | Original Format | Hardware |
 | --- | ---: | --- | --- | --- |
 | Arkanoid — "warpless" by eien86 | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro |
+| Chip 'n Dale Rescue Rangers — 2 players by dragonxyk | 09:33 | [TASBot-Projects](https://github.com/dwangoac/TASBot-Projects/tree/master/replayfiles) | `.r08` | EverDrive N8 Pro |
 | Disney's The Little Mermaid - McBobX | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
 | Donkey Kong by Alyosha | 01:16 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2`, `.r08` | EverDrive N8 Pro |
 | Double Dragon by Alyosha | 08:52 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
