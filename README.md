@@ -105,6 +105,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
 | The Legend of Zelda — Baxter & jprofit22 | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
 | The Legend of Zelda "Swordless Challenge" by Lord Tom | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
+| Mike Tyson's Punch-Out!! by adelikat | 17:35 | [TASBot-Projects](https://github.com/dwangoac/TASBot-Projects/tree/master/replayfiles) | `.r08` | EverDrive N8 Pro |
 | Double Dragon by Alyosha | 08:52 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Double Dragon II — 2 players by Alyosha | 08:23 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | Tetris — "maximum score" by r57shell & Archanfel | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
