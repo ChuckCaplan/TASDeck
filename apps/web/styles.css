@@ -203,7 +203,8 @@ h2 {
   gap: 12px;
 }
 
-.show-both-control {
+.show-both-control,
+.recent-runs-completed-control {
   display: inline-flex;
   min-height: 24px;
   align-items: center;
@@ -220,7 +221,8 @@ h2 {
   -webkit-tap-highlight-color: transparent;
 }
 
-.show-both-control input {
+.show-both-control input,
+.recent-runs-completed-control input {
   width: 16px;
   height: 16px;
   margin: 0;
@@ -228,7 +230,8 @@ h2 {
   cursor: pointer;
 }
 
-.show-both-control input:focus-visible {
+.show-both-control input:focus-visible,
+.recent-runs-completed-control input:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
@@ -958,6 +961,241 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.recent-runs-dialog {
+  width: min(920px, calc(100% - 32px));
+  max-width: none;
+  max-height: calc(100svh - 32px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 80px rgba(22, 24, 29, 0.3);
+}
+
+.recent-runs-dialog:not([open]) {
+  display: none;
+}
+
+.recent-runs-dialog[open] {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.recent-runs-dialog::backdrop {
+  background: rgba(22, 24, 29, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.recent-runs-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.recent-runs-head .small-button {
+  min-width: 38px;
+  padding: 0;
+  font-size: 1.25rem;
+}
+
+.recent-runs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--page);
+}
+
+.recent-runs-toolbar .recent-runs-completed-control {
+  margin-right: auto;
+}
+
+.recent-runs-sort select {
+  min-height: 36px;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 30px 0 10px;
+  color: var(--ink);
+  background: #ffffff;
+  font-weight: 800;
+}
+
+.recent-runs-empty {
+  margin: 0;
+  padding: 24px 18px;
+  color: var(--muted);
+  text-align: center;
+  font-weight: 800;
+}
+
+.recent-runs-list {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+  padding: 12px 18px 18px;
+  overflow: auto;
+  gap: 10px;
+  list-style: none;
+}
+
+.recent-run-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.recent-run-heading,
+.recent-run-meta,
+.recent-run-chips,
+.recent-run-diagnostics,
+.recent-run-traces,
+.recent-run-trace,
+.recent-run-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+
+.recent-run-heading {
+  grid-column: 1;
+}
+
+.recent-run-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.recent-run-name-tag,
+.recent-run-chip,
+.recent-run-outcome {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
+.recent-run-name-tag {
+  color: var(--muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.recent-run-outcome {
+  margin-left: auto;
+}
+
+.recent-run-outcome.outcome-completed {
+  border-color: var(--good);
+  color: var(--good);
+}
+
+.recent-run-outcome.outcome-error {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.recent-run-outcome.outcome-playing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.recent-run-outcome.outcome-stopped,
+.recent-run-outcome.outcome-interrupted,
+.recent-run-outcome.outcome-unknown {
+  color: var(--muted);
+}
+
+.recent-run-meta {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.recent-run-meta span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+}
+
+.recent-run-chips {
+  grid-column: 1;
+}
+
+.recent-run-chip {
+  color: var(--muted);
+  background: var(--page);
+}
+
+.recent-run-anomaly {
+  color: var(--ink);
+}
+
+.recent-run-diagnostics {
+  grid-column: 1;
+  align-items: flex-start;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.recent-run-traces {
+  align-items: flex-start;
+}
+
+.recent-run-trace {
+  overflow-wrap: anywhere;
+}
+
+.recent-run-copy-path,
+.recent-run-trace-toggle {
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink);
+  background: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.recent-run-traces-truncated {
+  font-style: italic;
+}
+
+.recent-run-source-note {
+  grid-column: 1;
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.recent-run-actions {
+  grid-column: 2;
+  grid-row: 1 / span 5;
+  align-content: center;
+  justify-content: flex-end;
+}
+
+.recent-run-actions .transport-button {
+  min-height: 36px;
+  padding: 0 12px;
+}
+
 @media (max-width: 1060px) {
   .layout-grid {
     grid-template-columns: 1fr;
@@ -1048,6 +1286,59 @@ h2 {
 
   .event-log li {
     grid-template-columns: 1fr;
+  }
+
+  .recent-runs-dialog {
+    width: calc(100% - 12px);
+    max-height: calc(100svh - 12px);
+  }
+
+  .recent-runs-head {
+    padding: 10px 12px;
+  }
+
+  .recent-runs-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    padding: 8px 12px;
+  }
+
+  .recent-runs-toolbar .recent-runs-completed-control {
+    display: flex;
+    grid-column: 1 / -1;
+  }
+
+  .recent-runs-sort,
+  .recent-runs-sort select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .recent-runs-list {
+    padding: 8px 12px 12px;
+  }
+
+  .recent-run-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recent-run-heading,
+  .recent-run-meta,
+  .recent-run-chips,
+  .recent-run-diagnostics,
+  .recent-run-source-note,
+  .recent-run-actions {
+    grid-column: 1;
+  }
+
+  .recent-run-actions {
+    grid-row: auto;
+    justify-content: stretch;
+  }
+
+  .recent-run-actions button {
+    flex: 1 1 90px;
+    min-width: 0;
   }
 }
 
@@ -1275,6 +1566,28 @@ h2 {
 
   .nes-controller.dual-controllers [data-controller-slot="secondary"] {
     display: none;
+  }
+
+  .recent-runs-dialog[open] {
+    display: grid;
+    width: calc(100% - 12px);
+    max-height: calc(100svh - 12px);
+  }
+
+  .recent-runs-dialog .recent-runs-completed-control {
+    display: flex;
+  }
+
+  .recent-runs-head {
+    padding: 6px 10px;
+  }
+
+  .recent-runs-toolbar {
+    padding: 5px 10px;
+  }
+
+  .recent-runs-list {
+    padding: 6px 10px 10px;
   }
 
 }

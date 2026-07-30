@@ -113,6 +113,7 @@
               <h2>Playback</h2>
             </div>
             <div class="file-actions">
+              <button class="small-button" type="button" id="recentRunsButton">Recent</button>
               <label class="file-picker">
                 Open
                 <input id="tasFile" type="file" accept=".tdmask,.r08" />
@@ -197,10 +198,47 @@
         </div>
         <ol id="eventLog" class="event-log"></ol>
       </section>
+
+      <dialog id="recentRunsDialog" class="recent-runs-dialog" aria-labelledby="recentRunsTitle">
+        <form method="dialog" class="recent-runs-head">
+          <div>
+            <p class="eyebrow">TAS File</p>
+            <h2 id="recentRunsTitle">Recently Played</h2>
+          </div>
+          <span class="log-capacity" id="recentRunsCount">0 runs</span>
+          <button class="small-button" type="submit" id="recentRunsClose" aria-label="Close recent runs">×</button>
+        </form>
+
+        <div class="recent-runs-toolbar">
+          <label class="recent-runs-completed-control" for="recentRunsCompletedOnly">
+            <input type="checkbox" id="recentRunsCompletedOnly" />
+            <span>Completed runs only</span>
+          </label>
+          <label class="recent-runs-sort" for="recentRunsSort">
+            <span class="visually-hidden">Sort runs by</span>
+            <select id="recentRunsSort">
+              <option value="date">Date</option>
+              <option value="name">TAS name</option>
+              <option value="played">Time played</option>
+              <option value="length">Estimated length</option>
+              <option value="completed">Completed</option>
+              <option value="mode">Sync mode</option>
+              <option value="delay">Start delay</option>
+              <option value="skip">Skip first</option>
+            </select>
+          </label>
+          <button class="small-button" type="button" id="recentRunsSortDirection" aria-label="Sort descending">↓</button>
+          <button class="small-button" type="button" id="recentRunsClear">Clear all</button>
+        </div>
+
+        <p class="recent-runs-empty" id="recentRunsMessage">Loading recent runs…</p>
+        <ol class="recent-runs-list" id="recentRunsList"></ol>
+      </dialog>
     </main>
 
     <script src="src/tas.js" defer></script>
     <script src="src/transport.js" defer></script>
+    <script src="src/recents.js" defer></script>
     <script src="src/app.js" defer></script>
   </body>
 </html>

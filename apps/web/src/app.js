@@ -14,11 +14,35 @@ const {
   tasRunChecksum,
   validateTasFrames,
 } = globalThis.TasDeckTas;
+const {
+  RECENT_RUN_SORT_DIRECTIONS,
+  RECENT_RUN_SORT_KEYS,
+  annotateDuplicateRecentRunNames,
+  filterRecentRuns,
+  formatRecentRunDuration,
+  formatRecentRunProgress,
+  formatRecentRunRelativeTime,
+  normalizeRecentRunEntries,
+  recentRunAnomalyChips,
+  recentRunConfigChips,
+  recentRunElapsedMs,
+  recentRunEstimatedLength,
+  recentRunModeLabel,
+  recentRunSourceKey,
+  recentRunTraceSummary,
+  restoreOptionsForRecentRun,
+  sortRecentRuns,
+} = globalThis.TasDeckRecents;
 
 const EVENT_LOG_LIMIT = 120;
 const SERIAL_CONNECT_TIMEOUT_MS = 25000;
 const HARDWARE_TAS_RESPONSE_TIMEOUT_MS = 30000;
 const EVENT_LOG_SAVE_TIMEOUT_MS = 5000;
+const RECENT_RUNS_RESPONSE_TIMEOUT_MS = 10000;
+const RECENT_RUNS_CONFIRM_RESET_MS = 5000;
+const RECENT_RUNS_COMPLETED_ONLY_KEY = "tasdeck.recentRuns.completedOnly";
+const RECENT_RUNS_SORT_KEY = "tasdeck.recentRuns.sortKey";
+const RECENT_RUNS_SORT_DIRECTION_KEY = "tasdeck.recentRuns.sortDirection";
 const COPY_LOG_LABEL = "Copy";
 const COPY_LOG_COPIED_LABEL = "Copied";
 const COPY_LOG_RESET_MS = 1500;
@@ -74,6 +98,7 @@ const state = {
   },
   tas: {
     fileName: "None",
+    fileBytes: new Uint8Array(),
     frames: [],
     masks: [],
     syncMode: HARDWARE_TAS_SYNC_MODE,
@@ -130,6 +155,20 @@ const state = {
       startedAt: 0,
     },
   },
+  recentRuns: {
+    entries: [],
+    loading: false,
+    message: "",
+    completedOnly: false,
+    sortKey: "date",
+    sortDirection: "desc",
+    expandedTraceIds: new Set(),
+    clearConfirm: false,
+    clearConfirmTimer: 0,
+    rerunConfirmId: "",
+    rerunConfirmTimer: 0,
+    bridgeState: "idle",
+  },
   eventCount: 0,
   copyingLog: false,
 };
@@ -144,6 +183,16 @@ const elements = {
   showBothControllers: document.querySelector("#showBothControllers"),
   p2Shortcuts: document.querySelector("#p2Shortcuts"),
   tasFile: document.querySelector("#tasFile"),
+  recentRunsButton: document.querySelector("#recentRunsButton"),
+  recentRunsDialog: document.querySelector("#recentRunsDialog"),
+  recentRunsClose: document.querySelector("#recentRunsClose"),
+  recentRunsCount: document.querySelector("#recentRunsCount"),
+  recentRunsCompletedOnly: document.querySelector("#recentRunsCompletedOnly"),
+  recentRunsSort: document.querySelector("#recentRunsSort"),
+  recentRunsSortDirection: document.querySelector("#recentRunsSortDirection"),
+  recentRunsClear: document.querySelector("#recentRunsClear"),
+  recentRunsMessage: document.querySelector("#recentRunsMessage"),
+  recentRunsList: document.querySelector("#recentRunsList"),
   playButton: document.querySelector("#playButton"),
   pauseButton: document.querySelector("#pauseButton"),
   stopButton: document.querySelector("#stopButton"),
@@ -177,6 +226,8 @@ class NetworkBridgeTransport {
   tasWaiters = [];
   eventLogSaveWaiters = [];
   eventLogSaveRequestId = 0;
+  recentRunsWaiters = [];
+  recentRunsRequestId = 0;
 
   isSupported() {
     return Boolean(window.WebSocket);
@@ -292,8 +343,10 @@ class NetworkBridgeTransport {
     }
 
     if (message.type === "tas_status") {
+      state.recentRuns.bridgeState = message.bridge_state || state.recentRuns.bridgeState;
       updateHardwareStatusFromFirmware(message);
       this.resolveTasWaiters(message);
+      renderRecentRunsDialogIfOpen();
       return;
     }
 
@@ -315,6 +368,28 @@ class NetworkBridgeTransport {
       return;
     }
 
+    if (message.type === "recent_runs") {
+      receiveRecentRuns(message);
+      this.resolveRecentRunsWaiters(message);
+      return;
+    }
+
+    if (message.type === "recent_run_source_loaded") {
+      this.resolveRecentRunsWaiters(message);
+      return;
+    }
+
+    if (message.type === "recent_run_source_request") {
+      this.answerRecentRunSourceRequest(message);
+      return;
+    }
+
+    if (message.type === "recent_runs_error") {
+      const error = new Error(message.message || "Recent runs request failed");
+      this.rejectRecentRunsWaiters(error, message.requestId);
+      return;
+    }
+
     if (message.type === "tas_error") {
       stopTasControllerPreview();
       state.tas.hardwareStatus = message;
@@ -330,6 +405,7 @@ class NetworkBridgeTransport {
       this.pendingConnect?.reject(error);
       this.rejectTasWaiters(error);
       this.rejectEventLogSaveWaiters(error);
+      this.rejectRecentRunsWaiters(error);
     }
   }
 
@@ -372,6 +448,7 @@ class NetworkBridgeTransport {
     this.pendingConnect?.reject(new Error("Disconnected from TASDeck middleware"));
     this.rejectTasWaiters(new Error("Disconnected from TASDeck middleware"));
     this.rejectEventLogSaveWaiters(new Error("Disconnected from TASDeck middleware"));
+    this.rejectRecentRunsWaiters(new Error("Disconnected from TASDeck middleware"));
   }
 
   handleSocketError() {
@@ -433,7 +510,14 @@ class NetworkBridgeTransport {
     return true;
   }
 
-  sendTasUpload(fileName, masks, clientRunId, skipPolls = 0, syncMode = HARDWARE_TAS_SYNC_MODE) {
+  sendTasUpload(
+    fileName,
+    masks,
+    clientRunId,
+    skipPolls = 0,
+    syncMode = HARDWARE_TAS_SYNC_MODE,
+    source = {},
+  ) {
     const normalizedMasks = normalizeTasMasks(Array.isArray(masks) ? masks : []);
     const portCount = tasMasksPortCount(normalizedMasks);
     const normalizedSkipPolls = Number.isSafeInteger(Number(skipPolls)) ? Math.max(0, Number(skipPolls)) : 0;
@@ -451,6 +535,13 @@ class NetworkBridgeTransport {
         // the per-frame masks so both ends verify the reconstructed stream.
         masks: tasMasksToWire(normalizedMasks, portCount),
         checksum: tasRunChecksum(normalizedMasks, portCount),
+        ...(source.sourceKey
+          ? {
+              sourceKey: source.sourceKey,
+              sourceByteLength: source.sourceByteLength,
+              sourceFrameCount: source.sourceFrameCount,
+            }
+          : {}),
       },
       this.tasCommandMatcher("tas_upload", clientRunId),
     );
@@ -602,6 +693,108 @@ class NetworkBridgeTransport {
     this.tasWaiters = [];
   }
 
+  requestRecentRuns() {
+    return this.sendRecentRunsRequest("recent_runs_list", {}, "recent_runs");
+  }
+
+  loadRecentRun(id) {
+    return this.sendRecentRunsRequest("recent_run_load", { id }, "recent_run_source_loaded");
+  }
+
+  deleteRecentRun(id) {
+    return this.sendRecentRunsRequest("recent_run_delete", { id }, "recent_runs");
+  }
+
+  clearRecentRuns() {
+    return this.sendRecentRunsRequest("recent_runs_clear", {}, "recent_runs");
+  }
+
+  sendRecentRunsRequest(type, payload, responseType) {
+    const requestId = String((this.recentRunsRequestId += 1));
+    const responsePromise = this.waitForRecentRunsResponse(requestId, responseType);
+    try {
+      this.sendMessage({ type, requestId, ...payload });
+    } catch (error) {
+      this.rejectRecentRunsWaiters(error, requestId);
+      return Promise.reject(error);
+    }
+    return responsePromise;
+  }
+
+  waitForRecentRunsResponse(requestId, responseType) {
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        requestId,
+        responseType,
+        resolve,
+        reject,
+        timer: window.setTimeout(() => {
+          this.recentRunsWaiters = this.recentRunsWaiters.filter((item) => item !== waiter);
+          reject(new Error("Timed out waiting for recent runs"));
+        }, RECENT_RUNS_RESPONSE_TIMEOUT_MS),
+      };
+
+      this.recentRunsWaiters.push(waiter);
+    });
+  }
+
+  resolveRecentRunsWaiters(message) {
+    const remaining = [];
+    this.recentRunsWaiters.forEach((waiter) => {
+      if (
+        waiter.requestId === String(message.requestId || "") &&
+        waiter.responseType === message.type
+      ) {
+        window.clearTimeout(waiter.timer);
+        waiter.resolve(message);
+      } else {
+        remaining.push(waiter);
+      }
+    });
+    this.recentRunsWaiters = remaining;
+  }
+
+  rejectRecentRunsWaiters(error, requestId = "") {
+    const remaining = [];
+    this.recentRunsWaiters.forEach((waiter) => {
+      if (!requestId || waiter.requestId === String(requestId)) {
+        window.clearTimeout(waiter.timer);
+        waiter.reject(error);
+      } else {
+        remaining.push(waiter);
+      }
+    });
+    this.recentRunsWaiters = remaining;
+  }
+
+  answerRecentRunSourceRequest(message) {
+    try {
+      const bytes = state.tas.fileBytes;
+      const sourceKey = String(message.sourceKey || "");
+      if (bytes.length > 0 && recentRunSourceKey(bytes) === sourceKey) {
+        this.sendMessage({
+          type: "recent_run_source",
+          sourceRequestId: String(message.sourceRequestId || ""),
+          sourceKey,
+          fileName: state.tas.fileName,
+          bytesBase64: bytesToBase64(bytes),
+        });
+        return;
+      }
+
+      this.sendMessage({
+        type: "recent_run_source_unavailable",
+        sourceRequestId: String(message.sourceRequestId || ""),
+        sourceKey,
+      });
+    } catch (error) {
+      writeLog({
+        type: "bridge",
+        message: `Recent run source response failed: ${error.message}`,
+      });
+    }
+  }
+
   sendMessage(message) {
     if (!this.socket || this.socket.readyState !== window.WebSocket.OPEN) {
       throw new Error("TASDeck middleware is not connected");
@@ -620,6 +813,23 @@ const nesTransport = {
 const activeButtonInputs = new Map();
 const activeKeyboardInputs = new Map();
 const landscapeControllerQuery = window.matchMedia("(max-height: 520px) and (orientation: landscape)");
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 32768) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  }
+  return window.btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = window.atob(String(value || ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
 
 function formatButtons(buttons) {
   if (!buttons || buttons.size === 0) {
@@ -1234,15 +1444,7 @@ function runTimerDurations() {
 }
 
 function formatRunTime(milliseconds) {
-  const totalSeconds = Math.max(0, Math.round(milliseconds / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const paddedSeconds = String(seconds).padStart(2, "0");
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:${paddedSeconds}`;
-  }
-  return `${minutes}:${paddedSeconds}`;
+  return formatRecentRunDuration(milliseconds);
 }
 
 function renderRunTimer() {
@@ -1499,7 +1701,8 @@ async function handleTasFile(event) {
 
   try {
     const contents = await file.arrayBuffer();
-    loadTasFromParseResult(file.name, parseTasFileBytes(file.name, contents));
+    const bytes = new Uint8Array(contents);
+    loadTasFromParseResult(file.name, parseTasFileBytes(file.name, bytes), null, bytes);
   } catch (error) {
     loadTasParseError(file.name, error);
   }
@@ -1515,7 +1718,7 @@ function loadTasParseError(fileName, error) {
   });
 }
 
-function loadTasFromParseResult(fileName, parseResult) {
+function loadTasFromParseResult(fileName, parseResult, restore = null, fileBytes = null) {
   stopPlayback({ silent: true, fenceCancel: true });
   state.tas.hardwareRunId += 1;
 
@@ -1536,14 +1739,28 @@ function loadTasFromParseResult(fileName, parseResult) {
   }
 
   state.tas.fileName = fileName;
+  state.tas.fileBytes = fileBytes instanceof Uint8Array ? fileBytes : new Uint8Array();
   state.tas.frames = frames;
   state.tas.masks = validation.masks;
-  state.tas.syncMode = normalizeHardwareTasSyncMode(parseResult?.syncMode);
+  state.tas.syncMode =
+    parseResult?.format === "r08" && restore
+      ? normalizeHardwareTasSyncMode(restore.syncMode)
+      : normalizeHardwareTasSyncMode(parseResult?.syncMode);
   elements.syncMode.value = state.tas.syncMode;
-  state.tas.syncDelayTouched = false;
+  state.tas.syncDelayTouched = Boolean(restore);
+  if (restore) {
+    state.tas.syncDelayPolls = Math.max(
+      0,
+      Math.min(HARDWARE_TAS_MAX_START_DELAY_POLLS, Number(restore.delayPolls) || 0),
+    );
+    elements.syncDelayPolls.value = String(state.tas.syncDelayPolls);
+  }
   applyDefaultSyncDelay();
-  state.tas.syncSkipPolls = 0;
-  elements.syncSkipPolls.value = "0";
+  const maxSkipPolls = Math.max(0, validation.masks.length - 1);
+  state.tas.syncSkipPolls = restore
+    ? Math.max(0, Math.min(maxSkipPolls, Number(restore.skipPolls) || 0))
+    : 0;
+  elements.syncSkipPolls.value = String(state.tas.syncSkipPolls);
   state.tas.sourceFrameCount = Number(parseResult?.sourceFrameCount) || 0;
   resetRunTimer();
   elements.syncSkipPolls.max = validation.masks.length > 0 ? String(validation.masks.length - 1) : "0";
@@ -1769,6 +1986,13 @@ async function ensureHardwareTasUploaded(runId) {
       runId,
       state.tas.syncSkipPolls,
       state.tas.syncMode,
+      state.tas.fileBytes.length > 0
+        ? {
+            sourceKey: recentRunSourceKey(state.tas.fileBytes),
+            sourceByteLength: state.tas.fileBytes.length,
+            sourceFrameCount: state.tas.sourceFrameCount,
+          }
+        : {},
     )
     .then((status) => {
       if (!hardwareRunIsCurrent(runId)) {
@@ -2332,6 +2556,7 @@ function updatePlaybackInfo() {
   elements.syncDelayPolls.disabled = syncControlsDisabled;
   elements.syncSkipPolls.disabled = syncControlsDisabled;
   elements.syncMode.disabled = syncControlsDisabled;
+  renderRecentRunsDialogIfOpen();
 }
 
 function formatTasFrameInput(frame) {
@@ -2375,6 +2600,459 @@ function bindPlayback() {
   elements.syncDelayPolls.addEventListener("input", handleSyncDelayChange);
   elements.syncSkipPolls.addEventListener("change", handleSyncSkipChange);
   elements.syncSkipPolls.addEventListener("input", handleSyncSkipChange);
+}
+
+function readRecentRunsPreferences() {
+  try {
+    state.recentRuns.completedOnly =
+      window.localStorage.getItem(RECENT_RUNS_COMPLETED_ONLY_KEY) === "true";
+    const sortKey = window.localStorage.getItem(RECENT_RUNS_SORT_KEY);
+    const sortDirection = window.localStorage.getItem(RECENT_RUNS_SORT_DIRECTION_KEY);
+    if (RECENT_RUN_SORT_KEYS.includes(sortKey)) {
+      state.recentRuns.sortKey = sortKey;
+    }
+    if (RECENT_RUN_SORT_DIRECTIONS.includes(sortDirection)) {
+      state.recentRuns.sortDirection = sortDirection;
+    }
+  } catch {
+    // Recent-run preferences are optional in storage-restricted browsers.
+  }
+
+  elements.recentRunsCompletedOnly.checked = state.recentRuns.completedOnly;
+  elements.recentRunsSort.value = state.recentRuns.sortKey;
+  updateRecentRunsSortDirection();
+}
+
+function saveRecentRunsPreference(key, value) {
+  try {
+    window.localStorage.setItem(key, String(value));
+  } catch {
+    // The picker continues with in-memory preferences when storage is unavailable.
+  }
+}
+
+function recentRunsDialogIsOpen() {
+  return elements.recentRunsDialog.hasAttribute("open");
+}
+
+function showRecentRunsDialog() {
+  if (typeof elements.recentRunsDialog.showModal === "function") {
+    if (!recentRunsDialogIsOpen()) {
+      elements.recentRunsDialog.showModal();
+    }
+    return;
+  }
+
+  elements.recentRunsDialog.setAttribute("open", "");
+  elements.recentRunsDialog.setAttribute("role", "dialog");
+  elements.recentRunsDialog.setAttribute("aria-modal", "true");
+}
+
+function closeRecentRunsDialog() {
+  resetRecentRunsConfirmations();
+  if (typeof elements.recentRunsDialog.close === "function" && recentRunsDialogIsOpen()) {
+    elements.recentRunsDialog.close();
+    return;
+  }
+
+  elements.recentRunsDialog.removeAttribute("open");
+  elements.recentRunsButton.focus();
+}
+
+async function openRecentRunsDialog() {
+  resetRecentRunsConfirmations();
+  state.recentRuns.loading = true;
+  state.recentRuns.message = "";
+  showRecentRunsDialog();
+  renderRecentRunsDialog();
+
+  try {
+    await networkTransport.ensureSocket();
+    await networkTransport.requestRecentRuns();
+  } catch (error) {
+    state.recentRuns.loading = false;
+    state.recentRuns.message =
+      error.message === "Could not reach the TASDeck middleware server"
+        ? "Could not reach the TASDeck middleware. Start it on this computer and try again."
+        : error.message;
+    renderRecentRunsDialog();
+  }
+}
+
+function receiveRecentRuns(message) {
+  state.recentRuns.entries = normalizeRecentRunEntries(message.entries);
+  state.recentRuns.loading = false;
+  state.recentRuns.message = "";
+  resetRecentRunsConfirmations();
+  renderRecentRunsDialogIfOpen();
+}
+
+function renderRecentRunsDialogIfOpen() {
+  if (recentRunsDialogIsOpen()) {
+    renderRecentRunsDialog();
+  }
+}
+
+function showRecentRunsError(error, onlyIfOpen = false) {
+  state.recentRuns.message = error.message;
+  if (onlyIfOpen) {
+    renderRecentRunsDialogIfOpen();
+  } else {
+    renderRecentRunsDialog();
+  }
+}
+
+function renderRecentRunsDialog() {
+  updateRecentRunsSortDirection();
+  const filtered = filterRecentRuns(state.recentRuns.entries, {
+    completedOnly: state.recentRuns.completedOnly,
+  });
+  const visible = annotateDuplicateRecentRunNames(
+    sortRecentRuns(filtered, {
+      key: state.recentRuns.sortKey,
+      direction: state.recentRuns.sortDirection,
+      now: new Date(),
+    }),
+  );
+
+  elements.recentRunsCount.textContent =
+    visible.length === state.recentRuns.entries.length
+      ? `${visible.length} ${visible.length === 1 ? "run" : "runs"}`
+      : `${visible.length} of ${state.recentRuns.entries.length} runs`;
+  elements.recentRunsList.replaceChildren();
+
+  let message = state.recentRuns.message;
+  if (state.recentRuns.loading) {
+    message = "Loading recent runs…";
+  } else if (!message && state.recentRuns.entries.length === 0) {
+    message = "No runs played yet. Open a .tdmask or .r08 file and press Play.";
+  } else if (!message && visible.length === 0) {
+    message = 'No completed runs yet. Uncheck "Completed runs only" to see every run.';
+  }
+  elements.recentRunsMessage.textContent = message;
+  elements.recentRunsMessage.classList.toggle("hidden", !message);
+
+  for (const entry of visible) {
+    elements.recentRunsList.append(createRecentRunRow(entry));
+  }
+}
+
+function createRecentRunRow(entry) {
+  const row = document.createElement("li");
+  row.className = "recent-run-row";
+  row.dataset.recentRunId = entry.id;
+
+  const heading = document.createElement("div");
+  heading.className = "recent-run-heading";
+  const name = document.createElement("strong");
+  name.className = "recent-run-name";
+  name.textContent = entry.fileName || "Unnamed TAS";
+  heading.append(name);
+  if (entry.nameTag) {
+    const nameTag = document.createElement("span");
+    nameTag.className = "recent-run-name-tag";
+    nameTag.textContent = entry.nameTag;
+    heading.append(nameTag);
+  }
+  const outcome = document.createElement("span");
+  outcome.className = `recent-run-outcome outcome-${entry.outcome}`;
+  outcome.textContent = entry.outcome[0].toUpperCase() + entry.outcome.slice(1);
+  heading.append(outcome);
+
+  const meta = document.createElement("div");
+  meta.className = "recent-run-meta";
+  const relative = document.createElement("span");
+  relative.textContent = formatRecentRunRelativeTime(entry.startedAt, new Date());
+  const absoluteTime = new Date(entry.startedAt);
+  relative.title = Number.isFinite(absoluteTime.getTime()) ? absoluteTime.toLocaleString() : "";
+  const elapsed = document.createElement("span");
+  elapsed.textContent = `Played ${formatRecentRunDuration(recentRunElapsedMs(entry, new Date()))}`;
+  const estimatedLength = recentRunEstimatedLength(entry);
+  const length = document.createElement("span");
+  length.textContent = `${estimatedLength.exact ? "" : "~"}${formatRecentRunDuration(estimatedLength.ms)} long`;
+  const progress = document.createElement("span");
+  progress.textContent = formatRecentRunProgress(entry.recordsPlayed, entry.effectiveRecords);
+  meta.append(relative, elapsed, length, progress);
+
+  const config = document.createElement("div");
+  config.className = "recent-run-chips";
+  for (const label of recentRunConfigChips(entry)) {
+    config.append(createRecentRunChip(label, "recent-run-chip"));
+  }
+
+  row.append(heading, meta, config);
+  const diagnostics = createRecentRunDiagnostics(entry);
+  if (diagnostics) {
+    row.append(diagnostics);
+  }
+
+  if (!entry.sourceAvailable) {
+    const sourceNote = document.createElement("p");
+    sourceNote.className = "recent-run-source-note";
+    sourceNote.textContent = "Stream not archived — open the file with Open.";
+    row.append(sourceNote);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "recent-run-actions";
+  const load = document.createElement("button");
+  load.type = "button";
+  load.className = "small-button recent-run-load";
+  load.textContent = "Load";
+  load.disabled = !entry.sourceAvailable;
+  load.addEventListener("click", () => loadRecentRunEntry(entry, false));
+
+  const rerun = document.createElement("button");
+  rerun.type = "button";
+  rerun.className = "transport-button primary recent-run-rerun";
+  rerun.textContent =
+    state.recentRuns.rerunConfirmId === entry.id ? "Confirm re-run" : "Re-run";
+  rerun.disabled = !entry.sourceAvailable || !networkTransport.isConnected();
+  if (entry.sourceAvailable && !networkTransport.isConnected()) {
+    rerun.title = "Connect the Arduino USB bridge to re-run.";
+  }
+  rerun.addEventListener("click", () => loadRecentRunEntry(entry, true));
+
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "small-button recent-run-delete";
+  remove.textContent = "Delete";
+  remove.setAttribute("aria-label", `Delete ${entry.fileName} run`);
+  remove.addEventListener("click", () => deleteRecentRunEntry(entry));
+  actions.append(load, rerun, remove);
+  row.append(actions);
+  return row;
+}
+
+function createRecentRunChip(label, className) {
+  const chip = document.createElement("span");
+  chip.className = className;
+  chip.textContent = label;
+  return chip;
+}
+
+function createRecentRunDiagnostics(entry) {
+  const anomalies = recentRunAnomalyChips(entry);
+  const expanded = state.recentRuns.expandedTraceIds.has(entry.id);
+  const traces = recentRunTraceSummary(entry, { expanded });
+  if (anomalies.length === 0 && traces.visible.length === 0 && !traces.truncated) {
+    return null;
+  }
+
+  const diagnostics = document.createElement("div");
+  diagnostics.className = "recent-run-diagnostics";
+  for (const label of anomalies) {
+    diagnostics.append(createRecentRunChip(label, "recent-run-chip recent-run-anomaly"));
+  }
+
+  if (traces.visible.length > 0) {
+    const traceList = document.createElement("span");
+    traceList.className = "recent-run-traces";
+    const traceLabel = document.createElement("strong");
+    traceLabel.textContent = "Traces:";
+    traceList.append(traceLabel);
+    for (const trace of traces.visible) {
+      const traceItem = document.createElement("span");
+      traceItem.className = "recent-run-trace";
+      traceItem.title = trace.path;
+      const traceName = document.createElement("span");
+      traceName.textContent = `${trace.baseName} (${trace.kind || "trace"})`;
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "recent-run-copy-path";
+      copy.textContent = "Copy path";
+      copy.addEventListener("click", async () => {
+        try {
+          await copyTextToClipboard(trace.path);
+          copy.textContent = "Copied";
+          window.setTimeout(() => {
+            copy.textContent = "Copy path";
+          }, COPY_LOG_RESET_MS);
+        } catch (error) {
+          state.recentRuns.message = `Could not copy trace path: ${error.message}`;
+          renderRecentRunsDialog();
+        }
+      });
+      traceItem.append(traceName, copy);
+      traceList.append(traceItem);
+    }
+    diagnostics.append(traceList);
+  }
+
+  const traceCount = entry.traceFiles.length;
+  if (traces.hiddenCount > 0 || expanded && traceCount > 5) {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "recent-run-trace-toggle";
+    toggle.textContent = expanded ? "Show fewer traces" : `Show all ${traceCount} traces`;
+    toggle.addEventListener("click", () => {
+      if (expanded) {
+        state.recentRuns.expandedTraceIds.delete(entry.id);
+      } else {
+        state.recentRuns.expandedTraceIds.add(entry.id);
+      }
+      renderRecentRunsDialog();
+    });
+    diagnostics.append(toggle);
+  }
+
+  if (traces.truncated) {
+    const truncated = document.createElement("span");
+    truncated.className = "recent-run-traces-truncated";
+    truncated.textContent = "Additional trace paths were not retained.";
+    diagnostics.append(truncated);
+  }
+  return diagnostics;
+}
+
+function recentRunBridgeIsActive() {
+  return ["arming", "armed", "streaming", "playing", "paused"].includes(
+    state.recentRuns.bridgeState,
+  );
+}
+
+async function loadRecentRunEntry(entry, rerun) {
+  if (rerun && recentRunBridgeIsActive() && state.recentRuns.rerunConfirmId !== entry.id) {
+    resetRecentRunsConfirmations();
+    state.recentRuns.rerunConfirmId = entry.id;
+    state.recentRuns.rerunConfirmTimer = window.setTimeout(() => {
+      state.recentRuns.rerunConfirmId = "";
+      state.recentRuns.rerunConfirmTimer = 0;
+      renderRecentRunsDialogIfOpen();
+    }, RECENT_RUNS_CONFIRM_RESET_MS);
+    renderRecentRunsDialog();
+    return;
+  }
+
+  resetRecentRunsConfirmations();
+  state.recentRuns.message = "Loading recent run…";
+  renderRecentRunsDialog();
+  try {
+    const response = await networkTransport.loadRecentRun(entry.id);
+    const bytes = base64ToBytes(response.bytesBase64);
+    const fileName = response.fileName || entry.fileName;
+    const parseResult = parseTasFileBytes(fileName, bytes);
+    const restore = restoreOptionsForRecentRun({
+      ...entry,
+      ...response.restore,
+    });
+    closeRecentRunsDialog();
+    loadTasFromParseResult(fileName, parseResult, restore, bytes);
+    writeLog({
+      type: "playback",
+      message:
+        `Loaded recent run ${fileName} · ${recentRunModeLabel(restore.syncMode)} · ` +
+        `delay ${restore.delayPolls} · skip ${restore.skipPolls}`,
+      sentAt: new Date().toISOString(),
+    });
+    if (rerun) {
+      playHardwareTas();
+    }
+  } catch (error) {
+    showRecentRunsError(error, true);
+  }
+}
+
+async function deleteRecentRunEntry(entry) {
+  state.recentRuns.message = "";
+  try {
+    await networkTransport.deleteRecentRun(entry.id);
+  } catch (error) {
+    showRecentRunsError(error);
+  }
+}
+
+function resetRecentRunsConfirmations() {
+  if (state.recentRuns.clearConfirmTimer) {
+    window.clearTimeout(state.recentRuns.clearConfirmTimer);
+  }
+  if (state.recentRuns.rerunConfirmTimer) {
+    window.clearTimeout(state.recentRuns.rerunConfirmTimer);
+  }
+  state.recentRuns.clearConfirm = false;
+  state.recentRuns.clearConfirmTimer = 0;
+  state.recentRuns.rerunConfirmId = "";
+  state.recentRuns.rerunConfirmTimer = 0;
+  elements.recentRunsClear.textContent = "Clear all";
+}
+
+async function clearRecentRuns() {
+  if (!state.recentRuns.clearConfirm) {
+    resetRecentRunsConfirmations();
+    state.recentRuns.clearConfirm = true;
+    elements.recentRunsClear.textContent = "Confirm clear";
+    state.recentRuns.clearConfirmTimer = window.setTimeout(() => {
+      resetRecentRunsConfirmations();
+    }, RECENT_RUNS_CONFIRM_RESET_MS);
+    return;
+  }
+
+  resetRecentRunsConfirmations();
+  try {
+    await networkTransport.clearRecentRuns();
+  } catch (error) {
+    showRecentRunsError(error);
+  }
+}
+
+function updateRecentRunsSortDirection() {
+  const descending = state.recentRuns.sortDirection === "desc";
+  elements.recentRunsSortDirection.textContent = descending ? "↓" : "↑";
+  elements.recentRunsSortDirection.setAttribute(
+    "aria-label",
+    descending ? "Sort descending" : "Sort ascending",
+  );
+}
+
+function bindRecentRuns() {
+  elements.recentRunsButton.addEventListener("click", openRecentRunsDialog);
+  elements.recentRunsClose.addEventListener("click", (event) => {
+    event.preventDefault();
+    closeRecentRunsDialog();
+  });
+  elements.recentRunsDialog.addEventListener("close", () => {
+    resetRecentRunsConfirmations();
+    window.setTimeout(() => {
+      elements.recentRunsButton.focus();
+    }, 0);
+  });
+  elements.recentRunsCompletedOnly.addEventListener("change", () => {
+    state.recentRuns.completedOnly = elements.recentRunsCompletedOnly.checked;
+    saveRecentRunsPreference(
+      RECENT_RUNS_COMPLETED_ONLY_KEY,
+      state.recentRuns.completedOnly,
+    );
+    resetRecentRunsConfirmations();
+    renderRecentRunsDialog();
+  });
+  elements.recentRunsSort.addEventListener("change", () => {
+    state.recentRuns.sortKey = RECENT_RUN_SORT_KEYS.includes(elements.recentRunsSort.value)
+      ? elements.recentRunsSort.value
+      : "date";
+    saveRecentRunsPreference(RECENT_RUNS_SORT_KEY, state.recentRuns.sortKey);
+    resetRecentRunsConfirmations();
+    renderRecentRunsDialog();
+  });
+  elements.recentRunsSortDirection.addEventListener("click", () => {
+    state.recentRuns.sortDirection =
+      state.recentRuns.sortDirection === "desc" ? "asc" : "desc";
+    saveRecentRunsPreference(
+      RECENT_RUNS_SORT_DIRECTION_KEY,
+      state.recentRuns.sortDirection,
+    );
+    resetRecentRunsConfirmations();
+    renderRecentRunsDialog();
+  });
+  elements.recentRunsClear.addEventListener("click", clearRecentRuns);
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      recentRunsDialogIsOpen() &&
+      typeof elements.recentRunsDialog.close !== "function"
+    ) {
+      closeRecentRunsDialog();
+    }
+  });
 }
 
 function bindDiagnostics() {
@@ -2538,12 +3216,14 @@ function bindInputSafety() {
 }
 
 function init() {
+  readRecentRunsPreferences();
   bindControllerButtons();
   bindControllerPortSelector();
   bindControllerOrientation();
   bindKeyboardControls();
   bindConnection();
   bindPlayback();
+  bindRecentRuns();
   bindDiagnostics();
   bindLogActions();
   bindInputSafety();
