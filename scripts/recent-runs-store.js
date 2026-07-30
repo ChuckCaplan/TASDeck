@@ -24,6 +24,20 @@ const RECENT_RUNS_PROGRESS_FLUSH_MS = 30_000;
 const RECENT_RUN_TRACE_PATH_LIMIT = 200;
 const MAX_RECENT_RUN_SOURCE_BYTES = 4 * 1024 * 1024;
 const RECENT_RUNS_MAX_PENDING_SOURCES = 32;
+// Read failures that retrying cannot fix: the blob is gone, or the path is
+// structurally wrong or forbidden. Everything else — EMFILE from a busy bridge,
+// EBUSY, EIO — can clear on its own, and nothing ever sets an entry's
+// sourceAvailable back to true, so a blip must not permanently disable a row
+// whose archive is fine.
+const RECENT_RUN_UNREADABLE_ERROR_CODES = new Set([
+  "EACCES",
+  "EISDIR",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "ENOENT",
+  "ENOTDIR",
+  "EPERM",
+]);
 
 class RecentRunsStore {
   constructor({
@@ -417,10 +431,7 @@ class RecentRunsStore {
     try {
       bytes = await fsp.readFile(streamPath);
     } catch (error) {
-      // A missing blob is permanent; anything else (a busy or unreadable file
-      // system) may well succeed on the next try, so do not disable the row
-      // over it.
-      if (error?.code === "ENOENT") {
+      if (RECENT_RUN_UNREADABLE_ERROR_CODES.has(error?.code)) {
         await this._markEntrySourceUnavailable(entry);
       }
       throw error;

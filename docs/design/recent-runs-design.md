@@ -741,7 +741,11 @@ references them bare. So write `window.setTimeout`, `window.localStorage`, `wind
    the source archive to land was considered and rejected on these grounds — the only thing at stake is
    one row's `sourceAvailable` flag.
 2. A missing or unreadable blob makes the entry `sourceAvailable: false` rather than deleting it — the
-   duration and outcome are still worth keeping.
+   duration and outcome are still worth keeping. "Unreadable" means a failure that retrying cannot fix:
+   `ENOENT`, `EISDIR`, `ENOTDIR`, `EACCES`, `EPERM`, `ELOOP`, `ENAMETOOLONG`. A failure that can clear
+   on its own — `EMFILE` from a busy bridge, `EBUSY`, `EIO` — surfaces the error and leaves the flag
+   alone, because nothing ever sets an existing entry's `sourceAvailable` back to `true`, so the flag
+   is one-way and a blip would permanently disable a row whose archive is fine.
 3. A `recent_run_load` for an unknown id answers `recent_runs_error`, and the dialog shows the message
    inline instead of closing.
 4. Never serve a blob whose size or sha256 no longer matches the entry. Re-check both on load; on

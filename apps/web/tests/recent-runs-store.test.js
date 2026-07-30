@@ -554,24 +554,40 @@ test("load persists entries registered while the index was still being read", as
   );
 });
 
-test("loadSource disables a row for a missing blob but not for a transient failure", async (t) => {
+test("loadSource disables a row for an unreadable blob but not a transient failure", async (t) => {
   const clock = fakeClock();
   const { store, directory } = await makeStore(t, { now: clock.now });
-  const bytes = makeR08Bytes();
-  const entryId = await archiveRun(store, clock, makeRun(1, bytes), bytes);
-  const [blobName] = await streamFiles(directory);
-  const blobPath = path.join(directory, "streams", blobName);
+  const blobPath = (bytes) =>
+    path.join(
+      directory,
+      "streams",
+      `${crypto.createHash("sha256").update(bytes).digest("hex")}.r08`,
+    );
+  const entryById = (id) => store.entries().find((entry) => entry.id === id);
+  const firstBytes = makeR08Bytes();
+  const secondBytes = makeR08Bytes(3);
+  const firstId = await archiveRun(store, clock, makeRun(1, firstBytes), firstBytes);
+  const secondId = await archiveRun(store, clock, makeRun(2, secondBytes), secondBytes);
 
-  // A directory where the blob belongs reads as EISDIR: unreadable now, but not
-  // proof the archive is gone, so the row must stay loadable.
-  await fsp.unlink(blobPath);
-  await fsp.mkdir(blobPath);
-  await assert.rejects(() => store.loadSource(entryId), /EISDIR/);
-  assert.equal(store.entries()[0].sourceAvailable, true);
+  // Resource exhaustion clears on its own, and nothing restores the flag once it
+  // is cleared, so a blip must leave the row loadable — and it must still load.
+  t.mock.method(fsp, "readFile", async () => {
+    throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+  });
+  await assert.rejects(() => store.loadSource(firstId), /EMFILE/);
+  t.mock.restoreAll();
+  assert.equal(entryById(firstId).sourceAvailable, true);
+  assert.equal((await store.loadSource(firstId)).bytes.equals(firstBytes), true);
 
-  await fsp.rmdir(blobPath);
-  await assert.rejects(() => store.loadSource(entryId), /ENOENT/);
-  assert.equal(store.entries()[0].sourceAvailable, false);
+  // A directory where the blob belongs is structurally wrong, not a blip.
+  await fsp.unlink(blobPath(firstBytes));
+  await fsp.mkdir(blobPath(firstBytes));
+  await assert.rejects(() => store.loadSource(firstId), /EISDIR/);
+  assert.equal(entryById(firstId).sourceAvailable, false);
+
+  await fsp.unlink(blobPath(secondBytes));
+  await assert.rejects(() => store.loadSource(secondId), /ENOENT/);
+  assert.equal(entryById(secondId).sourceAvailable, false);
 });
 
 test("clearRuns reports a kept run held only by the caller's active id", async (t) => {
