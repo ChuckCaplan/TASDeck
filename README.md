@@ -40,6 +40,12 @@ scripts in `scripts/` (see the [Installation guide](INSTALL.md)) rather than loa
 directly; an `.r08` can be played as-is with no conversion, defaulting to a per-strobe mode that
 matches default TAStm32 replay semantics.
 
+After a hardware run starts, TASDeck keeps a bridge-side recent-run entry and an integrity-checked
+archive of the source stream. Use `Recent`—even before connecting the Arduino—to load a prior run or
+re-run it with the same sync mode, start delay, and skip. Re-run arms the stream but deliberately
+waits for you to press `Start` at the console sync point. The picker also shows outcomes, progress,
+firmware anomaly counters, and copyable trace paths; deleting history does not delete trace files.
+
 TASDeck drives standard NES controllers on either port. Zapper, Arkanoid paddle, Power Pad, Four
 Score, microphone, and expansion-port input are outside its scope, and the converters reject movies
 that use them.

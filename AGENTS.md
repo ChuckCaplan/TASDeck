@@ -71,7 +71,13 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `apps/web/src/transport.js`: Pure event-to-firmware-command helpers shared by the app and tests.
 - `apps/web/src/tas.js`: Pure TAS parsing, mask normalization, validation, and checksum helpers
   shared by the app and tests.
+- `apps/web/src/recents.js`: Pure recent-run normalization, filtering, sorting, formatting, and
+  restore helpers shared by the app, store, and tests.
+- `scripts/recent-runs-store.js`: Persistent recent-run index, archived-stream integrity checks,
+  retention, trace references, and crash recovery.
 - `apps/web/tests/tas.test.js`: Web helper tests.
+- `apps/web/tests/recents.test.js`: Recent-run view-helper tests.
+- `apps/web/tests/recent-runs-store.test.js`: Recent-run persistence, retention, and integrity tests.
 - `apps/web/tests/transport.test.js`: Web transport command-formatting tests.
 - `apps/web/tests/bridge-server.test.js`: Middleware, WebSocket, serial, upload, and trace tests.
 - `apps/web/tests/convert-bk2-to-tasdeck-mask.test.js`: BizHawk BK2 converter wrapper tests.
@@ -79,6 +85,8 @@ target is `arduino:renesas_uno:unor4wifi`.
   Windows Git Bash argument and path translation.
 - `apps/web/tests/expand-tdmask-from-hardware-trace.test.js`: Hardware-trace expansion tests.
 - `apps/web/tests/ui/*.spec.js`: Playwright UI regression tests.
+- `apps/web/tests/ui/recent-runs.spec.js`: Recent-run dialog, restore, cross-device, and responsive
+  UI tests.
 - `playwright.config.js`: Playwright web-server and browser test configuration.
 - `docs/hardware-tas-workflow.md`: FM2/BK2-to-`.tdmask` hardware playback workflow.
 - `scripts/convert-fm2-to-tasdeck-mask.sh`: FCEUX wrapper for producing `.tdmask` files.
@@ -187,6 +195,14 @@ the blank record default TAStm32 dumps prepend (the prefill only applies while t
 untouched). The UI picker can switch an `.r08` to completed-read poll or accepted-latch-window mode
 for dumps documented as needing TAStm32 `--dpcm`.
 
+Runs that reach `TAS_START` are recorded by the middleware under `logs/recent-runs/`, with the source
+stream archived once and reused across run entries. `Recent` works without an Arduino connection and
+can load or re-run an archived stream with its mode, start delay, and skip restored; port count is
+always re-verified by parsing the archived bytes. Re-run stops at the armed state so the user still
+chooses the console sync point with `Start`. Entries track completed, stopped, error, and interrupted
+outcomes plus firmware counters and repo-relative trace references. Deleting recent entries never
+deletes the referenced files under `logs/trace/`.
+
 Hardware TAS playback uses the upload/chunk protocol with pre-generated mask bytes. Do not send
 browser-timed TAS button diffs to the real hardware bridge.
 
@@ -285,6 +301,19 @@ hardware-flow changes:
   TD2P v2 source-movie frame count, otherwise a `~` estimate refined by the measured record
   consumption rate every ten elapsed seconds — and notes when the console stops reading input.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.
+- `Recent` opens the dialog before `Connect` and lists runs from a previous session.
+- Loading a recent run restores mode, delay, and skip, and the run plays on hardware.
+- `Completed runs only` shows exactly the runs that reached the end.
+- Sorting by name, date, time played, estimated length, completed, mode, delay, and skip all behave.
+- Delete and `Clear all` persist across a bridge restart, and neither removes anything from
+  `logs/trace/`.
+- A run captured with `Trace` (and one run with `BRIDGE_TAS_TRACE_STREAM=1`) lists its trace paths in
+  the row, and `Copy path` pastes correctly on the desktop and from the phone.
+- `Re-run` on a real console: power-cycle, click `Re-run`, the panel reaches armed with the restored
+  mode/delay/skip, and `Start` begins the run at the sync point.
+- Load a movie from outside the repo (the Everdrive library), play it, then move the file on disk and
+  load the run from `Recent` — it still plays.
+- The recent-runs dialog is usable at desktop, tablet, narrow mobile, and phone-landscape widths.
 - Event-log actions remain usable at narrow mobile width; `Trace`, `Copy`, and `Clear` should not
   overflow off screen.
 - Layout remains usable at desktop width, tablet width, and narrow mobile width.

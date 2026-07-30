@@ -164,6 +164,13 @@ For a power-on movie, load the `.tdmask` or `.r08` and press `Play` once to arm 
 held in reset, press `Start` in TASDeck, then power on or release reset so the first controller read
 receives frame 0.
 
+After a run reaches `Start`, the middleware archives its source stream and playback settings. Use
+`Recent` to recover that stream later even if the original file was moved, then choose `Load` or
+`Re-run`; the latter restores mode, delay, and skip and stops at armed so you can press `Start` at the
+correct console sync point. The archive is shared by every browser connected to the bridge, so a
+phone can recall a run started from the laptop. Recent-run rows reference any trace files produced by
+the run, but deleting the row never deletes files under `logs/trace/`.
+
 Do not include EverDrive menu navigation in the TAS stream. Perform any menu navigation or launch
 button as a separate manual step before arming the run; adding those inputs to the movie shifts its
 timeline.
