@@ -1757,6 +1757,32 @@ test("parses legacy trace rows without a port column", () => {
   assert.equal(rows[0].diag, 0x03);
 });
 
+test("a disconnecting client drops its unanswered source request", async () => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-client-"));
+  const bridge = new SerialBridge({ logDir });
+  const { client, messages } = recentRunsTestClient();
+  bridge.addClient(client);
+
+  try {
+    await bridge.recentRunsReady;
+    await bridge.handleClientTasMessage(client, recentRunsR08Upload(1).message);
+    await waitForBridgeTasks();
+    const sourceRequest = messages().find(
+      (message) => message.type === "recent_run_source_request",
+    );
+    assert.equal(typeof sourceRequest.sourceRequestId, "string");
+    assert.equal(bridge.recentSourceRequests.size, 1);
+
+    // The request holds the client and the run, and the run holds its masks, so
+    // a browser that closes mid-upload must not pin them for the process life.
+    bridge.removeClient(client);
+    assert.equal(bridge.recentSourceRequests.size, 0);
+    await bridge.recentRuns.flush();
+  } finally {
+    await fsp.rm(logDir, { recursive: true, force: true });
+  }
+});
+
 test("serves recents without serial and archives requested upload bytes", async () => {
   const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-bridge-"));
   const bridge = new SerialBridge({ logDir });

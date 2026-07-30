@@ -150,6 +150,10 @@ class SerialBridge {
 
   removeClient(client) {
     this.clients.delete(client);
+    // An unanswered source request holds the client and its run, and a run
+    // holds its whole mask array. A browser that closes mid-upload would
+    // otherwise pin both until the bridge exits.
+    this.discardRecentSourceRequestsForClient(client);
     this.releaseClientButtons(client, "client disconnected").catch((error) => {
       this.broadcastBridge(`Release on client disconnect failed: ${error.message}`);
     });
@@ -1074,6 +1078,14 @@ class SerialBridge {
   discardRecentSourceRequests(run) {
     for (const [requestId, request] of this.recentSourceRequests) {
       if (request.run === run) {
+        this.recentSourceRequests.delete(requestId);
+      }
+    }
+  }
+
+  discardRecentSourceRequestsForClient(client) {
+    for (const [requestId, request] of this.recentSourceRequests) {
+      if (request.client === client) {
         this.recentSourceRequests.delete(requestId);
       }
     }

@@ -496,6 +496,99 @@ test("a missing reused blob asks the browser for bytes again", async (t) => {
   assert.deepEqual(await store.needsSource(makeRun(2, bytes)), { needed: true });
 });
 
+test("pending uploads dedupe by fingerprint without retaining run masks", async (t) => {
+  const clock = fakeClock();
+  const { store } = await makeStore(t, { now: clock.now, maxPendingSources: 3 });
+  const bytes = makeR08Bytes();
+  const firstRun = makeRun(1, bytes);
+
+  assert.deepEqual(await store.needsSource(firstRun), { needed: true });
+  await store.storeSource({ run: firstRun, fileName: firstRun.fileName, bytes });
+
+  // Re-uploading the same file — what changing sync mode or skip does — must not
+  // ask for the bytes a second time even though no run has started yet.
+  const secondNeed = await store.needsSource(makeRun(2, bytes));
+  assert.equal(secondNeed.needed, false);
+  assert.equal(secondNeed.contentKey, firstRun.recentContentKey);
+
+  // The tracked fingerprints stay bounded and hold no reference to the runs, so
+  // a session of opening files without playing them cannot pin their masks.
+  for (let id = 3; id <= 10; id += 1) {
+    await store.needsSource(makeRun(id, makeR08Bytes(id)));
+  }
+  assert.equal(store.pendingSources.size, 3);
+  assert.equal(
+    [...store.pendingSources.values()].some((snapshot) => "masks" in snapshot),
+    false,
+  );
+  assert.equal(store.currentPendingRun.id, 10);
+
+  store.beginRun(store.currentPendingRun, { firmwareId: "v63" });
+  assert.equal(store.currentPendingRun, null);
+  assert.equal(store.pendingSources.size, 2);
+  await store.flush();
+});
+
+test("load persists entries registered while the index was still being read", async (t) => {
+  const clock = fakeClock();
+  const { store, directory } = await makeStore(t, { now: clock.now });
+  const bytes = makeR08Bytes();
+  await archiveRun(store, clock, makeRun(1, bytes), bytes);
+  await store.flush();
+
+  // A second store over the same directory begins a run before its load
+  // resolves, which is the window where a queued write could otherwise drop the
+  // history it had not merged yet.
+  const reopened = new RecentRunsStore({ directory, now: clock.now });
+  const loading = reopened.load();
+  const entryId = reopened.beginRun(makeRun(2, makeR08Bytes(2)), { firmwareId: "v63" });
+  await loading;
+  await reopened.flush();
+  assert.equal(reopened.entries().length, 2);
+
+  const persisted = JSON.parse(await fsp.readFile(path.join(directory, "index.json"), "utf8"));
+  assert.equal(persisted.entries.length, 2);
+  assert.equal(
+    persisted.entries.some((entry) => entry.id === entryId),
+    true,
+  );
+});
+
+test("loadSource disables a row for a missing blob but not for a transient failure", async (t) => {
+  const clock = fakeClock();
+  const { store, directory } = await makeStore(t, { now: clock.now });
+  const bytes = makeR08Bytes();
+  const entryId = await archiveRun(store, clock, makeRun(1, bytes), bytes);
+  const [blobName] = await streamFiles(directory);
+  const blobPath = path.join(directory, "streams", blobName);
+
+  // A directory where the blob belongs reads as EISDIR: unreadable now, but not
+  // proof the archive is gone, so the row must stay loadable.
+  await fsp.unlink(blobPath);
+  await fsp.mkdir(blobPath);
+  await assert.rejects(() => store.loadSource(entryId), /EISDIR/);
+  assert.equal(store.entries()[0].sourceAvailable, true);
+
+  await fsp.rmdir(blobPath);
+  await assert.rejects(() => store.loadSource(entryId), /ENOENT/);
+  assert.equal(store.entries()[0].sourceAvailable, false);
+});
+
+test("clearRuns reports a kept run held only by the caller's active id", async (t) => {
+  const clock = fakeClock();
+  const { store } = await makeStore(t, { now: clock.now });
+  const bytes = makeR08Bytes();
+  const keptId = await archiveRun(store, clock, makeRun(1, bytes), bytes, "completed");
+  await archiveRun(store, clock, makeRun(2, makeR08Bytes(2)), makeR08Bytes(2), "stopped");
+
+  const result = await store.clearRuns({ activeId: keptId });
+  assert.deepEqual(result, { removed: 1, keptActive: true });
+  assert.deepEqual(
+    store.entries().map((entry) => entry.id),
+    [keptId],
+  );
+});
+
 test("startup repair interrupts playing entries at lastObservedAt, not restart time", async (t) => {
   const clock = fakeClock("2026-07-30T08:00:00.000Z");
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-repair-"));

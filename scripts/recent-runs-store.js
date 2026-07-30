@@ -23,6 +23,7 @@ const RECENT_RUNS_ORPHAN_GRACE_MS = 3_600_000;
 const RECENT_RUNS_PROGRESS_FLUSH_MS = 30_000;
 const RECENT_RUN_TRACE_PATH_LIMIT = 200;
 const MAX_RECENT_RUN_SOURCE_BYTES = 4 * 1024 * 1024;
+const RECENT_RUNS_MAX_PENDING_SOURCES = 32;
 
 class RecentRunsStore {
   constructor({
@@ -33,6 +34,7 @@ class RecentRunsStore {
     orphanGraceMs = RECENT_RUNS_ORPHAN_GRACE_MS,
     progressFlushMs = RECENT_RUNS_PROGRESS_FLUSH_MS,
     tracePathLimit = RECENT_RUN_TRACE_PATH_LIMIT,
+    maxPendingSources = RECENT_RUNS_MAX_PENDING_SOURCES,
   }) {
     if (!directory) {
       throw new Error("A recent-runs directory is required.");
@@ -50,7 +52,18 @@ class RecentRunsStore {
     this.tracePathLimit = positiveInteger(tracePathLimit, RECENT_RUN_TRACE_PATH_LIMIT);
     this.index = { version: RECENT_RUNS_INDEX_VERSION, entries: [] };
     this.writeQueue = Promise.resolve();
-    this.pendingRuns = new Map();
+    // Uploads that have not started yet are remembered as small fingerprints
+    // rather than run objects. A run carries its whole mask array — tens of
+    // megabytes for a long movie — and loading a file uploads it immediately,
+    // so keeping the run would pin every file the user opened but never played
+    // for the life of the process. Only the upload in flight keeps a live
+    // reference, and that is the bridge's active run anyway.
+    this.pendingSources = new Map();
+    this.currentPendingRun = null;
+    this.maxPendingSources = positiveInteger(
+      maxPendingSources,
+      RECENT_RUNS_MAX_PENDING_SOURCES,
+    );
     this.deferredSources = new Map();
     this.lastProgressFlushAt = new Map();
     this.writeCount = 0;
@@ -60,7 +73,6 @@ class RecentRunsStore {
     await fsp.mkdir(this.streamsDirectory, { recursive: true });
     const entriesRegisteredWhileLoading = this.index.entries;
     let loadedIndex = { version: RECENT_RUNS_INDEX_VERSION, entries: [] };
-    let repaired = false;
 
     try {
       const contents = await fsp.readFile(this.indexPath, "utf8");
@@ -72,10 +84,15 @@ class RecentRunsStore {
     }
 
     const existingIds = new Set(loadedIndex.entries.map((entry) => entry.id));
-    loadedIndex.entries.unshift(
-      ...entriesRegisteredWhileLoading.filter((entry) => !existingIds.has(entry.id)),
+    const registeredWhileLoading = entriesRegisteredWhileLoading.filter(
+      (entry) => !existingIds.has(entry.id),
     );
+    loadedIndex.entries.unshift(...registeredWhileLoading);
     this.index = loadedIndex;
+    // A run that began while the index was still being read has already queued
+    // a write of the pre-merge list, so the merged list must be written too or
+    // that queued write can leave only the new entry on disk.
+    let repaired = registeredWhileLoading.length > 0;
 
     for (const entry of this.index.entries) {
       if (entry.outcome !== "playing") {
@@ -112,9 +129,12 @@ class RecentRunsStore {
     }
 
     const fingerprint = runFingerprint(run);
+    const runBridgeRunId = bridgeRunId(run);
     const candidates = [
       ...this.index.entries,
-      ...[...this.pendingRuns.values()].filter((candidate) => candidate !== run),
+      ...[...this.pendingSources.values()].filter(
+        (candidate) => candidate.bridgeRunId !== runBridgeRunId,
+      ),
     ];
     for (const candidate of candidates) {
       if (
@@ -210,10 +230,18 @@ class RecentRunsStore {
 
   markSourceUnavailable(sourceKey) {
     const normalizedKey = stringValue(sourceKey);
-    for (const run of this.pendingRuns.values()) {
-      if (stringValue(run.sourceKey) === normalizedKey) {
-        this._markRunSourceUnavailable(run);
+    for (const snapshot of this.pendingSources.values()) {
+      if (snapshot.sourceKey === normalizedKey) {
+        snapshot.contentKey = "";
+        snapshot.sourceAvailable = false;
+        snapshot.sourceBytes = 0;
       }
+    }
+    if (
+      this.currentPendingRun &&
+      stringValue(this.currentPendingRun.sourceKey) === normalizedKey
+    ) {
+      this._markRunSourceUnavailable(this.currentPendingRun);
     }
     this._schedulePersist();
   }
@@ -258,7 +286,7 @@ class RecentRunsStore {
     });
     this.index.entries.unshift(entry);
     run.recentRunEntryId = id;
-    this.pendingRuns.delete(bridgeRunId(run));
+    this._forgetPendingRun(run);
     this.lastProgressFlushAt.set(id, startedAt.getTime());
     this._schedulePersist();
     return id;
@@ -329,6 +357,9 @@ class RecentRunsStore {
 
   async attachTraceForRun(bridgeRunIdValue, { path: tracePath, kind }) {
     const normalizedBridgeRunId = nonNegativeInteger(bridgeRunIdValue, 0);
+    // Bridge run ids restart at 1 with each process, so an id can repeat across
+    // sessions. Entries are newest-first, which is what makes this find the
+    // current run rather than a same-numbered run from a previous session.
     const entry = this.index.entries.find(
       (candidate) => candidate.bridgeRunId === normalizedBridgeRunId,
     );
@@ -382,24 +413,37 @@ class RecentRunsStore {
     }
 
     const streamPath = this._streamPath(entry.contentKey, entry.fileFormat);
+    let bytes;
     try {
-      const bytes = await fsp.readFile(streamPath);
-      const contentKey = `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`;
-      if (bytes.length !== entry.sourceBytes || contentKey !== entry.contentKey) {
-        throw new Error("The archived stream failed its integrity check.");
-      }
-      return {
-        fileName: entry.fileName,
-        bytes,
-        restore: restoreOptionsForRecentRun(entry),
-        portCount: entry.portCount,
-        totalRecords: entry.totalRecords,
-      };
+      bytes = await fsp.readFile(streamPath);
     } catch (error) {
-      entry.sourceAvailable = false;
-      await this._persist();
+      // A missing blob is permanent; anything else (a busy or unreadable file
+      // system) may well succeed on the next try, so do not disable the row
+      // over it.
+      if (error?.code === "ENOENT") {
+        await this._markEntrySourceUnavailable(entry);
+      }
       throw error;
     }
+
+    const contentKey = `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`;
+    if (bytes.length !== entry.sourceBytes || contentKey !== entry.contentKey) {
+      await this._markEntrySourceUnavailable(entry);
+      throw new Error("The archived stream failed its integrity check.");
+    }
+
+    return {
+      fileName: entry.fileName,
+      bytes,
+      restore: restoreOptionsForRecentRun(entry),
+      portCount: entry.portCount,
+      totalRecords: entry.totalRecords,
+    };
+  }
+
+  async _markEntrySourceUnavailable(entry) {
+    entry.sourceAvailable = false;
+    await this._persist();
   }
 
   async deleteRun(id, { activeId = "" } = {}) {
@@ -436,10 +480,9 @@ class RecentRunsStore {
       { activeId },
     );
     await this.gcOrphans();
-    return {
-      removed: removedEntries.length,
-      keptActive: keptEntries.some((entry) => entry.outcome === "playing"),
-    };
+    // Entries are only ever kept here because they are the run in progress,
+    // whether that shows as a playing outcome or as the caller's active id.
+    return { removed: removedEntries.length, keptActive: keptEntries.length > 0 };
   }
 
   flush() {
@@ -476,8 +519,33 @@ class RecentRunsStore {
   }
 
   _trackPendingRun(run) {
-    if (run && typeof run === "object") {
-      this.pendingRuns.set(bridgeRunId(run), run);
+    if (!run || typeof run !== "object") {
+      return;
+    }
+
+    const id = bridgeRunId(run);
+    this.currentPendingRun = run;
+    this.pendingSources.set(id, {
+      bridgeRunId: id,
+      sourceKey: stringValue(run.sourceKey),
+      fileFormat: runFileFormat(run),
+      maskChecksum: candidateMaskChecksum(run),
+      totalRecords: candidateTotalRecords(run),
+      portCount: candidatePortCount(run),
+      contentKey: stringValue(run.recentContentKey || run.contentKey),
+      sourceBytes: nonNegativeInteger(run.recentSourceBytes ?? run.sourceByteLength, 0),
+      sourceAvailable: run.recentSourceAvailable === true,
+    });
+    while (this.pendingSources.size > this.maxPendingSources) {
+      const [oldest] = this.pendingSources.keys();
+      this.pendingSources.delete(oldest);
+    }
+  }
+
+  _forgetPendingRun(run) {
+    this.pendingSources.delete(bridgeRunId(run));
+    if (this.currentPendingRun === run) {
+      this.currentPendingRun = null;
     }
   }
 
@@ -488,6 +556,12 @@ class RecentRunsStore {
     run.recentContentKey = contentKey;
     run.recentSourceAvailable = sourceAvailable;
     run.recentSourceBytes = sourceBytes;
+    const snapshot = this.pendingSources.get(bridgeRunId(run));
+    if (snapshot) {
+      snapshot.contentKey = contentKey;
+      snapshot.sourceAvailable = sourceAvailable;
+      snapshot.sourceBytes = sourceBytes;
+    }
   }
 
   _markRunSourceUnavailable(run) {
@@ -587,9 +661,8 @@ class RecentRunsStore {
     const protectedKeys = new Set(
       [
         activeEntry?.contentKey,
-        ...[...this.pendingRuns.values()].map(
-          (run) => run.recentContentKey || run.contentKey,
-        ),
+        this.currentPendingRun?.recentContentKey,
+        ...[...this.pendingSources.values()].map((snapshot) => snapshot.contentKey),
       ].filter(Boolean),
     );
 
@@ -613,13 +686,8 @@ class RecentRunsStore {
 
   _pendingStreamFiles() {
     return new Set(
-      [...this.pendingRuns.values()]
-        .map((run) =>
-          recentRunStreamFileName(
-            run.recentContentKey || run.contentKey,
-            runFileFormat(run),
-          ),
-        )
+      [...this.pendingSources.values()]
+        .map((snapshot) => recentRunStreamFileName(snapshot.contentKey, snapshot.fileFormat))
         .filter(Boolean),
     );
   }
