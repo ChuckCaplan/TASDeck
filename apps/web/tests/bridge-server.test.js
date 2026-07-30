@@ -26,7 +26,14 @@ const {
   serialPortSttyArgs,
   tasTraceStreamEnabled,
 } = require("../../../scripts/bridge-server.js");
-const { tasRunChecksum } = require("../src/tas.js");
+const { recentRunSourceKey } = require("../src/recents.js");
+const {
+  parseTasFileBytes,
+  tasFramesToMasks,
+  tasMasksPortCount,
+  tasMasksToWire,
+  tasRunChecksum,
+} = require("../src/tas.js");
 
 const execFileAsync = promisify(execFile);
 
@@ -113,6 +120,81 @@ function encodeMaskedWebSocketFrame(payload, options = {}) {
   }
 
   return Buffer.concat([header, mask, maskedPayload]);
+}
+
+function recentRunsTestClient() {
+  const socketWrites = [];
+  return {
+    client: {
+      heldButtons: new Set(),
+      socket: {
+        destroyed: false,
+        write(frame) {
+          socketWrites.push(frame);
+        },
+      },
+    },
+    messages: () =>
+      socketWrites.map((frame) =>
+        JSON.parse(decodeWebSocketFrame(frame).payload.toString("utf8")),
+      ),
+  };
+}
+
+function recentRunsR08Upload(id = 1, bytes = Buffer.from([0x80, 0x00, 0x40, 0x00])) {
+  const fileName = `recent-${id}.r08`;
+  const parseResult = parseTasFileBytes(fileName, bytes);
+  const masks = tasFramesToMasks(parseResult.frames);
+  const portCount = tasMasksPortCount(masks);
+  return {
+    bytes,
+    message: {
+      type: "tas_upload",
+      clientRunId: id,
+      fileName,
+      frameCount: masks.length,
+      inputFrameCount: masks.length,
+      portCount,
+      masks: tasMasksToWire(masks, portCount),
+      checksum: tasRunChecksum(masks, portCount),
+      syncMode: "strobe",
+      skipPolls: 0,
+      sourceKey: recentRunSourceKey(bytes),
+      sourceByteLength: bytes.length,
+      sourceFrameCount: 0,
+    },
+  };
+}
+
+async function waitForBridgeTasks() {
+  await new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
+async function startRecentBridgeRun(bridge, delayPolls = 1) {
+  const run = bridge.activeTasRun;
+  run.state = "armed";
+  bridge.sendFirmwareTasCommand = async () => ({
+    type: "tas_status",
+    command: "tas_start",
+    active: 1,
+    ready: 1,
+    started: 1,
+    complete: 0,
+    current: 0,
+    total: run.frameCount,
+    received: run.frameCount,
+    buffered: run.frameCount,
+    capacity: 512,
+    fw: "v63",
+    error: "ok",
+  });
+  bridge.continueTasStream = async () => {};
+  await bridge.startTasRun({ delayPolls });
+  await run.streamTask;
+  await waitForBridgeTasks();
+  return run;
 }
 
 test("detects likely Arduino USB serial devices", () => {
@@ -1673,4 +1755,577 @@ test("parses legacy trace rows without a port column", () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].port, null);
   assert.equal(rows[0].diag, 0x03);
+});
+
+test("serves recents without serial and archives requested upload bytes", async () => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-bridge-"));
+  const bridge = new SerialBridge({ logDir });
+  const { client, messages } = recentRunsTestClient();
+  bridge.addClient(client);
+
+  try {
+    await bridge.recentRunsReady;
+    await bridge.handleRecentRunsMessage(client, {
+      type: "recent_runs_list",
+      requestId: "list-offline",
+    });
+    assert.equal(bridge.isConnected(), false);
+    assert.deepEqual(messages().at(-1), {
+      type: "recent_runs",
+      requestId: "list-offline",
+      entries: [],
+    });
+
+    const upload = recentRunsR08Upload(1);
+    await bridge.handleClientTasMessage(client, upload.message);
+    await waitForBridgeTasks();
+    const uploadMessages = messages();
+    const uploadStatus = uploadMessages.find(
+      (message) => message.type === "tas_status" && message.command === "tas_upload",
+    );
+    const sourceRequest = uploadMessages.find(
+      (message) => message.type === "recent_run_source_request",
+    );
+    assert.equal(uploadStatus.bridge_state, "uploaded");
+    assert.equal(sourceRequest.sourceKey, upload.message.sourceKey);
+
+    await bridge.handleRecentRunSourceMessage(client, {
+      type: "recent_run_source",
+      sourceRequestId: sourceRequest.sourceRequestId,
+      sourceKey: sourceRequest.sourceKey,
+      fileName: upload.message.fileName,
+      bytesBase64: upload.bytes.toString("base64"),
+    });
+    const streams = await fsp.readdir(path.join(logDir, "recent-runs", "streams"));
+    assert.equal(streams.length, 1);
+
+    const unavailableUpload = recentRunsR08Upload(
+      2,
+      Buffer.from([0x80, 0x00, 0x20, 0x00]),
+    );
+    await bridge.handleClientTasMessage(client, unavailableUpload.message);
+    await waitForBridgeTasks();
+    const unavailableRequest = messages()
+      .filter((message) => message.type === "recent_run_source_request")
+      .at(-1);
+    await bridge.handleRecentRunSourceMessage(client, {
+      type: "recent_run_source_unavailable",
+      sourceRequestId: unavailableRequest.sourceRequestId,
+      sourceKey: unavailableRequest.sourceKey,
+    });
+    assert.equal(bridge.activeTasRun.recentSourceAvailable, false);
+    await bridge.recentRuns.flush();
+  } finally {
+    await fsp.rm(logDir, { recursive: true, force: true });
+  }
+});
+
+test("broadcasts recent entry creation and terminal completion but not progress", async () => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-lifecycle-"));
+  const bridge = new SerialBridge({ logDir });
+  const { client, messages } = recentRunsTestClient();
+  bridge.addClient(client);
+
+  try {
+    await bridge.recentRunsReady;
+    const upload = recentRunsR08Upload(1);
+    delete upload.message.sourceKey;
+    delete upload.message.sourceByteLength;
+    await bridge.handleClientTasMessage(client, upload.message);
+    const run = await startRecentBridgeRun(bridge);
+    assert.equal(run.startDelayPolls, 1);
+    assert.equal(bridge.recentRuns.entries()[0].outcome, "playing");
+    const createBroadcastCount = messages().filter(
+      (message) => message.type === "recent_runs",
+    ).length;
+    assert.equal(createBroadcastCount, 1);
+
+    bridge.applyTasFirmwareStatus(
+      run,
+      {
+        current: 1,
+        total: 2,
+        complete: 0,
+        error: "ok",
+        fw: "v64",
+        bare_strobes: 12,
+        torn_strobes: 3,
+        anomaly_count: 135_934,
+        anomaly_kind: 4,
+        anomaly_seq: 812,
+      },
+      "tas_status",
+    );
+    assert.equal(
+      messages().filter((message) => message.type === "recent_runs").length,
+      createBroadcastCount,
+    );
+
+    bridge.applyTasFirmwareStatus(
+      run,
+      {
+        active: 0,
+        current: 2,
+        total: 2,
+        complete: 1,
+        error: "ok",
+        fw: "v64",
+        bare_strobes: 12,
+        torn_strobes: 3,
+        anomaly_count: 135_934,
+        anomaly_kind: 4,
+        anomaly_seq: 812,
+      },
+      "tas_status",
+    );
+    await run.recentFinalizePromise;
+    await bridge.recentRuns.flush();
+    const [entry] = bridge.recentRuns.entries();
+    assert.equal(entry.outcome, "completed");
+    assert.equal(entry.recordsPlayed, 2);
+    assert.equal(entry.bareStrobes, 12);
+    assert.equal(entry.tornStrobes, 3);
+    assert.equal(entry.anomalyCount, 135_934);
+    assert.equal(entry.anomalyKind, 4);
+    assert.equal(
+      messages().filter((message) => message.type === "recent_runs").length,
+      createBroadcastCount + 1,
+    );
+  } finally {
+    await fsp.rm(logDir, { recursive: true, force: true });
+  }
+});
+
+test("finalizes cancel, disconnect, stream failure, and mixed complete-error statuses correctly", async (t) => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-terminals-"));
+  t.after(() => fsp.rm(logDir, { recursive: true, force: true }));
+  const bridge = new SerialBridge({ logDir });
+  const { client } = recentRunsTestClient();
+  await bridge.recentRunsReady;
+
+  const cancelUpload = recentRunsR08Upload(1);
+  delete cancelUpload.message.sourceKey;
+  delete cancelUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(client, cancelUpload.message);
+  const cancelRun = await startRecentBridgeRun(bridge);
+  await bridge.cancelTasRun();
+  await cancelRun.recentFinalizePromise;
+  assert.equal(bridge.recentRuns.entries()[0].outcome, "stopped");
+
+  const disconnectUpload = recentRunsR08Upload(2);
+  delete disconnectUpload.message.sourceKey;
+  delete disconnectUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(client, disconnectUpload.message);
+  const disconnectRun = await startRecentBridgeRun(bridge);
+  const disconnectedHandle = {};
+  bridge.handle = disconnectedHandle;
+  bridge.serialReady = true;
+  bridge.handleSerialDisconnect(disconnectedHandle);
+  await disconnectRun.recentFinalizePromise;
+  assert.equal(bridge.recentRuns.entries()[0].outcome, "interrupted");
+
+  const rejectedUpload = recentRunsR08Upload(3);
+  delete rejectedUpload.message.sourceKey;
+  delete rejectedUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(client, rejectedUpload.message);
+  const rejectedRun = bridge.activeTasRun;
+  rejectedRun.state = "armed";
+  bridge.sendFirmwareTasCommand = async () => ({
+    active: 1,
+    ready: 1,
+    started: 1,
+    complete: 0,
+    current: 0,
+    total: rejectedRun.frameCount,
+    received: rejectedRun.frameCount,
+    buffered: rejectedRun.frameCount,
+    capacity: 512,
+    fw: "v63",
+    error: "ok",
+  });
+  bridge.continueTasStream = async () => {
+    throw new Error("chunk rejected");
+  };
+  await bridge.startTasRun({ delayPolls: 1 });
+  await rejectedRun.streamTask;
+  await rejectedRun.recentFinalizePromise;
+  assert.equal(bridge.recentRuns.entries()[0].outcome, "error");
+
+  const mixedUpload = recentRunsR08Upload(4);
+  delete mixedUpload.message.sourceKey;
+  delete mixedUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(client, mixedUpload.message);
+  const mixedRun = await startRecentBridgeRun(bridge);
+  bridge.applyTasFirmwareStatus(
+    mixedRun,
+    {
+      complete: 1,
+      current: mixedRun.frameCount,
+      error: "buffer_underrun",
+    },
+    "tas_status",
+  );
+  await mixedRun.recentFinalizePromise;
+  const mixedEntry = bridge.recentRuns.entries()[0];
+  assert.equal(mixedRun.state, "error");
+  assert.equal(mixedEntry.outcome, "error");
+  const mixedPayload = bridge.tasStatusPayload("tas_status", mixedRun, {
+    complete: 1,
+    error: "buffer_underrun",
+  });
+  assert.equal(mixedPayload.complete, 0);
+  assert.equal(mixedPayload.bridge_state, "error");
+});
+
+test("a cross-device upload cancels and stops the displaced run without creating another entry", async (t) => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-displace-"));
+  t.after(() => fsp.rm(logDir, { recursive: true, force: true }));
+  const bridge = new SerialBridge({ logDir });
+  const first = recentRunsTestClient();
+  const second = recentRunsTestClient();
+  bridge.addClient(first.client);
+  bridge.addClient(second.client);
+  await bridge.recentRunsReady;
+
+  const firstUpload = recentRunsR08Upload(1);
+  delete firstUpload.message.sourceKey;
+  delete firstUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(first.client, firstUpload.message);
+  const outgoing = await startRecentBridgeRun(bridge);
+  const commands = [];
+  bridge.handle = {};
+  bridge.serialReady = true;
+  bridge.sendFirmwareTasCommand = async (command) => {
+    commands.push(command);
+    return {
+      command: "tas_cancel",
+      active: 0,
+      complete: 0,
+      current: 1,
+      total: outgoing.frameCount,
+      error: "ok",
+    };
+  };
+
+  const secondUpload = recentRunsR08Upload(2);
+  delete secondUpload.message.sourceKey;
+  delete secondUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(second.client, secondUpload.message);
+  await outgoing.recentFinalizePromise;
+
+  assert.deepEqual(commands, ["TAS_CANCEL"]);
+  assert.equal(outgoing.state, "stopped");
+  assert.equal(bridge.activeTasRun.clientRunId, 2);
+  assert.equal(bridge.activeTasRun.recentRunEntryId, undefined);
+  assert.equal(bridge.recentRuns.entries().length, 1);
+  assert.equal(bridge.recentRuns.entries()[0].outcome, "stopped");
+});
+
+test("loads archived bytes across clients and broadcasts delete and clear results", async (t) => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-cross-device-"));
+  t.after(() => fsp.rm(logDir, { recursive: true, force: true }));
+  const bridge = new SerialBridge({ logDir });
+  const first = recentRunsTestClient();
+  const second = recentRunsTestClient();
+  bridge.addClient(first.client);
+  bridge.addClient(second.client);
+  await bridge.recentRunsReady;
+
+  const upload = recentRunsR08Upload(1);
+  await bridge.handleClientTasMessage(first.client, upload.message);
+  await waitForBridgeTasks();
+  const request = first.messages().find(
+    (message) => message.type === "recent_run_source_request",
+  );
+  await bridge.handleRecentRunSourceMessage(first.client, {
+    type: "recent_run_source",
+    sourceRequestId: request.sourceRequestId,
+    sourceKey: request.sourceKey,
+    fileName: upload.message.fileName,
+    bytesBase64: upload.bytes.toString("base64"),
+  });
+  const run = await startRecentBridgeRun(bridge, 7);
+  bridge.applyTasFirmwareStatus(
+    run,
+    { complete: 1, current: run.frameCount, error: "ok", fw: "v63" },
+    "tas_status",
+  );
+  await run.recentFinalizePromise;
+  const [entry] = bridge.recentRuns.entries();
+
+  await bridge.handleRecentRunsMessage(second.client, {
+    type: "recent_runs_list",
+    requestId: "phone-list",
+  });
+  const phoneList = second.messages().find(
+    (message) => message.type === "recent_runs" && message.requestId === "phone-list",
+  );
+  assert.equal(phoneList.entries[0].id, entry.id);
+
+  await bridge.handleRecentRunsMessage(second.client, {
+    type: "recent_run_load",
+    requestId: "phone-load",
+    id: entry.id,
+  });
+  const loaded = second.messages().find(
+    (message) =>
+      message.type === "recent_run_source_loaded" &&
+      message.requestId === "phone-load",
+  );
+  assert.equal(Buffer.compare(Buffer.from(loaded.bytesBase64, "base64"), upload.bytes), 0);
+  assert.deepEqual(loaded.restore, { syncMode: "strobe", delayPolls: 7, skipPolls: 0 });
+
+  await bridge.handleRecentRunsMessage(second.client, {
+    type: "recent_run_delete",
+    requestId: "phone-delete",
+    id: entry.id,
+  });
+  assert.equal(
+    first.messages().some(
+      (message) =>
+        message.type === "recent_runs" &&
+        message.requestId === "phone-delete" &&
+        message.entries.length === 0,
+    ),
+    true,
+  );
+
+  const activeUpload = recentRunsR08Upload(2);
+  delete activeUpload.message.sourceKey;
+  delete activeUpload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(first.client, activeUpload.message);
+  const activeRun = await startRecentBridgeRun(bridge);
+  await bridge.handleRecentRunsMessage(second.client, {
+    type: "recent_run_delete",
+    requestId: "active-delete",
+    id: activeRun.recentRunEntryId,
+  });
+  assert.equal(
+    second.messages().some(
+      (message) =>
+        message.type === "recent_runs_error" &&
+        message.requestId === "active-delete" &&
+        /still playing/.test(message.message),
+    ),
+    true,
+  );
+  await bridge.handleRecentRunsMessage(second.client, {
+    type: "recent_runs_clear",
+    requestId: "clear-active",
+  });
+  const clear = second.messages().find(
+    (message) =>
+      message.type === "recent_runs" && message.requestId === "clear-active",
+  );
+  assert.equal(clear.keptActive, true);
+  assert.equal(clear.entries.length, 1);
+  await bridge.recentRuns.flush();
+});
+
+test("manual, log, auto, and stream trace hooks attach without changing trace replies", async (t) => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-traces-"));
+  t.after(() => fsp.rm(logDir, { recursive: true, force: true }));
+  const bridge = new SerialBridge({ logDir });
+  const { client, messages } = recentRunsTestClient();
+  await bridge.recentRunsReady;
+  const upload = recentRunsR08Upload(1);
+  delete upload.message.sourceKey;
+  delete upload.message.sourceByteLength;
+  await bridge.handleClientTasMessage(client, upload.message);
+  const run = await startRecentBridgeRun(bridge);
+  const originalWriteTrace = bridge.writeTasTraceDumpFile.bind(bridge);
+  bridge.writeTasTraceDumpFile = (traceRun, dump, lines, kind) =>
+    originalWriteTrace(
+      traceRun,
+      dump,
+      lines,
+      kind,
+      new Date("2026-07-29T18:00:00.000Z"),
+    );
+  bridge.collectTasTraceRows = async () => ({
+    total: 1,
+    capacity: 512,
+    first: 0,
+    next: 1,
+    requestedStart: 0,
+    clippedRows: 0,
+    duplicateRows: 0,
+    rows: [
+      {
+        sequence: 0,
+        timestampMicros: 100,
+        tasFrame: 0,
+        latchCount: 1,
+        clockCount: 8,
+        clocksSinceLatch: 8,
+        polledMask: 1,
+        nextMask: 0,
+        latchedMask: 1,
+        shiftIndex: 8,
+        result: "ok",
+        clockedMask: 1,
+        diag: 0,
+        port: 1,
+      },
+    ],
+  });
+
+  await bridge.handleTasTrace(client, { count: 1 });
+  bridge.writeTasTraceDumpFile = originalWriteTrace;
+  const traceReply = messages().find((message) => message.type === "tas_trace");
+  assert.equal(traceReply.count, 1);
+  assert.ok(traceReply.saved_path);
+  await bridge.handleEventLogSave(client, {
+    reason: "tas-trace",
+    requestId: "trace-log",
+    text: "NES Event Log\ntrace\n",
+  });
+  await bridge.writeTasTraceDumpFile(
+    run,
+    await bridge.collectTasTraceRows(1),
+    ["auto_trace_dump: 1"],
+    "auto",
+    new Date("2026-07-29T18:00:01.000Z"),
+  );
+
+  bridge.applyTasFirmwareStatus(
+    run,
+    { complete: 1, current: run.frameCount, error: "ok" },
+    "tas_status",
+  );
+  await run.recentFinalizePromise;
+  await bridge.writeTasTraceDumpFile(
+    run,
+    await bridge.collectTasTraceRows(1),
+    ["stream_test: 1"],
+    "stream",
+    new Date("2026-07-29T18:00:02.000Z"),
+  );
+  await waitForBridgeTasks();
+  await bridge.recentRuns.flush();
+  const kinds = bridge.recentRuns.entries()[0].traceFiles.map((trace) => trace.kind);
+  assert.deepEqual(new Set(kinds), new Set(["manual", "log", "auto", "stream"]));
+  assert.equal(bridge.recentRuns.entries()[0].outcome, "completed");
+});
+
+test("recents store rejection cannot fail upload, arm, start, status, or trace", async (t) => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-recents-isolation-"));
+  t.after(() => fsp.rm(logDir, { recursive: true, force: true }));
+  const reject = () => Promise.reject(new Error("recents unavailable"));
+  const recentRuns = {
+    load: reject,
+    entries: reject,
+    needsSource: reject,
+    storeSource: reject,
+    markSourceUnavailable: reject,
+    beginRun: reject,
+    noteProgress: reject,
+    finalizeRun: reject,
+    attachTraceForRun: reject,
+    loadSource: reject,
+    deleteRun: reject,
+    clearRuns: reject,
+  };
+  const bridge = new SerialBridge({ logDir, recentRuns });
+  const { client, messages } = recentRunsTestClient();
+  bridge.addClient(client);
+  await bridge.recentRunsReady;
+
+  const upload = recentRunsR08Upload(1);
+  await bridge.handleClientTasMessage(client, upload.message);
+  await waitForBridgeTasks();
+  assert.equal(
+    messages().some(
+      (message) => message.type === "tas_status" && message.bridge_state === "uploaded",
+    ),
+    true,
+  );
+
+  const run = bridge.activeTasRun;
+  bridge.handle = {};
+  bridge.serialReady = true;
+  bridge.sendFirmwareTasCommand = async (command) => {
+    if (command === "TAS_BEGIN 2 strobe 2") {
+      return {
+        command: "tas_begin",
+        active: 1,
+        ready: 1,
+        current: 0,
+        total: 2,
+        received: 2,
+        buffered: 2,
+        capacity: 512,
+        error: "ok",
+      };
+    }
+    if (command === "TAS_END") {
+      return {
+        command: "tas_end",
+        active: 1,
+        ready: 1,
+        receiving_complete: 1,
+        current: 0,
+        total: 2,
+        received: 2,
+        buffered: 2,
+        capacity: 512,
+        error: "ok",
+      };
+    }
+    return {
+      command: "tas_start",
+      active: 1,
+      ready: 1,
+      started: 1,
+      complete: 0,
+      current: 0,
+      total: 2,
+      received: 2,
+      buffered: 2,
+      capacity: 512,
+      fw: "v63",
+      error: "ok",
+    };
+  };
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.equal(run.state, "armed");
+  bridge.continueTasStream = async () => {};
+  await bridge.handleClientTasMessage(client, { type: "tas_start", delayPolls: 1 });
+  await run.streamTask;
+  bridge.applyTasFirmwareStatus(
+    run,
+    { current: 1, total: 2, complete: 0, error: "ok" },
+    "tas_status",
+  );
+  assert.equal(run.state, "streaming");
+
+  bridge.collectTasTraceRows = async () => ({
+    total: 1,
+    capacity: 512,
+    first: 0,
+    next: 1,
+    requestedStart: 0,
+    clippedRows: 0,
+    duplicateRows: 0,
+    rows: [{
+      sequence: 0,
+      timestampMicros: 1,
+      tasFrame: 0,
+      latchCount: 1,
+      clockCount: 8,
+      clocksSinceLatch: 8,
+      polledMask: 1,
+      nextMask: 0,
+      latchedMask: 1,
+      shiftIndex: 8,
+      result: "ok",
+      clockedMask: 1,
+      diag: 0,
+      port: 1,
+    }],
+  });
+  await bridge.handleTasTrace(client, { count: 1 });
+  const traceReply = messages().filter((message) => message.type === "tas_trace").at(-1);
+  assert.equal(traceReply.count, 1);
+  assert.ok(traceReply.saved_path);
 });

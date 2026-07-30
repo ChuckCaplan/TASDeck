@@ -78,6 +78,7 @@ const TAS_TRACE_CSV_HEADER = [
 const SERIAL_CONNECT_READY_TIMEOUT_MS = 12000;
 const SERIAL_STATUS_ATTEMPT_TIMEOUT_MS = 750;
 const SERIAL_HANDLE_CLOSE_TIMEOUT_MS = 1500;
+const RECENT_RUNS_DIR_NAME = "recent-runs";
 
 const CONTENT_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -95,6 +96,9 @@ class SerialBridge {
     this.platform = options.platform || process.platform;
     this.serialPortApi = options.serialPortApi || null;
     this.logDir = options.logDir || EVENT_LOG_DIR;
+    this.recentRuns = options.recentRuns || createRecentRunsStore(
+      options.recentRunsDir || path.join(this.logDir, RECENT_RUNS_DIR_NAME),
+    );
     this.clients = new Set();
     this.buttonHolders = new Map(controllerButtonKeys().map((key) => [key, new Set()]));
     this.handle = null;
@@ -112,6 +116,17 @@ class SerialBridge {
     this.tasRunSequence = 0;
     this.tasWaiters = [];
     this.connectPromise = null;
+    this.recentSourceRequests = new Map();
+    this.recentSourceRequestSequence = 0;
+    try {
+      this.recentRunsReady = Promise.resolve(this.recentRuns.load()).catch((error) => {
+        this.broadcastBridge(`Recent runs failed to load: ${error.message}`);
+        return [];
+      });
+    } catch (error) {
+      this.broadcastBridge(`Recent runs failed to load: ${error.message}`);
+      this.recentRunsReady = Promise.resolve([]);
+    }
   }
 
   isConnected() {
@@ -255,6 +270,7 @@ class SerialBridge {
       return false;
     }
 
+    this.interruptRecentTasRun(this.activeTasRun, "Arduino USB serial disconnected");
     this.handle = null;
     this.portPath = "";
     this.readBuffer = "";
@@ -291,6 +307,7 @@ class SerialBridge {
 
   async disconnect(options = {}) {
     const handle = this.handle;
+    this.interruptRecentTasRun(this.activeTasRun, options.reason || "Arduino USB serial disconnected");
     if (!handle) {
       this.clearHeldButtons();
       this.broadcastStatus();
@@ -338,7 +355,7 @@ class SerialBridge {
 
   async handleClientTasMessage(client, message) {
     if (message?.type === "tas_upload") {
-      this.handleTasUpload(client, message);
+      await this.handleTasUpload(client, message);
       return;
     }
 
@@ -357,7 +374,13 @@ class SerialBridge {
     }
 
     if (message?.type === "tas_arm") {
-      await this.armTasRun();
+      const run = this.activeTasRun;
+      try {
+        await this.armTasRun();
+      } catch (error) {
+        this.finalizeRecentTasRun(run, "error", error.message);
+        throw error;
+      }
       return;
     }
 
@@ -398,7 +421,7 @@ class SerialBridge {
     await this.writeCommand(command);
   }
 
-  handleTasUpload(client, message) {
+  async handleTasUpload(client, message) {
     let run;
     try {
       run = this.createTasRun(message);
@@ -411,11 +434,35 @@ class SerialBridge {
       return;
     }
 
+    const outgoingRun = this.activeTasRun;
+    if (outgoingRun && tasRunIsDisplaceable(outgoingRun)) {
+      outgoingRun.paused = false;
+      outgoingRun.stopped = true;
+      outgoingRun.state = "stopped";
+      this.discardRecentSourceRequests(outgoingRun);
+      try {
+        if (this.isConnected()) {
+          const status = await this.sendFirmwareTasCommand(
+            "TAS_CANCEL",
+            (response) => response.command === "tas_cancel",
+          );
+          this.applyTasFirmwareStatus(outgoingRun, status, "tas_cancel");
+        }
+      } catch (error) {
+        this.broadcastBridge(`TAS displacement cancel failed: ${error.message}`);
+      } finally {
+        this.finalizeRecentTasRun(outgoingRun, "stopped");
+      }
+    } else if (outgoingRun) {
+      this.discardRecentSourceRequests(outgoingRun);
+    }
+
     this.activeTasRun = run;
     this.broadcast(this.tasStatusPayload("tas_upload", run, {
       bridge_state: "uploaded",
       message: `Bridge stored ${run.fileName}`,
     }));
+    this.requestRecentRunSource(client, run);
   }
 
   createTasRun(message) {
@@ -462,6 +509,10 @@ class SerialBridge {
       id: ++this.tasRunSequence,
       clientRunId: Number.isSafeInteger(Number(message?.clientRunId)) ? Number(message.clientRunId) : 0,
       fileName: sanitizeTasFileName(message?.fileName),
+      fileFormat: tasFileFormat(message?.fileName),
+      sourceKey: normalizeRecentSourceKey(message?.sourceKey),
+      sourceByteLength: normalizeRecentSourceByteLength(message?.sourceByteLength),
+      sourceFrameCount: normalizeRecentSourceFrameCount(message?.sourceFrameCount),
       skipPolls,
       portCount,
       originalFrameCount: uploadedMasks.length,
@@ -558,6 +609,7 @@ class SerialBridge {
         message?.startDelayPolls ??
         message?.start_delay_polls,
     );
+    run.startDelayPolls = startDelayPolls;
     const command = tasStartToBridgeCommand({
       type: "tas_start",
       delayPolls: startDelayPolls,
@@ -568,10 +620,12 @@ class SerialBridge {
 
     const status = await this.sendFirmwareTasCommand(command, (message) => message.command === "tas_start");
     this.markTasRunStarted(run);
+    this.beginRecentTasRun(run, status);
     this.applyTasFirmwareStatus(run, status, "tas_start");
     this.startTasTraceStream(run);
 
     run.streamTask = this.continueTasStream(run).catch((error) => {
+      this.finalizeRecentTasRun(run, "error", error.message);
       if (this.activeTasRun !== run) {
         return;
       }
@@ -689,6 +743,7 @@ class SerialBridge {
     this.broadcast(this.tasStatusPayload("tas_resume", run, { bridge_state: run.state }));
     if (!run.started) {
       this.armTasRun().catch((error) => {
+        this.finalizeRecentTasRun(run, "error", error.message);
         if (this.activeTasRun !== run) {
           return;
         }
@@ -720,13 +775,20 @@ class SerialBridge {
     run.stopped = true;
     run.state = "stopped";
 
-    if (this.isConnected()) {
-      const status = await this.sendFirmwareTasCommand("TAS_CANCEL", (message) => message.command === "tas_cancel");
-      this.applyTasFirmwareStatus(run, status, "tas_cancel");
-      return;
-    }
+    try {
+      if (this.isConnected()) {
+        const status = await this.sendFirmwareTasCommand(
+          "TAS_CANCEL",
+          (message) => message.command === "tas_cancel",
+        );
+        this.applyTasFirmwareStatus(run, status, "tas_cancel");
+        return;
+      }
 
-    this.broadcast(this.tasStatusPayload("tas_cancel", run, { bridge_state: "stopped" }));
+      this.broadcast(this.tasStatusPayload("tas_cancel", run, { bridge_state: "stopped" }));
+    } finally {
+      this.finalizeRecentTasRun(run, "stopped");
+    }
   }
 
   async handleTasStatus(client) {
@@ -765,18 +827,24 @@ class SerialBridge {
   }
 
   async handleTasTrace(client, message = {}) {
+    const run = this.activeTasRun;
     const requestedCount = normalizeTasTraceDumpCount(message.count ?? message.traceCount);
     const dump = await this.collectTasTraceRows(requestedCount);
-    const firmwareStatus = this.activeTasRun?.firmwareStatus || {};
+    const firmwareStatus = run?.firmwareStatus || {};
     const traceFrozen = Number(firmwareStatus.trace_frozen || 0) === 1;
     const anomalyCount = Number(firmwareStatus.anomaly_count || 0);
     // The client renders these rows into the event log without timestampMicros,
     // so persist the full CSV server-side too — the timing data is what makes
     // a capture comparable against the emulator's lag structure.
     let savedPath = "";
-    if (this.activeTasRun && dump.rows.length > 0) {
+    if (run && dump.rows.length > 0) {
       try {
-        const filePath = await this.writeTasTraceDumpFile(this.activeTasRun, dump, ["manual_trace_dump: 1"]);
+        const filePath = await this.writeTasTraceDumpFile(
+          run,
+          dump,
+          ["manual_trace_dump: 1"],
+          "manual",
+        );
         savedPath = displayPathForLog(filePath);
       } catch (error) {
         this.broadcastBridge(`Manual TAS trace save failed: ${error.message}`);
@@ -941,6 +1009,7 @@ class SerialBridge {
   }
 
   async handleEventLogSave(client, message = {}) {
+    const run = this.activeTasRun;
     try {
       const text = normalizeEventLogText(message.text);
       const reason = sanitizeEventLogReason(message.reason);
@@ -949,14 +1018,17 @@ class SerialBridge {
       const traceLog = reason === "tas-trace";
       const outputDir = traceLog ? path.join(this.logDir, TRACE_LOG_DIR_NAME) : this.logDir;
       const fileName = traceLog
-        ? traceLogFileName(metadata.tasFileName || metadata.tdmaskFileName || this.activeTasRun?.fileName, timestamp)
+        ? traceLogFileName(metadata.tasFileName || metadata.tdmaskFileName || run?.fileName, timestamp)
         : eventLogFileName(reason, timestamp);
       const filePath = path.join(outputDir, fileName);
       const outputText = traceLog
-        ? `${formatTraceEventLogHeader(metadata, this.activeTasRun, timestamp)}\n\n${text.trimEnd()}\n`
+        ? `${formatTraceEventLogHeader(metadata, run, timestamp)}\n\n${text.trimEnd()}\n`
         : `${text.trimEnd()}\n`;
       await fsp.mkdir(outputDir, { recursive: true });
       await fsp.writeFile(filePath, outputText, "utf8");
+      if (traceLog && run) {
+        this.attachRecentTasTrace(run.id, displayPathForLog(filePath), "log");
+      }
 
       this.sendJson(client, {
         type: "event_log_saved",
@@ -974,6 +1046,245 @@ class SerialBridge {
     }
   }
 
+  requestRecentRunSource(client, run) {
+    this.recentRunsReady
+      .then(() => this.recentRuns.needsSource(run))
+      .then((result) => {
+        if (!result?.needed || this.activeTasRun !== run || !run.sourceKey) {
+          return;
+        }
+        const sourceRequestId = `${run.id}-${++this.recentSourceRequestSequence}`;
+        this.recentSourceRequests.set(sourceRequestId, {
+          client,
+          run,
+          sourceKey: run.sourceKey,
+        });
+        this.sendJson(client, {
+          type: "recent_run_source_request",
+          sourceRequestId,
+          sourceKey: run.sourceKey,
+          bridgeRunId: run.id,
+        });
+      })
+      .catch((error) => {
+        this.broadcastBridge(`Recent run source check failed: ${error.message}`);
+      });
+  }
+
+  discardRecentSourceRequests(run) {
+    for (const [requestId, request] of this.recentSourceRequests) {
+      if (request.run === run) {
+        this.recentSourceRequests.delete(requestId);
+      }
+    }
+  }
+
+  async handleRecentRunSourceMessage(client, message) {
+    const sourceRequestId = String(message?.sourceRequestId || "");
+    const request = this.recentSourceRequests.get(sourceRequestId);
+    if (
+      !request ||
+      request.client !== client ||
+      request.sourceKey !== String(message?.sourceKey || "")
+    ) {
+      return;
+    }
+    this.recentSourceRequests.delete(sourceRequestId);
+
+    if (message.type === "recent_run_source_unavailable") {
+      try {
+        await Promise.resolve(this.recentRuns.markSourceUnavailable(request.sourceKey));
+      } catch (error) {
+        this.broadcastBridge(`Recent run source-unavailable update failed: ${error.message}`);
+      }
+      return;
+    }
+
+    try {
+      if (typeof message.bytesBase64 !== "string") {
+        throw new Error("Recent run source bytes are missing.");
+      }
+      await this.recentRuns.storeSource({
+        run: request.run,
+        fileName: message.fileName,
+        bytes: Buffer.from(message.bytesBase64, "base64"),
+      });
+    } catch (error) {
+      this.broadcastBridge(`Recent run source archive failed: ${error.message}`);
+    }
+  }
+
+  async handleRecentRunsMessage(client, message) {
+    const requestId = String(message?.requestId || "");
+    try {
+      await this.recentRunsReady;
+      if (message.type === "recent_runs_list") {
+        this.sendJson(client, {
+          type: "recent_runs",
+          requestId,
+          entries: await Promise.resolve(this.recentRuns.entries()),
+        });
+        return;
+      }
+
+      if (message.type === "recent_run_load") {
+        const source = await this.recentRuns.loadSource(String(message.id || ""));
+        this.sendJson(client, {
+          type: "recent_run_source_loaded",
+          requestId,
+          id: String(message.id || ""),
+          fileName: source.fileName,
+          bytesBase64: source.bytes.toString("base64"),
+          restore: source.restore,
+          portCount: source.portCount,
+          totalRecords: source.totalRecords,
+        });
+        return;
+      }
+
+      if (message.type === "recent_run_delete") {
+        const result = await this.recentRuns.deleteRun(String(message.id || ""), {
+          activeId: this.activeRecentRunEntryId(),
+        });
+        this.broadcastRecentRuns({ requestId, ...result });
+        return;
+      }
+
+      if (message.type === "recent_runs_clear") {
+        const result = await this.recentRuns.clearRuns({
+          activeId: this.activeRecentRunEntryId(),
+        });
+        this.broadcastRecentRuns({ requestId, ...result });
+      }
+    } catch (error) {
+      this.sendJson(client, {
+        type: "recent_runs_error",
+        requestId,
+        message: error.message,
+      });
+    }
+  }
+
+  beginRecentTasRun(run, firmwareStatus = {}) {
+    try {
+      const id = this.recentRuns.beginRun(run, {
+        firmwareId: firmwareStatus.fw || run.firmwareStatus?.fw || "",
+      });
+      if (id && typeof id.then === "function") {
+        id.catch((error) => {
+          this.broadcastBridge(`Recent run creation failed: ${error.message}`);
+        });
+        return;
+      }
+      if (typeof id === "string" && id) {
+        run.recentRunEntryId = id;
+        this.broadcastRecentRuns();
+      }
+    } catch (error) {
+      this.broadcastBridge(`Recent run creation failed: ${error.message}`);
+    }
+  }
+
+  noteRecentTasProgress(run, status = {}) {
+    const entryId = run?.recentRunEntryId;
+    if (!entryId) {
+      return;
+    }
+    try {
+      const result = this.recentRuns.noteProgress(entryId, status.current || 0, {
+        bare_strobes: status.bare_strobes,
+        torn_strobes: status.torn_strobes,
+        anomaly_count: status.anomaly_count,
+        anomaly_kind: status.anomaly_kind,
+        anomaly_seq: status.anomaly_seq,
+        fw: status.fw,
+      });
+      if (result && typeof result.catch === "function") {
+        result.catch((error) => {
+          this.broadcastBridge(`Recent run progress update failed: ${error.message}`);
+        });
+      }
+    } catch (error) {
+      this.broadcastBridge(`Recent run progress update failed: ${error.message}`);
+    }
+  }
+
+  finalizeRecentTasRun(run, outcome, error = "", status = {}) {
+    const entryId = run?.recentRunEntryId;
+    if (!entryId || run.recentTerminalRequested) {
+      return;
+    }
+    run.recentTerminalRequested = true;
+    const firmwareStatus = status || run.firmwareStatus || {};
+    const recordsPlayed = Number(
+      firmwareStatus.current ?? run.firmwareStatus?.current ?? 0,
+    );
+    try {
+      const result = this.recentRuns.finalizeRun(entryId, {
+        outcome,
+        recordsPlayed: Number.isSafeInteger(recordsPlayed) ? recordsPlayed : 0,
+        error,
+        firmwareId: firmwareStatus.fw || run.firmwareStatus?.fw || "",
+      });
+      run.recentFinalizePromise = Promise.resolve(result)
+        .then(() => {
+          this.broadcastRecentRuns();
+        })
+        .catch((recentError) => {
+          this.broadcastBridge(`Recent run finalization failed: ${recentError.message}`);
+        });
+    } catch (recentError) {
+      this.broadcastBridge(`Recent run finalization failed: ${recentError.message}`);
+    }
+  }
+
+  interruptRecentTasRun(run, error) {
+    if (!run?.recentRunEntryId || run.recentTerminalRequested) {
+      return;
+    }
+    this.finalizeRecentTasRun(run, "interrupted", error);
+  }
+
+  attachRecentTasTrace(bridgeRunId, tracePath, kind) {
+    try {
+      const result = this.recentRuns.attachTraceForRun(bridgeRunId, {
+        path: tracePath,
+        kind,
+      });
+      Promise.resolve(result).catch((error) => {
+        this.broadcastBridge(`Recent run trace attach failed: ${error.message}`);
+      });
+    } catch (error) {
+      this.broadcastBridge(`Recent run trace attach failed: ${error.message}`);
+    }
+  }
+
+  activeRecentRunEntryId() {
+    const run = this.activeTasRun;
+    return run?.recentRunEntryId && !run.recentTerminalRequested
+      ? run.recentRunEntryId
+      : "";
+  }
+
+  broadcastRecentRuns(extra = {}) {
+    try {
+      const entries = this.recentRuns.entries();
+      if (entries && typeof entries.then === "function") {
+        entries
+          .then((resolvedEntries) => {
+            this.broadcast({ type: "recent_runs", ...extra, entries: resolvedEntries });
+          })
+          .catch((error) => {
+            this.broadcastBridge(`Recent runs broadcast failed: ${error.message}`);
+          });
+        return;
+      }
+      this.broadcast({ type: "recent_runs", ...extra, entries });
+    } catch (error) {
+      this.broadcastBridge(`Recent runs broadcast failed: ${error.message}`);
+    }
+  }
+
   requireActiveTasRun() {
     if (!this.activeTasRun) {
       throw new Error("No TAS run has been uploaded to the bridge.");
@@ -988,11 +1299,14 @@ class SerialBridge {
     if (Number(status.received || 0) > run.nextFrameIndex) {
       run.nextFrameIndex = Math.min(Number(status.received), run.frameCount);
     }
+    this.noteRecentTasProgress(run, status);
     if (run.error && run.error !== "ok") {
       run.state = "error";
+      this.finalizeRecentTasRun(run, "error", run.error, status);
     } else if (Number(status.complete) === 1) {
       run.paused = false;
       run.state = "complete";
+      this.finalizeRecentTasRun(run, "completed", "", status);
     }
     this.maybeDumpFrozenTasTrace(run, status);
     this.broadcast(this.tasStatusPayload(command, run, status));
@@ -1022,7 +1336,13 @@ class SerialBridge {
     run.traceDumpTask = task;
   }
 
-  async writeTasTraceDumpFile(run, dump, extraHeaderLines, timestamp = new Date()) {
+  async writeTasTraceDumpFile(
+    run,
+    dump,
+    extraHeaderLines,
+    kind,
+    timestamp = new Date(),
+  ) {
     const outputDir = path.join(this.logDir, TRACE_LOG_DIR_NAME);
     const fileName = traceLogFileName(run.fileName, timestamp);
     const filePath = path.join(outputDir, fileName);
@@ -1053,6 +1373,7 @@ class SerialBridge {
 
     await fsp.mkdir(outputDir, { recursive: true });
     await fsp.writeFile(filePath, outputText, "utf8");
+    this.attachRecentTasTrace(run.id, displayPathForLog(filePath), kind);
     return filePath;
   }
 
@@ -1063,7 +1384,7 @@ class SerialBridge {
       `trigger_anomaly_count: ${firmwareStatus.anomaly_count ?? ""}`,
       `trigger_anomaly_seq: ${firmwareStatus.anomaly_seq ?? ""}`,
       `trigger_anomaly_kind: ${firmwareStatus.anomaly_kind ?? ""}`,
-    ]);
+    ], "auto");
     this.broadcastBridge(`Auto-saved frozen TAS trace to ${displayPathForLog(filePath)}`);
 
     const resumeStatus = await this.sendFirmwareTasCommand(
@@ -1197,11 +1518,17 @@ class SerialBridge {
       );
       const gapNote = totalGaps > 0 ? ` (${totalGaps} rows lost to ring overwrite)` : "";
       this.broadcastBridge(`TAS trace stream saved ${totalRows} rows to ${displayPathForLog(filePath)}${gapNote}`);
+      this.attachRecentTasTrace(run.id, displayPathForLog(filePath), "stream");
     }
   }
 
   tasStatusPayload(command, run, status = {}) {
-    const complete = Number(status.complete ?? (run.state === "complete" ? 1 : 0)) === 1 ? 1 : 0;
+    const statusError = status.error || run.firmwareStatus?.error || run.error || "ok";
+    const complete =
+      statusError === "ok" &&
+      Number(status.complete ?? (run.state === "complete" ? 1 : 0)) === 1
+        ? 1
+        : 0;
     const bridgeState = complete ? "complete" : status.bridge_state || run.state;
     const firmwareStatus = run.firmwareStatus || {};
     return {
@@ -1253,7 +1580,7 @@ class SerialBridge {
       anomaly_seq: status.anomaly_seq ?? firmwareStatus.anomaly_seq ?? 0,
       anomaly_kind: status.anomaly_kind ?? firmwareStatus.anomaly_kind ?? 0,
       trace_frozen: status.trace_frozen ?? firmwareStatus.trace_frozen ?? 0,
-      error: status.error || firmwareStatus.error || run.error || "ok",
+      error: statusError,
       message: status.message || `Bridge TAS ${bridgeState}`,
     };
   }
@@ -1596,6 +1923,7 @@ class SerialBridge {
       }
     } finally {
       if (this.handle === handle) {
+        this.interruptRecentTasRun(this.activeTasRun, "Arduino USB serial disconnected");
         this.handle = null;
         this.portPath = "";
         this.readBuffer = "";
@@ -1662,7 +1990,12 @@ class SerialBridge {
 }
 
 function createServer(options = {}) {
-  const serialBridge = new SerialBridge({ serialPort: options.serialPort });
+  const serialBridge = new SerialBridge({
+    serialPort: options.serialPort,
+    logDir: options.logDir,
+    recentRuns: options.recentRuns,
+    recentRunsDir: options.recentRunsDir,
+  });
   const server = http.createServer((request, response) => {
     serveStatic(request, response).catch((error) => {
       response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
@@ -1918,6 +2251,24 @@ async function handleClientMessage(client, serialBridge, rawMessage) {
 
   if (message.type === "save_event_log") {
     await serialBridge.handleEventLogSave(client, message);
+    return;
+  }
+
+  if (
+    message.type === "recent_run_source" ||
+    message.type === "recent_run_source_unavailable"
+  ) {
+    await serialBridge.handleRecentRunSourceMessage(client, message);
+    return;
+  }
+
+  if (
+    message.type === "recent_runs_list" ||
+    message.type === "recent_run_load" ||
+    message.type === "recent_run_delete" ||
+    message.type === "recent_runs_clear"
+  ) {
+    await serialBridge.handleRecentRunsMessage(client, message);
     return;
   }
 
@@ -2377,6 +2728,41 @@ function normalizeUploadedMasks(value, portCount) {
   // clients may still send one mask object per frame. tasMasksFromWire
   // handles both and returns per-frame masks either way.
   return tasMasksFromWire(value, portCount);
+}
+
+function createRecentRunsStore(directory) {
+  const { RecentRunsStore } = require("./recent-runs-store.js");
+  return new RecentRunsStore({ directory });
+}
+
+function tasFileFormat(fileName) {
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  if (extension === ".r08") {
+    return "r08";
+  }
+  if (extension === ".tdmask") {
+    return "tdmask";
+  }
+  return "";
+}
+
+function normalizeRecentSourceKey(value) {
+  const normalized = String(value || "");
+  return /^fnv1a32:[0-9a-f]{8}:\d+$/i.test(normalized) ? normalized.toLowerCase() : "";
+}
+
+function normalizeRecentSourceByteLength(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= 0 ? normalized : 0;
+}
+
+function normalizeRecentSourceFrameCount(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= 0 ? normalized : 0;
+}
+
+function tasRunIsDisplaceable(run) {
+  return ["arming", "armed", "streaming", "playing", "paused"].includes(run?.state);
 }
 
 function normalizeControllerPort(value) {
@@ -2907,6 +3293,7 @@ async function main() {
       process.exit(0);
     }, 1000);
 
+    serialBridge.interruptRecentTasRun(serialBridge.activeTasRun, "Server stopped");
     serialBridge
       .disconnect({ reason: "Server stopped" })
       .catch((error) => {
@@ -2954,3 +3341,10 @@ module.exports = {
   tasTraceStreamEnabled,
   formatTasTraceRowsForFile,
 };
+
+Object.defineProperty(module.exports, "RecentRunsStore", {
+  enumerable: true,
+  get() {
+    return require("./recent-runs-store.js").RecentRunsStore;
+  },
+});
