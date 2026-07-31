@@ -74,6 +74,13 @@ jobs:
     env:
       # Pinned so a core release cannot silently change the compiled binary.
       ARDUINO_CORE: arduino:renesas_uno@1.6.0
+      # Installed straight from the release tarball rather than through
+      # arduino/setup-arduino-cli: that action is dormant (last commit Nov 2024)
+      # and still declares node20, which GitHub now warns about on every run and
+      # will eventually stop running at all. Pinned with a checksum for the same
+      # reason as the core above.
+      ARDUINO_CLI_VERSION: 1.5.1
+      ARDUINO_CLI_SHA256: 28a8e119c498a25607821c36cb2dc49e8463941b261a0d99091baa7bc692dd2b
     steps:
       - uses: actions/checkout@v7
 
@@ -82,9 +89,15 @@ jobs:
       # which keeps the command defined in one place.
       - run: npm run test:firmware
 
-      - uses: arduino/setup-arduino-cli@v2
-        with:
-          version: 1.5.1
+      - name: Install arduino-cli
+        run: |
+          tarball="arduino-cli_${ARDUINO_CLI_VERSION}_Linux_64bit.tar.gz"
+          curl -fsSL -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/arduino/arduino-cli/releases/download/v${ARDUINO_CLI_VERSION}/$tarball"
+          echo "$ARDUINO_CLI_SHA256  $RUNNER_TEMP/$tarball" | sha256sum --check --strict
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$HOME/.local/bin" arduino-cli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Cache Arduino cores
         uses: actions/cache@v6
         with:
