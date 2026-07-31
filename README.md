@@ -1,5 +1,7 @@
 # TASDeck
 
+[![CI](https://img.shields.io/github/actions/workflow/status/ChuckCaplan/TASDeck/ci.yml?branch=main&logo=github&label=CI)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
+
 TASDeck lets you control a real NES from a browser and play tool-assisted speedrun (TAS) files on
 real hardware using an Arduino UNO R4. The browser provides live controller input and TAS
 controls, a small Node middleware owns the Arduino USB connection, and the firmware drives the NES controller ports.
