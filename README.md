@@ -101,18 +101,18 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [Arkanoid — "warpless" by eien86](https://www.youtube.com/watch?v=_Aq-DNFsMJ8) | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro |
 | [Chip 'n Dale Rescue Rangers — 2 players by dragonxyk](https://www.youtube.com/watch?v=FdtvpdCli3k) | 09:33 | [TASBot-Projects](https://github.com/dwangoac/TASBot-Projects/tree/master/replayfiles) | `.r08` | EverDrive N8 Pro |
 | [Disney's The Little Mermaid by McBobX](https://www.youtube.com/watch?v=6GE6xpsqm-g) | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
-| Donkey Kong by Alyosha | 01:16 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2`, `.r08` | EverDrive N8 Pro |
-| [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
-| [Double Dragon II — 2 players by Alyosha](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| Donkey Kong — "all items" by Phil, Spikestuff, GoddessMaria & Alyosha | 01:16 | [5254M](https://tasvideos.org/5254M) | `.bk2`, `.r08` | EverDrive N8 Pro |
+| [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro |
+| [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
-| [Lode Runner by Alyosha](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro |
 | [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [TASBot-Projects](https://github.com/dwangoac/TASBot-Projects/tree/master/replayfiles) | `.r08` | EverDrive N8 Pro |
-| [Monopoly by Alyosha](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
-| [Pac-Man (Tengen) by Alyosha](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2` | EverDrive N8 Pro |
+| [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro |
+| [Pac-Man (Tengen) by eien86](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [5231M](https://tasvideos.org/5231M) | `.bk2` | EverDrive N8 Pro |
 | [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro |
 | [Super Mario Bros. — "warpless" by HappyLee & Mars608](https://www.youtube.com/watch?v=JpjCpAvx-Nk) | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro |
 | [Super Mario Bros. — "Playaround" by flamexx](https://www.youtube.com/watch?v=OOrngcD9NOQ) | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. — "maximum score"](https://www.youtube.com/watch?v=NeRRpmQHe9o) | 19:01 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| [Super Mario Bros. — "maximum score" by HappyLee, DaSmileKat, Kzwbz, Asumeh & Kosmic](https://www.youtube.com/watch?v=NeRRpmQHe9o) | 19:01 | [6555M](https://tasvideos.org/6555M) | `.r08` | EverDrive N8 Pro |
 | [Super Mario Bros. 2 (FDS / Japan) — "all items, Mario" by Kzwbz, Argentu-M & Endless Wind](https://www.youtube.com/watch?v=roWEV2iQf7M) | 23:33 | [5049M](https://tasvideos.org/5049M) | `.fm2` | EverDrive N8 Pro |
 | [Super Mario Bros. 2 (FDS / Japan) — "warps, Mario" by HappyLee](https://www.youtube.com/watch?v=oDotKGDbRio) | 08:04.83 | [3348M](https://tasvideos.org/3348M) | `.fm2` | EverDrive N8 Pro |
 | [Super Mario Bros. 2 (FDS / Japan) — "SMB2J ACE Total Control example", 2 controllers by threecreepio](https://www.youtube.com/watch?v=bP5bhUHO9tk) | 14:44 | [GitHub](https://github.com/threecreepio/smb2j-ace-tc) | `.fm2` | EverDrive N8 Pro |
