@@ -123,7 +123,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
 | [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
 | [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
-| [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
+| [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord_Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
 | [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro |
 
 ## Background
