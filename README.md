@@ -106,7 +106,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [Double Dragon II — 2 players by Alyosha](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
 | [Lode Runner by Alyosha](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
-| Mike Tyson's Punch-Out!! by adelikat | 17:35 | [TASBot-Projects](https://github.com/dwangoac/TASBot-Projects/tree/master/replayfiles) | `.r08` | EverDrive N8 Pro |
+| [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [TASBot-Projects](https://github.com/dwangoac/TASBot-Projects/tree/master/replayfiles) | `.r08` | EverDrive N8 Pro |
 | [Monopoly by Alyosha](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
 | [Pac-Man (Tengen) by Alyosha](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.bk2` | EverDrive N8 Pro |
 | [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro |
@@ -119,12 +119,12 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [Super Mario Bros. 2 (USA) — "warpless" by Aglar, andrewg & Alyosha](https://www.youtube.com/watch?v=u-r19EgH4cY) | 18:24 | [6366M](https://tasvideos.org/6366M) | `.bk2` | EverDrive N8 Pro |
 | [Super Mario Bros. 2 (USA) — "warps" by Aglar & andrewg](https://www.youtube.com/watch?v=YYqVx4bTyT8) | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro |
 | Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
-| Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
-| Super Mario Bros. 3 — Lord_Tom & Tompa's NES Super Mario Bros. 3 | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
+| [Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa](https://www.youtube.com/watch?v=gfD4Rx75C1g) | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
+| [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
 | [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
 | [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
 | [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
-| Tiger-Heli by Alyosha | 12:54 | [Replay Files](https://github.com/alyosha-tas/NES_replay_files) | `.r08` | EverDrive N8 Pro |
+| [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro |
 
 ## Background
 
