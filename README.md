@@ -118,7 +118,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [Super Mario Bros. 2 (FDS / Japan) — "SMB2J ACE Total Control example", 2 controllers by threecreepio](https://www.youtube.com/watch?v=bP5bhUHO9tk) | 14:44 | [GitHub](https://github.com/threecreepio/smb2j-ace-tc) | `.fm2` | EverDrive N8 Pro |
 | [Super Mario Bros. 2 (USA) — "warpless" by Aglar, andrewg & Alyosha](https://www.youtube.com/watch?v=u-r19EgH4cY) | 18:24 | [6366M](https://tasvideos.org/6366M) | `.bk2` | EverDrive N8 Pro |
 | [Super Mario Bros. 2 (USA) — "warps" by Aglar & andrewg](https://www.youtube.com/watch?v=YYqVx4bTyT8) | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro |
-| Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
+| [Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa](https://www.youtube.com/watch?v=cB5zRV_KQ60) | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
 | [Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa](https://www.youtube.com/watch?v=gfD4Rx75C1g) | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
 | [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
 | [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
