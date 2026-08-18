@@ -35,7 +35,7 @@ The tested parser lives in `src/NesDeckProtocol.cpp`, the controller-state helpe
 The current serial build reports this firmware id in the boot banner and `STATUS` response:
 
 ```txt
-fw=tasdeck-uno-r4-serial-latchwin-v63 transport=serial
+fw=tasdeck-uno-r4-serial-latchwin-v74 transport=serial
 ```
 
 ## NES Pins
@@ -112,12 +112,26 @@ served one position late). The latch ISR guards clock-shared state with a short 
 head, and the clock ISRs restore strobe-first ordering in software by running a pended latch edge
 inline before shifting. The windowed layout is restored by TAS_CANCEL, by the next windowed
 TAS_BEGIN, and — deferred to `loop()`, since completion surfaces in ISR context — when a strobe
-run completes or underruns on its own. `TAS_STATUS` reports two DWT cycle counters (48 per µs,
-core dispatch excluded from both): `latch_isr_last_cyc`/`latch_isr_max_cyc` is latch ISR
+run completes or underruns on its own. `TAS_STATUS` reports DWT cycle counters (48 per µs,
+core dispatch excluded from all of them): `latch_isr_last_cyc`/`latch_isr_max_cyc` is latch ISR
 residency, entry to return — in strobe mode preempting clock ISRs are included, so it is not a
-head budget — and `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's
-entry-to-PRIMASK-release span, the number that must beat the console's second post-strobe read.
-The bridge copies all four into `.trace` headers and the `.stream.csv` footer.
+head budget — `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's
+entry-to-PRIMASK-release span, the number that must beat the console's second post-strobe read,
+and `clock_write_last_cyc`/`clock_write_max_cyc` is the strobe clock ISR's entry-to-data-write
+span. The bridge copies them into `.trace` headers and the `.stream.csv` footer.
+
+`clock_write_max_cyc` is the per-bit deadline. The console samples bit N+1 one read after the
+clock edge that carried bit N, so this span must stay under the game's tightest read-to-read
+spacing. Golf's shot-setup routine reads `$4016` at CPU cycles 16/25/29/33/39/52 after the strobe,
+which makes the Select/Start pair 4 CPU cycles apart (2.23 µs = 107 core cycles) and puts the
+bit-4 (Up) sample 6 cycles (3.35 µs = 161 core cycles) after the bit-3 clock, against 13 cycles
+(7.26 µs) for bit 5 (Down). That asymmetry is why Down reaches the console on every Golf club
+change while Up does not. v74 shortens the span with instruction-count reductions only —
+precomputed pending-latch register and mask, an inlined handler, a branchless level select — and
+leaves the ICU request-flag clear and its `DSB` drain ahead of the write where they have always
+been. v73 moved that clear behind the write and regressed Golf's first stroke on hardware for
+reasons not yet established, so treat the ordering as fixed and use `clock_write_max_cyc` to
+decide whether more is needed.
 
 The same firmware also selects the interrupt-handler path automatically at `TAS_BEGIN`. `poll` and
 `latch` use the lean window callbacks through the stock Arduino/FSP dispatch path, preserving the
