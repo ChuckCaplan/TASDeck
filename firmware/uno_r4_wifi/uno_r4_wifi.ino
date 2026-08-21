@@ -38,7 +38,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v74";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v75";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -191,10 +191,10 @@ volatile uint32_t tasLatchHeadLastCycles = 0;
 volatile uint32_t tasLatchHeadMaxCycles = 0;
 // Rev 8 (v51) strobe tail instrumentation. tasLatchTail* is the fast-path tail
 // span (head release to ISR return, prefetch included) — bounded by the
-// tightest latch spacing (Archon menus: 283 µs ≈ 13,584 cycles). tasLatchPrefetchMasked*
-// is the interrupts-off span around the ring pop in prefetchNextStrobeRecord —
-// the safety-critical number: it must stay far under a console read-pair spacing
-// (Golf's 2.2 µs ≈ 106 cycles) so a masked pop can never merge two reads.
+// tightest latch spacing (Archon menus: 283 µs ≈ 13,584 cycles).
+// tasLatchPrefetchMasked* brackets the validated prefetch publication (clock-
+// preempted samples are discarded). It must leave room for exception entry and
+// clock_write_max_cyc inside Golf's 107-cycle read-pair spacing.
 volatile uint32_t tasLatchTailLastCycles = 0;
 volatile uint32_t tasLatchTailMaxCycles = 0;
 volatile uint32_t tasLatchPrefetchMaskedLastCycles = 0;
@@ -206,8 +206,8 @@ volatile uint32_t tasLatchPrefetchMaskedMaxCycles = 0;
 // routine reads $4016 at CPU cycles 16/25/29/33/39/52 after the strobe: the
 // bit-4 (Up) sample is 6 CPU cycles = 3.35 µs = 161 core cycles after the
 // bit-3 clock, and the Select/Start pair is tighter still at 4 cycles
-// (2.23 µs = 107 core cycles). Under 107 is safe for every read train in the
-// r08 library measured so far.
+// (2.23 µs = 107 core cycles). If an edge waits behind PRIMASK, its masked
+// wait plus architectural exception entry plus this counter must fit in 107.
 volatile uint32_t tasClockWriteLastCycles = 0;
 volatile uint32_t tasClockWriteMaxCycles = 0;
 
@@ -450,9 +450,10 @@ void setupNesPins() {
   digitalWrite(kPort1DataPin, HIGH);
   digitalWrite(kPort2DataPin, HIGH);
 
-  // Reload once per strobe. The data line is already pre-positioned between
-  // polls, and avoiding the falling-edge ISR keeps the latch path short enough
-  // that pending clock edges do not coalesce into 7-clock torn reads.
+  // Reload once per strobe. After a complete read, the eighth clock has already
+  // pre-positioned the next record's bit 0 between polls; avoiding the
+  // falling-edge ISR keeps the latch path short enough that pending clock edges
+  // do not coalesce into 7-clock torn reads.
   attachInterrupt(digitalPinToInterrupt(kPort1LatchPin), handlePort1Latch, RISING);
   // The NES samples D0 when CLK goes high-to-low; a standard 4021 shifts when
   // CLK returns low-to-high. Shift on the rising edge so D6 stays stable for
@@ -1696,14 +1697,13 @@ void refreshControllerOutput() {
 }
 
 void serviceTasWindowExpiry() {
-  // Advance to the next mask as soon as the latch window closes instead of
-  // waiting for the next strobe. The console samples bit 0 (A) only a few
-  // microseconds after the strobe edge — sooner than the latch ISR can update
-  // the data line — so the next frame's bit 0 must already be on the wire
-  // when the strobe arrives. This runs mid-gap, milliseconds away from any
-  // expected edge, so the short interrupt-masked section is harmless. If the
-  // loop ever misses a window, the latch ISR falls back to advancing in
-  // place, and the trace diag field records which path served each window.
+  // In windowed modes, advance to the next mask as soon as the latch window
+  // closes instead of waiting for the next strobe. The console samples bit 0
+  // (A) only a few microseconds after the strobe edge, so that bit must already
+  // be on the wire. This also performs strobe mode's one-time frame-0 release;
+  // after a strobe run starts, each latch tail prepares the following record.
+  // If the service misses a window, the latch ISR advances in place and the
+  // trace diag field records which path served it.
   if (kDiagnosticForcedMask != 0) {
     return;
   }
@@ -2060,10 +2060,10 @@ inline void recordLatchTailCycles(uint32_t elapsed) {
   }
 }
 
-// Rev 8 (v51): interrupts-off span around the tail ring pop. The one number
-// that must stay small — a masked stretch spanning two console reads merges
-// them regardless of priority, so this must read well under a read-pair spacing
-// (Golf 2.2 µs ≈ 106 cycles at 48 MHz).
+// Interrupts-off span around the tail prefetch's validated publish. The one
+// number that must stay small: a masked stretch spanning two console reads
+// merges them regardless of priority, so this must read well under a read-pair
+// spacing (Golf 2.2 µs ≈ 106 cycles at 48 MHz).
 inline void recordLatchPrefetchMaskedCycles(uint32_t elapsed) {
   tasLatchPrefetchMaskedLastCycles = elapsed;
   if (elapsed > tasLatchPrefetchMaskedMaxCycles) {
@@ -2071,29 +2071,43 @@ inline void recordLatchPrefetchMaskedCycles(uint32_t elapsed) {
   }
 }
 
-// Rev 8 (v51): arm the fast path for the next accepted strobe edge from the
-// latch ISR's preemptible tail. Pops the record that edge will serve into the
-// playback's pre-advanced state; nothing here touches the live serving mask or
-// the data pins, so the current frame's in-flight read train is untouched. The
-// ring pop and flag stores run interrupts-off because serviceLatchPendBeforeClock
-// can retire a pended latch edge from a clock ISR over this tail — an unmasked
-// pop could nest and split the single-consumer ring. prefetchNextRecord never
-// ends the run (it declines to arm when the buffer is exhausted); the completing
-// edge resolves Complete/Underrun through the general path's existing teardown.
+// Arm the fast path for the next accepted strobe edge from the latch ISR's
+// preemptible tail. Nothing here touches the live serving mask or data pins, so
+// the current frame's in-flight read train is untouched. v75 builds a read-only
+// ring preview with interrupts enabled, then masks only long enough to validate
+// the consumer position and publish it. If a clock ISR retires a nested latch
+// during the preview, the single-consumer head changes and publication declines;
+// the nested edge has already consumed and re-armed the stream. This preserves
+// the tail-prefetch behavior needed by Archon's burst strobes without v74's
+// measured 212-cycle PRIMASK span across Golf's 107-cycle-spaced reads.
+//
+// The prefetch never ends the run (it declines when the buffer is exhausted);
+// the completing edge resolves Complete/Underrun through the general path.
 inline void prefetchNextStrobeRecord() {
+  tasdeck::TasStrobeRecordPrefetch prefetch = {};
+  if (
+    tasPlayback.previewNextStrobeRecord(prefetch) !=
+    TasPlaybackResult::Ok) {
+    return;
+  }
+
   const uint32_t primask = __get_PRIMASK();
-  __disable_irq();
-  // Both timestamps are read inside the masked region: reading maskStart before
-  // __disable_irq() let a clock ISR preempting that one-instruction gap inflate
-  // the count (Archon: apparent 855 cyc / 17.8 µs, all of it a preemption before
-  // the mask, not masked time). Measured this way the span is the true
-  // interrupts-off cost of the ring pop.
+  const uint32_t clock1Before = controllerClockCount;
+  const uint32_t clock2Before = controller2ClockCount;
   const uint32_t maskStart = DWT->CYCCNT;
-  tasdeck::TasFrameMasks prefetchMasks = {};
-  tasPlayback.prefetchNextRecord(prefetchMasks);
-  const uint32_t maskEnd = DWT->CYCCNT;
+  __disable_irq();
+  tasPlayback.tryCommitStrobeRecordPrefetch(prefetch);
   __set_PRIMASK(primask);
-  recordLatchPrefetchMaskedCycles(maskEnd - maskStart);
+  const uint32_t maskEnd = DWT->CYCCNT;
+  // Keep DWT's PPB-bus reads outside PRIMASK: their measurement overhead was
+  // itself consuming the clock-wait budget. If a clock preempts either narrow
+  // side of the bracket, discard the inflated sample; an uncontended sample
+  // includes cpsid/msr and is a conservative measure of the blocked span.
+  if (
+    controllerClockCount == clock1Before &&
+    controller2ClockCount == clock2Before) {
+    recordLatchPrefetchMaskedCycles(maskEnd - maskStart);
+  }
 }
 
 // Windowed latch callback: the pre-v50/e28c40b path that is hardware-proven
@@ -2215,10 +2229,10 @@ TASDECK_RAM_ISR void handleStrobeLatchEdge() {
 #if TASDECK_ISR_DEBUG_PIN >= 0
   setIsrDebugPin(true);
 #endif
-  // Capture the pin states, then drive the pending mask's first bit before
-  // any bookkeeping: the console samples bit 0 only a few microseconds after
-  // the strobe edge, and in the steady state the window pre-advance has
-  // already loaded controllerPressedMask with the mask this strobe serves.
+  // Capture the pin states, then drive the pending mask's first bit before any
+  // bookkeeping. After a full preceding read its eighth clock has already put
+  // this bit on the wire; the latch-head write is the reactive fallback after
+  // a short or bare train.
   const uint16_t pinsAtEntry = R_PORT1->PIDR;
   const tasdeck::TasSyncMode syncMode = tasPlayback.syncMode();
   const bool strobeMode = syncMode == tasdeck::TasSyncMode::Strobe;
@@ -2228,8 +2242,9 @@ TASDECK_RAM_ISR void handleStrobeLatchEdge() {
   // preempt the unmasked stretches, and reads arriving during the PRIMASK
   // head pend in each clock IRQ's single NVIC bit — TWO same-port reads
   // pending there merge into one shift, so the head must release before the
-  // console's second post-strobe read, and the served first bit must be on
-  // the wire before the first (the mid-gap pre-advance guarantees that).
+  // console's second post-strobe read. A completed preceding train puts the
+  // served first bit on the wire at its eighth clock; this head also writes it
+  // early enough for games whose first post-strobe sample has more margin.
   // v50 measured entry-to-release at 367 cycles (7.65 µs) with the edge
   // analysis run before the head, and Golf's 5.6/7.8 µs title read pair
   // merged on every frame. The head is therefore stripped to the state the

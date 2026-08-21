@@ -35,7 +35,7 @@ The tested parser lives in `src/NesDeckProtocol.cpp`, the controller-state helpe
 The current serial build reports this firmware id in the boot banner and `STATUS` response:
 
 ```txt
-fw=tasdeck-uno-r4-serial-latchwin-v74 transport=serial
+fw=tasdeck-uno-r4-serial-latchwin-v75 transport=serial
 ```
 
 ## NES Pins
@@ -64,12 +64,12 @@ The NES latch/strobe signal is common inside the console, so the port 1 connecti
 latch timing for both ports. Do not connect the port 2 latch wire; using the shared `D2` signal
 ensures each console strobe runs exactly one latch ISR.
 
-On the latch rising edge, the firmware snapshots the current stored button state. The data line is
-already pre-positioned with the next mask's first bit between polls, so the latch ISR only needs one
-edge per strobe. The NES samples the controller data line when controller clock goes high-to-low; a
-standard 4021 shifts on the following low-to-high edge. The firmware therefore advances the
-shifted button bit on the controller clock rising edge. It advances through the standard NES button
-order:
+On the latch rising edge, the firmware snapshots the current stored button state. After a completed
+eight-bit read, its final clock pre-positions the next mask's first bit between polls. The latch ISR
+also writes that bit reactively after a short or bare read. The NES samples the controller data line
+when controller clock goes high-to-low; a standard 4021 shifts on the following low-to-high edge.
+The firmware therefore advances the shifted button bit on the controller clock rising edge. It
+advances through the standard NES button order:
 
 ```txt
 A, B, Select, Start, Up, Down, Left, Right
@@ -88,9 +88,9 @@ TAS playback uses `TAS_BEGIN <frames> <poll|latch|strobe> [ports] [window_us]`. 
 `poll` mode advances only after a latch window containing a completed eight-clock read. `latch`
 mode advances once per accepted latch window even when the game reads fewer than eight bits.
 `strobe` mode has no latch window: every accepted latch edge consumes exactly one record, including
-bare strobes and torn reads. The `window_us` value is not a coalescing window in strobe mode; it is
-the post-edge holdoff after which the 1 kHz service pre-pops the next record so the edge itself is a
-cheap commit.
+bare strobes and torn reads. The `window_us` value is not a coalescing window in strobe mode. It only
+guards the one-time frame-0 release; after playback starts, each latch tail prepares the next record
+for a cheap commit at the following edge.
 Two-port TAS chunks use interleaved port 1 / port 2 mask bytes. Use
 `TAS_START <delay_polls>` when a run needs a small alignment offset before frame 0 is released; in
 windowed modes this counts eligible blank latch windows. In `strobe` mode it counts accepted edges,
@@ -98,10 +98,11 @@ so `TAS_START N` is equivalent to TAStm32 `--blank N` for a default-mode R08 rep
 Port 1 or port 2 completed reads can grant frame-advance credit for the two-port streams uploaded by
 the web UI.
 
-A 1 kHz hardware-timer service normally advances and pre-positions the next mask when the latch
-window (windowed modes) or post-edge holdoff (strobe mode) expires; the main loop provides the same
-service as a best effort. The latch ISR advances only as a fallback if expiry service was missed.
-Keep serial and command handling from delaying the higher-priority NES latch and clock interrupts.
+A 1 kHz hardware-timer service normally advances and pre-positions the next mask when a windowed
+mode's latch window expires; the main loop provides the same service as a best effort. In strobe
+mode it releases frame 0 once, then the latch ISR tail prepares each later record. The latch ISR
+advances in place only as a fallback. Keep serial and command handling from delaying the
+higher-priority NES latch and clock interrupts.
 
 Interrupt priorities depend on the sync mode. Windowed modes run the latch at NVIC priority 0 and
 the clocks at 1 so simultaneously pended edges replay strobe-first. Strobe mode inverts this
@@ -117,8 +118,10 @@ core dispatch excluded from all of them): `latch_isr_last_cyc`/`latch_isr_max_cy
 residency, entry to return — in strobe mode preempting clock ISRs are included, so it is not a
 head budget — `latch_head_last_cyc`/`latch_head_max_cyc` is the strobe fast path's
 entry-to-PRIMASK-release span, the number that must beat the console's second post-strobe read,
-and `clock_write_last_cyc`/`clock_write_max_cyc` is the strobe clock ISR's entry-to-data-write
-span. The bridge copies them into `.trace` headers and the `.stream.csv` footer.
+`latch_prefetch_masked_last_cyc`/`latch_prefetch_masked_max_cyc` conservatively brackets the strobe
+tail's interrupt-masked preview publication (clock-preempted samples are discarded), and
+`clock_write_last_cyc`/`clock_write_max_cyc` is the strobe clock ISR's entry-to-data-write span. The
+bridge copies them into `.trace` headers and the `.stream.csv` footer.
 
 `clock_write_max_cyc` is the per-bit deadline. The console samples bit N+1 one read after the
 clock edge that carried bit N, so this span must stay under the game's tightest read-to-read
@@ -132,6 +135,17 @@ leaves the ICU request-flag clear and its `DSB` drain ahead of the write where t
 been. v73 moved that clear behind the write and regressed Golf's first stroke on hardware for
 reasons not yet established, so treat the ordering as fixed and use `clock_write_max_cyc` to
 decide whether more is needed.
+
+v75 removes v74's other clock-blocking interval. The latch-tail prefetch previously kept `PRIMASK`
+set across the whole ring pop and staging operation (212 cycles measured on hardware), long enough
+to merge two of Golf's 107-cycle-spaced reads. It now builds the ring preview with interrupts
+enabled and masks only a validated publication step. If a clock ISR services a nested latch during
+the preview, the changed single-consumer head makes the stale publication a no-op. This retains the
+per-edge tail prefetch needed by Archon's burst strobes. The generated v75 critical body is 14 ARM
+instructions from `cpsid` through `msr PRIMASK` (roughly 22–23 core cycles by Cortex-M4 timing).
+Added to v74's measured 62-cycle clock-write maximum and roughly 12 cycles of exception entry, that
+is about 96–97 cycles against Golf's 107-cycle tightest spacing. Confirm the exact maximum on
+hardware in `latch_prefetch_masked_max_cyc`.
 
 The same firmware also selects the interrupt-handler path automatically at `TAS_BEGIN`. `poll` and
 `latch` use the lean window callbacks through the stock Arduino/FSP dispatch path, preserving the
