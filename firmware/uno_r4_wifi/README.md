@@ -174,6 +174,12 @@ whole-run `bare_strobes` and `torn_strobes` counters for strobe-mode diagnostics
 `Trace` button requests the full 384-row window and saves the trace and resulting event log through
 the middleware.
 
+In `strobe` mode, the deadline-first clock handlers deliberately omit completed-read mask-mismatch
+and reread anomaly bookkeeping. Consequently, `anomaly_count=0` means only that no enabled anomaly
+detector fired; it does not prove that every completed serial mask matched the latched mask. Compare
+the strobe trace's `clockedMask` values with the expected input stream and inspect the separate
+`bare_strobes` and `torn_strobes` counters when validating a run.
+
 ## Tests And Compile
 
 From the repository root:

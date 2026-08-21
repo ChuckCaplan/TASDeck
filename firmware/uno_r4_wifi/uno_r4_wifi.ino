@@ -476,11 +476,12 @@ void setupNesPins() {
 // (VTOR-relocated; the Arduino core already patches it the same way, see
 // IRQManager::addGenericInterrupt) straight at these wrappers, leaving only the
 // ~12-cycle architectural NVIC entry in front of the handler. Each wrapper still
-// clears the ICU request flag — the one thing r_icu_isr does that we need, same
-// clear+DSB sequence as serviceLatchPendBeforeClock — but the clock wrappers do
-// it behind their GPIO write rather than ahead of it (see v73 below). The NVIC
-// pending bit is auto-cleared by hardware on exception entry, so no
-// NVIC_ClearPendingIRQ is needed here (unlike the inline pend-service path).
+// clears the ICU request flag — the one thing r_icu_isr does that we need — with
+// the same clear+DSB sequence as serviceLatchPendBeforeClock. The clock wrappers
+// keep that clear ahead of their GPIO write; v73 tried moving it behind the write
+// and regressed Golf (see below). The NVIC pending bit is auto-cleared by hardware
+// on exception entry, so no NVIC_ClearPendingIRQ is needed here (unlike the inline
+// pend-service path).
 TASDECK_RAM_ISR void directStrobeLatchVector() {
   R_ICU->IELSR[nesLatchIrqSlot] &= ~R_ICU_IELSR_IR_Msk;
   __DSB();

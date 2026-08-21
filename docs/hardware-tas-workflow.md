@@ -188,6 +188,11 @@ Windowed traces contain completed-poll rows. Strobe traces contain diag-bit-5 ed
 active port, with the previous read's reconstructed mask carried on the following edge. The trace
 header/footer also preserve the run's bare- and torn-strobe counters.
 
+In `strobe` mode, `anomaly_count=0` does not validate every completed serial mask because the
+deadline-first clock handlers omit completed-read mask-mismatch bookkeeping. Compare the trace's
+reconstructed masks with the expected input stream and inspect `bare_strobes` and `torn_strobes`
+instead of treating a zero anomaly count as complete proof.
+
 Compare the hardware rows near the first visible desync with the converter's
 `<output>.trace.csv`. Two-port traces contain separate rows tagged by port; correlate them by
 sequence and timestamp.
