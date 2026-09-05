@@ -105,6 +105,7 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro |
 | [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
+| Golf by link_7777 | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) |
 | [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro |
 | [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro |
 | [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro |
@@ -125,6 +126,16 @@ The following runs have completed successfully on real NES hardware with TASDeck
 | [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
 | [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord_Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
 | [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro |
+
+Golf is the one run in this table that cannot play from the EverDrive's menu at all. It reads
+uninitialised zero-page RAM, and the EverDrive N8 Pro's loader zero-fills the entire zero page
+before every launch — which forces `$4C` to `$00`, the single value out of 256 that breaks the run,
+and which no Start delay can correct. It was verified on a real cartridge by first priming work RAM
+with [Vi Grey's `nes-ram-to-fceux`](https://vigrey.com/) (`git clone git://git.vigrey.com/nes-ram-to-fceux`),
+holding Reset while swapping the EverDrive out for the cartridge, then releasing Reset with playback
+already armed. The required Start delay is console-specific — it compensates for the power-on value
+of Golf's NMI counter `$8B` — and is read off hole 2's tee wind, which must show 15MPH to the
+southeast; on this console that landed at 255.
 
 ## Background
 
