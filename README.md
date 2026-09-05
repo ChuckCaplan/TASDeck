@@ -94,48 +94,42 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 
 ## Verified TAS Runs
 
-The following runs have completed successfully on real NES hardware with TASDeck:
+The following runs have completed successfully on real NES hardware with TASDeck.
 
-| Game and run | Time | TAS Link | Original Format | Hardware |
-| --- | ---: | --- | --- | --- |
-| [Arkanoid — "warpless" by eien86](https://www.youtube.com/watch?v=_Aq-DNFsMJ8) | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro |
-| [Chip 'n Dale Rescue Rangers — 2 players by dragonxyk](https://www.youtube.com/watch?v=FdtvpdCli3k) | 09:33 | [1128M](https://tasvideos.org/1128M) | `.r08` | EverDrive N8 Pro |
-| [Disney's The Little Mermaid by McBobX](https://www.youtube.com/watch?v=6GE6xpsqm-g) | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro |
-| [Donkey Kong — "all items" by Phil, Spikestuff, GoddessMaria & Alyosha](https://www.youtube.com/watch?v=I4crTwfEUwo) | 01:16 | [5254M](https://tasvideos.org/5254M) | `.bk2`, `.r08` | EverDrive N8 Pro |
-| [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro |
-| [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro |
-| [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro |
-| Golf by link_7777 | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) |
-| [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro |
-| [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro |
-| [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro |
-| [Pac-Man (Tengen) by eien86](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [5231M](https://tasvideos.org/5231M) | `.bk2` | EverDrive N8 Pro |
-| [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. — "warpless" by HappyLee & Mars608](https://www.youtube.com/watch?v=JpjCpAvx-Nk) | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. — "Playaround" by flamexx](https://www.youtube.com/watch?v=OOrngcD9NOQ) | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. — "maximum score" by HappyLee, DaSmileKat, Kzwbz, Asumeh & Kosmic](https://www.youtube.com/watch?v=NeRRpmQHe9o) | 19:01 | [6555M](https://tasvideos.org/6555M) | `.r08` | EverDrive N8 Pro |
-| [Super Mario Bros. 2 (FDS / Japan) — "all items, Mario" by Kzwbz, Argentu-M & Endless Wind](https://www.youtube.com/watch?v=roWEV2iQf7M) | 23:33 | [5049M](https://tasvideos.org/5049M) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. 2 (FDS / Japan) — "warps, Mario" by HappyLee](https://www.youtube.com/watch?v=oDotKGDbRio) | 08:04.83 | [3348M](https://tasvideos.org/3348M) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. 2 (FDS / Japan) — "SMB2J ACE Total Control example", 2 controllers by threecreepio](https://www.youtube.com/watch?v=bP5bhUHO9tk) | 14:44 | [GitHub](https://github.com/threecreepio/smb2j-ace-tc) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. 2 (USA) — "warpless" by Aglar, andrewg & Alyosha](https://www.youtube.com/watch?v=u-r19EgH4cY) | 18:24 | [6366M](https://tasvideos.org/6366M) | `.bk2` | EverDrive N8 Pro |
-| [Super Mario Bros. 2 (USA) — "warps" by Aglar & andrewg](https://www.youtube.com/watch?v=YYqVx4bTyT8) | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa](https://www.youtube.com/watch?v=cB5zRV_KQ60) | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro |
-| [Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa](https://www.youtube.com/watch?v=gfD4Rx75C1g) | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge |
-| [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro |
-| [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro |
-| [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro |
-| [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord_Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro |
-| [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro |
+Unless the notes say otherwise, each run uses the defaults: a `.tdmask` plays in `completed reads`
+sync mode at start delay 0, an `.r08` plays in `per strobe` mode at start delay 1, both controller
+ports are driven, and `Skip first` is 0.
 
-Golf is the one run in this table that cannot play from the EverDrive's menu at all. It reads
-uninitialised zero-page RAM, and the EverDrive N8 Pro's loader zero-fills the entire zero page
-before every launch — which forces `$4C` to `$00`, the single value out of 256 that breaks the run,
-and which no Start delay can correct. It was verified on a real cartridge by first priming work RAM
-with [Vi Grey's `nes-ram-to-fceux`](https://vigrey.com/) (`git clone git://git.vigrey.com/nes-ram-to-fceux`),
-holding Reset while swapping the EverDrive out for the cartridge, then releasing Reset with playback
-already armed. The required Start delay is console-specific — it compensates for the power-on value
-of Golf's NMI counter `$8B` — and is read off hole 2's tee wind, which must show 15MPH to the
-southeast; on this console that landed at 255.
+| Game and run | Time | TAS Link | Original Format | Hardware | Notes |
+| --- | ---: | --- | --- | --- | --- |
+| [Arkanoid — "warpless" by eien86](https://www.youtube.com/watch?v=_Aq-DNFsMJ8) | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro | — |
+| [Chip 'n Dale Rescue Rangers — 2 players by dragonxyk](https://www.youtube.com/watch?v=FdtvpdCli3k) | 09:33 | [1128M](https://tasvideos.org/1128M) | `.r08` | EverDrive N8 Pro | 2 controllers |
+| [Disney's The Little Mermaid by McBobX](https://www.youtube.com/watch?v=6GE6xpsqm-g) | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro | — |
+| [Donkey Kong — "all items" by Phil, Spikestuff, GoddessMaria & Alyosha](https://www.youtube.com/watch?v=I4crTwfEUwo) | 01:16 | [5254M](https://tasvideos.org/5254M) | `.bk2`, `.r08` | EverDrive N8 Pro | Boot lottery — took dozens of attempts to sync |
+| [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro | — |
+| [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro | 2 controllers |
+| [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro | — |
+| Golf by link_7777 | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, primed work RAM, and a per-console start delay — see [Golf and uninitialized work RAM](docs/design/golf-uninitialized-ram.md) |
+| [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro | — |
+| [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0 |
+| [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro | — |
+| [Pac-Man (Tengen) by eien86](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [5231M](https://tasvideos.org/5231M) | `.bk2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. — "warpless" by HappyLee & Mars608](https://www.youtube.com/watch?v=JpjCpAvx-Nk) | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. — "Playaround" by flamexx](https://www.youtube.com/watch?v=OOrngcD9NOQ) | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro | Ends on 7-1 |
+| [Super Mario Bros. — "maximum score" by HappyLee, DaSmileKat, Kzwbz, Asumeh & Kosmic](https://www.youtube.com/watch?v=NeRRpmQHe9o) | 19:01 | [6555M](https://tasvideos.org/6555M) | `.r08` | EverDrive N8 Pro | — |
+| [Super Mario Bros. 2 (FDS / Japan) — "all items, Mario" by Kzwbz, Argentu-M & Endless Wind](https://www.youtube.com/watch?v=roWEV2iQf7M) | 23:33 | [5049M](https://tasvideos.org/5049M) | `.fm2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. 2 (FDS / Japan) — "warps, Mario" by HappyLee](https://www.youtube.com/watch?v=oDotKGDbRio) | 08:04.83 | [3348M](https://tasvideos.org/3348M) | `.fm2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. 2 (FDS / Japan) — "SMB2J ACE Total Control example", 2 controllers by threecreepio](https://www.youtube.com/watch?v=bP5bhUHO9tk) | 14:44 | [GitHub](https://github.com/threecreepio/smb2j-ace-tc) | `.fm2` | EverDrive N8 Pro | 2 controllers; the ~6 min black screen is the payload streaming in, not a fault |
+| [Super Mario Bros. 2 (USA) — "warpless" by Aglar, andrewg & Alyosha](https://www.youtube.com/watch?v=u-r19EgH4cY) | 18:24 | [6366M](https://tasvideos.org/6366M) | `.bk2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. 2 (USA) — "warps" by Aglar & andrewg](https://www.youtube.com/watch?v=YYqVx4bTyT8) | 07:41.16 | [1724M](https://tasvideos.org/1724M) | `.fm2` | EverDrive N8 Pro | — |
+| [Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa](https://www.youtube.com/watch?v=cB5zRV_KQ60) | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro | Boot lottery at the World 4 middle fortress |
+| [Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa](https://www.youtube.com/watch?v=gfD4Rx75C1g) | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge | — |
+| [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro | Wins the game on World 7-1 |
+| [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro | — |
+| [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (7x) |
+| [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord_Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (10x) |
+| [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro | — |
 
 ## Background
 
