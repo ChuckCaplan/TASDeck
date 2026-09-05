@@ -16,6 +16,7 @@ using tasdeck::NesTasPlayback;
 using tasdeck::TasFrameMasks;
 using tasdeck::TasEdgeKind;
 using tasdeck::TasPlaybackResult;
+using tasdeck::TasStrobeRecordPrefetch;
 using tasdeck::TasSyncMode;
 using tasdeck::actionName;
 using tasdeck::buttonMask;
@@ -27,6 +28,24 @@ using tasdeck::tasPlaybackResultName;
 using tasdeck::tasSyncModeName;
 
 namespace {
+
+TasPlaybackResult prefetchNextStrobeRecord(
+  NesTasPlayback& playback,
+  TasFrameMasks& nextMasks) {
+  TasStrobeRecordPrefetch prefetch = {};
+  const TasPlaybackResult previewResult =
+    playback.previewNextStrobeRecord(prefetch);
+  if (previewResult != TasPlaybackResult::Ok) {
+    nextMasks = playback.currentMasks();
+    return previewResult;
+  }
+  const TasPlaybackResult commitResult =
+    playback.tryCommitStrobeRecordPrefetch(prefetch);
+  nextMasks = commitResult == TasPlaybackResult::Ok
+    ? prefetch.pipeline.currentMasks()
+    : playback.currentMasks();
+  return commitResult;
+}
 
 void testPing() {
   Command command;
@@ -1188,7 +1207,8 @@ void testTasStrobePlaybackDelayAndWindowService() {
 }
 
 // Rev 8 (v51): a started strobe run re-arms the pre-advance from the latch ISR
-// tail (prefetchNextRecord), not the mid-gap expiry service. Only the !started_
+// tail (split preview/publish prefetch), not the mid-gap expiry service. Only
+// the !started_
 // frame-0 release still runs on the expiry service; windowExpiryDue is false for
 // every started strobe edge. This is the change that lets Archon's sub-holdoff
 // burst latches keep taking the fast path.
@@ -1223,7 +1243,7 @@ void testTasStrobePlaybackPreAdvancesFromTail() {
   // tail prefetch pops record 1 and the edge after it commits that record.
   assert(!playback.windowExpiryDue(5000 + 8000));
   assert(playback.willAdvanceOnEdge());
-  assert(playback.prefetchNextRecord(nextMasks) == TasPlaybackResult::Ok);
+  assert(prefetchNextStrobeRecord(playback, nextMasks) == TasPlaybackResult::Ok);
   assert(nextMasks.port1 == 0x40);
   assert(playback.currentFrame() == 1);
   assert(!playback.willAdvanceOnEdge());
@@ -1243,7 +1263,7 @@ void testTasStrobePlaybackPreAdvancesFromTail() {
   // The final record is current: the tail prefetch declines to arm (it never
   // ends the run), and the next accepted edge resolves completion on the
   // general path — the pre-mid-gap "one further edge ends the run" semantics.
-  assert(playback.prefetchNextRecord(nextMasks) == TasPlaybackResult::Waiting);
+  assert(prefetchNextStrobeRecord(playback, nextMasks) == TasPlaybackResult::Waiting);
   assert(playback.currentFrame() == 2);
   assert(playback.active());
   assert(playback.onLatchEdge(21900, nextMask) == TasPlaybackResult::Complete);
@@ -1252,7 +1272,7 @@ void testTasStrobePlaybackPreAdvancesFromTail() {
   assert(playback.complete());
   assert(!playback.active());
   assert(!playback.willAdvanceOnEdge());
-  assert(playback.prefetchNextRecord(nextMasks) == TasPlaybackResult::Waiting);
+  assert(prefetchNextStrobeRecord(playback, nextMasks) == TasPlaybackResult::Waiting);
 }
 
 void testTasStrobeFastPathCommitInline() {
@@ -1289,7 +1309,7 @@ void testTasStrobeFastPathCommitInline() {
   // same fast path.
   assert(!playback.windowExpiryDue(5000 + 8000));
   TasFrameMasks prefetchMasks = {};
-  assert(playback.prefetchNextRecord(prefetchMasks) == TasPlaybackResult::Ok);
+  assert(prefetchNextStrobeRecord(playback, prefetchMasks) == TasPlaybackResult::Ok);
   assert(prefetchMasks.port1 == 0x40);
   assert(playback.tryCommitPreAdvancedEdge(21700, fastMasks));
   assert(fastMasks.port1 == 0x40);
@@ -1297,7 +1317,7 @@ void testTasStrobeFastPathCommitInline() {
 
   // The final record is current: the tail declines to arm, and no further
   // expiry-service pop happens.
-  assert(playback.prefetchNextRecord(prefetchMasks) == TasPlaybackResult::Waiting);
+  assert(prefetchNextStrobeRecord(playback, prefetchMasks) == TasPlaybackResult::Waiting);
   assert(!playback.tryCommitPreAdvancedEdge(21800, fastMasks));
   assert(!playback.windowExpiryDue(21700 + 8000));
 }
@@ -1334,12 +1354,59 @@ void testTasStrobeFastPathSplitCommitAndTimestamp() {
 
   // The next record flows through the same split sequence, armed by the tail.
   TasFrameMasks prefetchMasks = {};
-  assert(playback.prefetchNextRecord(prefetchMasks) == TasPlaybackResult::Ok);
+  assert(prefetchNextStrobeRecord(playback, prefetchMasks) == TasPlaybackResult::Ok);
   assert(prefetchMasks.port1 == 0x40);
   assert(playback.tryCommitPreAdvancedMasks(fastMasks));
   assert(fastMasks.port1 == 0x40);
   playback.noteLatchTimestamp(21700);
   assert(playback.currentFrame() == 1);
+}
+
+void testTasStrobePrefetchRejectsPreviewStaleAfterNestedLatch() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x01, 0x80, 0x10, 0x20};
+  uint8_t nextMask = 0xff;
+  TasFrameMasks fastMasks = {};
+
+  assert(playback.begin(4, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.pushChunk(0, masks, 4) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(playback.onLatchEdge(5000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x01);
+
+  // Model a clock ISR retiring another latch after the outer latch tail built
+  // its read-only preview but before that preview reached the tiny masked
+  // publish. The nested edge consumes record 1 through the general path.
+  TasStrobeRecordPrefetch outerPreview = {};
+  assert(
+    playback.previewNextStrobeRecord(outerPreview) ==
+    TasPlaybackResult::Ok);
+  assert(outerPreview.pipeline.currentMasks().port1 == 0x80);
+  assert(playback.onLatchEdge(5001, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x80);
+  assert(playback.currentFrame() == 1);
+
+  // The nested latch tail prepares record 2. When the interrupted outer tail
+  // resumes, its record-1 coordinates no longer match and it must not consume
+  // or overwrite anything.
+  TasStrobeRecordPrefetch nestedPreview = {};
+  assert(
+    playback.previewNextStrobeRecord(nestedPreview) ==
+    TasPlaybackResult::Ok);
+  assert(nestedPreview.pipeline.currentMasks().port1 == 0x10);
+  assert(
+    playback.tryCommitStrobeRecordPrefetch(nestedPreview) ==
+    TasPlaybackResult::Ok);
+  assert(
+    playback.tryCommitStrobeRecordPrefetch(outerPreview) ==
+    TasPlaybackResult::Waiting);
+
+  assert(playback.tryCommitPreAdvancedMasks(fastMasks));
+  assert(fastMasks.port1 == 0x10);
+  assert(playback.currentFrame() == 2);
+  assert(playback.stagedNextMask() == 0x20);
 }
 
 void testTasStrobePlaybackServesTwoPortsAndResets() {
@@ -1506,6 +1573,7 @@ int main() {
   testTasStrobePlaybackPreAdvancesFromTail();
   testTasStrobeFastPathCommitInline();
   testTasStrobeFastPathSplitCommitAndTimestamp();
+  testTasStrobePrefetchRejectsPreviewStaleAfterNestedLatch();
   testTasStrobePlaybackServesTwoPortsAndResets();
   testTasStrobePlaybackReportsUnderrun();
   testTasPlaybackRejectsInvalidLatchWindow();

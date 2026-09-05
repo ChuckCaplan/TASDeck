@@ -134,7 +134,7 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, uint8_t& nextM
 }
 
 TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks& nextMasks) {
-  nextMasks = currentMasks_;
+  nextMasks = currentPipelineMasks();
 
   if (!active()) {
     lastEdgeKind_ = TasEdgeKind::Ended;
@@ -145,10 +145,9 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
     // Per-strobe playback intentionally has no window or completed-read
     // accounting. Every accepted latch is a playback event, even when two
     // edges share a timestamp or the preceding read was bare or torn. In the
-    // steady state the expiry service pre-pops the next record mid-gap, so
-    // this edge path is a cheap commit; the in-ISR advance below is the
-    // fallback for edges that arrive before the service could run (boot
-    // bursts, double-latch games, a starved loop).
+    // steady state the preceding latch tail pre-pops the next record, so this
+    // edge path is a cheap commit; the in-ISR advance below is the fallback for
+    // an edge that arrives before the split tail prefetch can publish.
     if (tryCommitPreAdvancedEdge(nowMicros, nextMasks)) {
       return lastWindowResult_;
     }
@@ -171,9 +170,9 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
 
       started_ = true;
       currentFrame_ = 0;
-      currentMasks_ = popFrame();
+      setCurrentPipelineMasks(popFrame());
       stageNextMask();
-      nextMasks = currentMasks_;
+      nextMasks = currentPipelineMasks();
       result = TasPlaybackResult::Ok;
       lastEdgeKind_ = TasEdgeKind::Started;
     } else {
@@ -210,7 +209,7 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
     // the strobe arrived. Just hand the mask back.
     preAdvanced_ = false;
     pollCompletedInWindow_ = false;
-    nextMasks = currentMasks_;
+    nextMasks = currentPipelineMasks();
     lastEdgeKind_ = TasEdgeKind::PreAdvanced;
     lastWindowResult_ = TasPlaybackResult::Ok;
     return lastWindowResult_;
@@ -233,9 +232,9 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
     } else {
       started_ = true;
       currentFrame_ = 0;
-      currentMasks_ = popFrame();
+      setCurrentPipelineMasks(popFrame());
       stageNextMask();
-      nextMasks = currentMasks_;
+      nextMasks = currentPipelineMasks();
       result = TasPlaybackResult::Ok;
       lastEdgeKind_ = TasEdgeKind::Started;
     }
@@ -264,8 +263,9 @@ bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
   // Signed for the same reason as onLatchEdge's newWindow check: a stored
   // glitched-high latch time must read as "window still open", or the expiry
   // service pre-advances mid-poll-cluster. In strobe mode the window value is
-  // not a coalescing window — every edge is its own event — but it still
-  // serves as the post-edge holdoff before the next record is pre-popped.
+  // not a coalescing window. It gates only the initial frame-0 release; after
+  // playback starts, every edge is its own event and its latch tail prepares
+  // the next record.
   if (hasLatched_ &&
       static_cast<int32_t>(nowMicros - lastLatchMicros_) <
         static_cast<int32_t>(latchWindowMicros_)) {
@@ -277,13 +277,13 @@ bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
   }
 
   if (syncMode_ == TasSyncMode::Strobe) {
-    // Rev 8 (v51): a started strobe run pre-advances from the latch ISR's tail
-    // (prefetchNextRecord), not from this mid-gap service. The service could not
-    // re-arm between the sub-holdoff burst latches of poll-wait games (Archon
-    // latches every ~283 µs at menus, far inside the 8 ms holdoff), so those
-    // edges fell to the general path and its full-length PRIMASK hold merged the
-    // console's slow read train. Only the !started_ frame-0 release above still
-    // runs here; every started edge is armed by the edge before it.
+    // Rev 8 (v51): a started strobe run pre-advances from the latch ISR's tail,
+    // not from this mid-gap service. The service could not re-arm between the
+    // sub-holdoff burst latches of poll-wait games (Archon latches every ~283
+    // µs at menus, far inside the 8 ms holdoff), so those edges fell to the
+    // general path and its full-length PRIMASK hold merged the console's slow
+    // read train. Only the !started_ frame-0 release above still runs here;
+    // every started edge is armed by the edge before it.
     return false;
   }
 
@@ -298,7 +298,7 @@ TasPlaybackResult NesTasPlayback::onWindowExpired(uint32_t nowMicros, uint8_t& n
 }
 
 TasPlaybackResult NesTasPlayback::onWindowExpired(uint32_t nowMicros, TasFrameMasks& nextMasks) {
-  nextMasks = currentMasks_;
+  nextMasks = currentPipelineMasks();
 
   if (!windowExpiryDue(nowMicros)) {
     return TasPlaybackResult::Waiting;
@@ -310,9 +310,9 @@ TasPlaybackResult NesTasPlayback::onWindowExpired(uint32_t nowMicros, TasFrameMa
     // of the console's very first strobe when armed before power-on).
     started_ = true;
     currentFrame_ = 0;
-    currentMasks_ = popFrame();
+    setCurrentPipelineMasks(popFrame());
     stageNextMask();
-    nextMasks = currentMasks_;
+    nextMasks = currentPipelineMasks();
     result = TasPlaybackResult::Ok;
   } else {
     pollCompletedInWindow_ = false;
@@ -332,26 +332,22 @@ TasPlaybackResult NesTasPlayback::advanceFrame(TasFrameMasks& nextMasks) {
   if (currentFrame_ + 1 >= totalFrames_) {
     complete_ = true;
     currentFrame_ = totalFrames_;
-    currentMasks_ = TasFrameMasks{};
-    stagedNextMask1_ = 0;
-    stagedNextMask2_ = 0;
-    nextMasks = currentMasks_;
+    maskPipelineWord_ = 0;
+    nextMasks = currentPipelineMasks();
     return TasPlaybackResult::Complete;
   }
 
   if (bufferedFrames() == 0) {
-    currentMasks_ = TasFrameMasks{};
-    stagedNextMask1_ = 0;
-    stagedNextMask2_ = 0;
-    nextMasks = currentMasks_;
+    maskPipelineWord_ = 0;
+    nextMasks = currentPipelineMasks();
     setError(TasPlaybackResult::Underrun);
     return error_;
   }
 
   currentFrame_ += 1;
-  currentMasks_ = popFrame();
+  setCurrentPipelineMasks(popFrame());
   stageNextMask();
-  nextMasks = currentMasks_;
+  nextMasks = currentPipelineMasks();
   return TasPlaybackResult::Ok;
 }
 
@@ -360,21 +356,22 @@ void NesTasPlayback::stageNextMask() {
   // ISR or interrupt-masked window service) right after head_ moves, and from
   // pushChunk only before playback is requested.
   if (started_ && currentFrame_ + 1 >= totalFrames_) {
-    stagedNextMask1_ = 0;
-    stagedNextMask2_ = 0;
+    setStagedPipelineMasks(TasFrameMasks{});
     return;
   }
 
   const uint16_t head = head_;
   if (static_cast<uint16_t>(tail_ - head) == 0) {
-    stagedNextMask1_ = 0;
-    stagedNextMask2_ = 0;
+    setStagedPipelineMasks(TasFrameMasks{});
     return;
   }
 
   const TasFrameMasks masks = buffer_[head % kTasBufferCapacity];
-  stagedNextMask1_ = masks.port1;
-  stagedNextMask2_ = portCount_ >= kNesControllerPortCount ? masks.port2 : 0;
+  setStagedPipelineMasks(TasFrameMasks{
+    masks.port1,
+    static_cast<uint8_t>(
+      portCount_ >= kNesControllerPortCount ? masks.port2 : 0),
+  });
 }
 
 void NesTasPlayback::notePollCompleted(uint8_t controllerPort) {
@@ -413,14 +410,60 @@ bool NesTasPlayback::willAdvanceOnEdge() const {
 }
 
 uint8_t NesTasPlayback::stagedNextMask() const {
-  return stagedNextMask1_;
+  return stagedPipelineMasks().port1;
 }
 
 TasFrameMasks NesTasPlayback::stagedNextMasks() const {
   TasFrameMasks masks = {};
-  masks.port1 = stagedNextMask1_;
-  masks.port2 = stagedNextMask2_;
+  masks = stagedPipelineMasks();
   return masks;
+}
+
+TasPlaybackResult NesTasPlayback::previewNextStrobeRecord(
+  TasStrobeRecordPrefetch& prefetch) const {
+  prefetch = TasStrobeRecordPrefetch{};
+  if (
+    !active() ||
+    !started_ ||
+    preAdvanced_ ||
+    error_ != TasPlaybackResult::Ok) {
+    return TasPlaybackResult::Waiting;
+  }
+
+  // Snapshot the consumer position before reading the ring. If a clock ISR
+  // retires a nested latch anywhere in this interruptible method, it consumes
+  // this slot and changes head_, so publication discards the stale preview.
+  const uint32_t currentFrame = currentFrame_;
+  const uint32_t nextFrame = currentFrame + 1;
+  const uint16_t head = head_;
+  const uint16_t tail = tail_;
+  if (
+    nextFrame >= totalFrames_ ||
+    static_cast<uint16_t>(tail - head) == 0) {
+    return TasPlaybackResult::Waiting;
+  }
+
+  TasFrameMasks masks = buffer_[head % kTasBufferCapacity];
+  if (portCount_ < kNesControllerPortCount) {
+    masks.port2 = 0;
+  }
+
+  TasFrameMasks stagedMasks = {};
+  const uint16_t nextHead = static_cast<uint16_t>(head + 1);
+  if (
+    nextFrame < totalFrames_ - 1 &&
+    static_cast<uint16_t>(tail - nextHead) != 0) {
+    stagedMasks = buffer_[nextHead % kTasBufferCapacity];
+    if (portCount_ < kNesControllerPortCount) {
+      stagedMasks.port2 = 0;
+    }
+  }
+
+  prefetch.expectedHead = head;
+  prefetch.nextHead = nextHead;
+  prefetch.nextFrame = nextFrame;
+  prefetch.pipeline = TasStrobeMaskPipeline::fromMasks(masks, stagedMasks);
+  return TasPlaybackResult::Ok;
 }
 
 void NesTasPlayback::reset() {
@@ -429,9 +472,7 @@ void NesTasPlayback::reset() {
   totalFrames_ = 0;
   totalReceived_ = 0;
   currentFrame_ = 0;
-  currentMasks_ = TasFrameMasks{};
-  stagedNextMask1_ = 0;
-  stagedNextMask2_ = 0;
+  maskPipelineWord_ = 0;
   portCount_ = 1;
   latchWindowMicros_ = kTasDefaultLatchWindowMicros;
   lastLatchMicros_ = 0;
@@ -514,11 +555,11 @@ uint16_t NesTasPlayback::capacity() const {
 }
 
 uint8_t NesTasPlayback::currentMask() const {
-  return currentMasks_.port1;
+  return currentPipelineMasks().port1;
 }
 
 TasFrameMasks NesTasPlayback::currentMasks() const {
-  return currentMasks_;
+  return currentPipelineMasks();
 }
 
 bool NesTasPlayback::readyToStart() const {
@@ -550,7 +591,7 @@ TasFrameMasks NesTasPlayback::popFrame() {
 
 void NesTasPlayback::setError(TasPlaybackResult result) {
   error_ = result;
-  currentMasks_ = TasFrameMasks{};
+  setCurrentPipelineMasks(TasFrameMasks{});
 }
 
 const char* tasPlaybackResultName(TasPlaybackResult result) {

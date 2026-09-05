@@ -876,7 +876,12 @@ test("saves manual TAS trace dumps as timestamped CSV files", async () => {
     originalFrameCount: 3,
     frameCount: 3,
     state: "streaming",
-    firmwareStatus: { trace_frozen: 0, anomaly_count: 0 },
+    firmwareStatus: {
+      trace_frozen: 0,
+      anomaly_count: 0,
+      clock_write_last_cyc: 61,
+      clock_write_max_cyc: 62,
+    },
   };
 
   await bridge.handleClientTasMessage(client, { type: "tas_trace", count: 3 });
@@ -889,6 +894,8 @@ test("saves manual TAS trace dumps as timestamped CSV files", async () => {
   assert.equal(files.length, 1);
   const contents = await fsp.readFile(path.join(traceDir, files[0]), "utf8");
   assert.match(contents, /manual_trace_dump: 1/);
+  assert.match(contents, /^firmware_clock_write_last_cyc: 61$/m);
+  assert.match(contents, /^firmware_clock_write_max_cyc: 62$/m);
   assert.match(contents, /sequence,timestampMicros,tasFrame/);
   assert.match(contents, /^10,100,10,2,16,8,01,00,01,8,ok,01,03(?:,.*)?$/m);
   await fsp.rm(logDir, { recursive: true, force: true });
@@ -972,7 +979,12 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
     stopped: false,
     paused: false,
     uploadEnded: true,
-    firmwareStatus: { trace_frozen: 0, bare_strobes: 7, torn_strobes: 3 },
+    firmwareStatus: {
+      trace_frozen: 0,
+      bare_strobes: 7,
+      torn_strobes: 3,
+      clock_write_max_cyc: 62,
+    },
     traceStreamTask: null,
   };
   bridge.activeTasRun = run;
@@ -990,6 +1002,7 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
   assert.match(contents, /^0,100,0,2,16,8,01,00,01,8,ok,01,03(?:,.*)?$/m);
   assert.match(contents, /^2,300,2,6,48,8,80,00,80,8,ok,80,02(?:,.*)?$/m);
   assert.match(contents, /# end: rows=3 gaps=0 bare_strobes=7 torn_strobes=3/);
+  assert.match(contents, /^# end: .* clock_write_max_cyc=62$/m);
   await fsp.rm(logDir, { recursive: true, force: true });
 });
 
@@ -1580,10 +1593,10 @@ test("parses structured TAS firmware status and errors", () => {
     latched: 64,
   });
 
-  assert.deepEqual(parseTasSerialLine("OK tas_status ports=2 mask=80 mask2=08 pressed=10 pressed2=02 latched=40 latched2=08 clock=960 clock2=944"), {
+  assert.deepEqual(parseTasSerialLine("OK tas_status ports=2 mask=80 mask2=08 pressed=10 pressed2=02 latched=40 latched2=08 clock=960 clock2=944 clock_write_last_cyc=61 clock_write_max_cyc=62"), {
     type: "tas_status",
     command: "tas_status",
-    message: "OK tas_status ports=2 mask=80 mask2=08 pressed=10 pressed2=02 latched=40 latched2=08 clock=960 clock2=944",
+    message: "OK tas_status ports=2 mask=80 mask2=08 pressed=10 pressed2=02 latched=40 latched2=08 clock=960 clock2=944 clock_write_last_cyc=61 clock_write_max_cyc=62",
     ports: 2,
     mask: 128,
     mask2: 8,
@@ -1593,6 +1606,8 @@ test("parses structured TAS firmware status and errors", () => {
     latched2: 8,
     clock: 960,
     clock2: 944,
+    clock_write_last_cyc: 61,
+    clock_write_max_cyc: 62,
   });
 
   assert.deepEqual(parseTasSerialLine("OK tas_trace_resume active=1 trace_frozen=0 anomaly_count=0"), {

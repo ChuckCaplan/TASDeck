@@ -37,6 +37,51 @@ enum class TasEdgeKind : uint8_t {
   Ended = 7,
 };
 
+// Read-only preview used by the strobe latch tail's split prefetch. The buffer
+// reads happen with interrupts enabled; a very short critical section later
+// validates the consumer position and publishes the preview atomically.
+struct alignas(uint32_t) TasStrobeMaskPipeline {
+  uint32_t packed = 0;
+
+  static TasStrobeMaskPipeline fromMasks(
+    TasFrameMasks current,
+    TasFrameMasks staged) {
+    TasStrobeMaskPipeline pipeline = {};
+    pipeline.packed =
+      static_cast<uint32_t>(current.port1) |
+      (static_cast<uint32_t>(current.port2) << 8) |
+      (static_cast<uint32_t>(staged.port1) << 16) |
+      (static_cast<uint32_t>(staged.port2) << 24);
+    return pipeline;
+  }
+
+  TasFrameMasks currentMasks() const {
+    return TasFrameMasks{
+      static_cast<uint8_t>(packed),
+      static_cast<uint8_t>(packed >> 8),
+    };
+  }
+
+  TasFrameMasks stagedMasks() const {
+    return TasFrameMasks{
+      static_cast<uint8_t>(packed >> 16),
+      static_cast<uint8_t>(packed >> 24),
+    };
+  }
+};
+
+static_assert(
+  sizeof(TasStrobeMaskPipeline) == sizeof(uint32_t) &&
+    alignof(TasStrobeMaskPipeline) == alignof(uint32_t),
+  "strobe mask pipeline must remain one aligned word");
+
+struct TasStrobeRecordPrefetch {
+  uint16_t expectedHead = 0;
+  uint16_t nextHead = 0;
+  uint32_t nextFrame = 0;
+  TasStrobeMaskPipeline pipeline = {};
+};
+
 // Latch-window playback: one mask per console frame that polls the controller.
 // Games such as SMB3 and Tetris strobe and read the controller several times
 // per frame (and a variable number of times on real hardware, because DPCM DMA
@@ -95,16 +140,16 @@ class NesTasPlayback {
   // first post-strobe read on slow-reading games (Archon reads bit 0 ~5.6 µs
   // after the strobe) — so bit 0 must be pre-positioned during the inter-strobe
   // gap, not written reactively in the latch ISR. In the tail-prefetch model
-  // (Rev 8) the armed record lives in currentMasks_, one ahead of what the
-  // current train is clocking out (controllerPressedMask). willAdvanceOnEdge()
+  // (Rev 8) the armed record lives in the pipeline word, one ahead of what
+  // the current train is clocking out (controllerPressedMask). willAdvanceOnEdge()
   // is false whenever preAdvanced_ is set, so the ISR must consult this instead.
   bool preAdvanced() const { return preAdvanced_; }
   TasFrameMasks preAdvancedMasks() const {
-    return preAdvanced_ ? currentMasks_ : TasFrameMasks{};
+    return preAdvanced_ ? currentPipelineMasks() : TasFrameMasks{};
   }
 
-  // Latch-ISR fast path for the strobe-mode steady state: commit the record
-  // the expiry service pre-popped, with no out-of-line calls. Defined in the
+  // Latch-ISR fast path for the strobe-mode steady state: commit the record the
+  // preceding latch tail pre-popped, with no out-of-line calls. Defined in the
   // header because this build has no LTO and the commit runs inside the latch
   // ISR's PRIMASK critical head — Golf's title screen fires back-to-back
   // $4016 reads ~5.6 and ~7.8 µs after the edge (2.2 µs apart), and the head
@@ -124,7 +169,7 @@ class NesTasPlayback {
     }
     preAdvanced_ = false;
     pollCompletedInWindow_ = false;
-    nextMasks = currentMasks_;
+    nextMasks = currentPipelineMasks();
     lastEdgeKind_ = TasEdgeKind::PreAdvanced;
     lastWindowResult_ = TasPlaybackResult::Ok;
     return true;
@@ -143,39 +188,48 @@ class NesTasPlayback {
     return true;
   }
 
-  // Rev 8 (v51): pop the record the *next* accepted strobe edge will serve and
-  // arm preAdvanced_, so that next edge takes the fast commit path. Called from
-  // the latch ISR's preemptible tail right after the current edge committed —
-  // replacing the mid-gap expiry-service pre-advance, which could not re-arm
-  // between the sub-8 ms burst latches of poll-wait games (Archon). Advances
-  // only the internal record pointer and staged masks: it must NOT be given the
-  // live serving mask and must not be reflected onto the data pins, because the
-  // current frame's read train has not happened yet when this runs. The caller
-  // masks interrupts across this call (the ring is single-consumer in
-  // latch-edge context, and serviceLatchPendBeforeClock can nest a latch over
-  // this tail from a clock ISR).
+  // Rev 8 (v51): prepare the record the *next* accepted strobe edge will serve
+  // and arm preAdvanced_, so that next edge takes the fast commit path. Called
+  // from the latch ISR's preemptible tail right after the current edge
+  // committed, replacing the mid-gap expiry-service pre-advance that could not
+  // re-arm between the sub-8 ms burst latches of poll-wait games (Archon).
+  // This advances only the internal record pointer and staged masks: it must
+  // not be reflected onto the data pins because the current frame's read train
+  // has not happened yet.
   //
   // Arms only when the next record is cleanly available. It deliberately never
   // ends the run: the final served record (currentFrame_+1 == totalFrames_) and
   // a not-yet-buffered record both leave preAdvanced_ clear, so the next
   // accepted edge takes the general path and resolves Complete/Underrun there —
   // exactly one record per edge, and never before the last record has been
-  // read out. Returns Ok when it armed, Waiting otherwise.
-  TasPlaybackResult prefetchNextRecord(TasFrameMasks& nextMasks) {
-    nextMasks = currentMasks_;
-    if (!active() || !started_ || preAdvanced_ || error_ != TasPlaybackResult::Ok) {
+  // read out.
+  //
+  // v75 splits the work into an interruptible preview and a tiny validated
+  // publish. A higher-priority clock ISR can retire a pended latch while the
+  // preview is being built; that nested edge changes the consumer head, so
+  // tryCommitStrobeRecordPrefetch rejects the stale preview instead of popping
+  // the same ring slot twice. The firmware masks interrupts only around that
+  // final validation and the field stores.
+  TasPlaybackResult previewNextStrobeRecord(
+    TasStrobeRecordPrefetch& prefetch) const;
+
+  __attribute__((always_inline)) inline TasPlaybackResult
+  tryCommitStrobeRecordPrefetch(const TasStrobeRecordPrefetch& prefetch) {
+    // Called with interrupts masked immediately after a successful preview.
+    // Every interrupt-side transition that can stale the preview consumes its
+    // ring slot and moves head_; use that single-consumer index as the version
+    // token. (Wrapping it would require 65,536 nested edges during one preview.)
+    // Keeping the validation and four mask bytes word-sized leaves margin for
+    // exception entry plus Golf's measured clock-write path.
+    if (head_ != prefetch.expectedHead) {
       return TasPlaybackResult::Waiting;
     }
-    if (currentFrame_ + 1 >= totalFrames_ || bufferedFrames() == 0) {
-      return TasPlaybackResult::Waiting;
-    }
-    pollCompletedInWindow_ = false;
-    const TasPlaybackResult result = advanceFrame(nextMasks);
-    lastWindowResult_ = result;
-    if (result == TasPlaybackResult::Ok) {
-      preAdvanced_ = true;
-    }
-    return result;
+
+    head_ = prefetch.nextHead;
+    currentFrame_ = prefetch.nextFrame;
+    maskPipelineWord_ = prefetch.pipeline.packed;
+    preAdvanced_ = true;
+    return TasPlaybackResult::Ok;
   }
 
   bool active() const;
@@ -204,6 +258,34 @@ class NesTasPlayback {
 
  private:
   bool readyToStart() const;
+  TasFrameMasks currentPipelineMasks() const {
+    const uint32_t packed = maskPipelineWord_;
+    return TasFrameMasks{
+      static_cast<uint8_t>(packed),
+      static_cast<uint8_t>(packed >> 8),
+    };
+  }
+  TasFrameMasks stagedPipelineMasks() const {
+    const uint32_t packed = maskPipelineWord_;
+    return TasFrameMasks{
+      static_cast<uint8_t>(packed >> 16),
+      static_cast<uint8_t>(packed >> 24),
+    };
+  }
+  void setCurrentPipelineMasks(TasFrameMasks masks) {
+    const uint32_t packed = maskPipelineWord_;
+    maskPipelineWord_ =
+      (packed & 0xffff0000u) |
+      static_cast<uint32_t>(masks.port1) |
+      (static_cast<uint32_t>(masks.port2) << 8);
+  }
+  void setStagedPipelineMasks(TasFrameMasks masks) {
+    const uint32_t packed = maskPipelineWord_;
+    maskPipelineWord_ =
+      (packed & 0x0000ffffu) |
+      (static_cast<uint32_t>(masks.port1) << 16) |
+      (static_cast<uint32_t>(masks.port2) << 24);
+  }
   TasFrameMasks popFrame();
   void setError(TasPlaybackResult result);
   TasPlaybackResult advanceFrame(TasFrameMasks& nextMasks);
@@ -224,9 +306,7 @@ class NesTasPlayback {
   uint32_t latchWindowMicros_ = kTasDefaultLatchWindowMicros;
   uint32_t lastLatchMicros_ = 0;
   uint32_t startDelayRemaining_ = 0;
-  TasFrameMasks currentMasks_ = {};
-  volatile uint8_t stagedNextMask1_ = 0;
-  volatile uint8_t stagedNextMask2_ = 0;
+  alignas(uint32_t) volatile uint32_t maskPipelineWord_ = 0;
   uint8_t portCount_ = 1;
   TasSyncMode syncMode_ = TasSyncMode::Unknown;
   TasPlaybackResult error_ = TasPlaybackResult::Ok;
