@@ -126,6 +126,7 @@ ports are driven, and `Skip first` is 0.
 | [Super Mario Bros. 3 — "all levels" (100%) by Lord_Tom & Tompa](https://www.youtube.com/watch?v=cB5zRV_KQ60) | 01:04:37 | [2835M](https://tasvideos.org/2835M) | `.fm2` | EverDrive N8 Pro | Boot lottery at the World 4 middle fortress |
 | [Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa](https://www.youtube.com/watch?v=gfD4Rx75C1g) | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge | — |
 | [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro | Wins the game on World 7-1 |
+| Tecmo Super Bowl by Arc | 07:10.092 | [5171M](https://tasvideos.org/5171M) | `.fm2` | EverDrive N8 Pro | — |
 | [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro | — |
 | Tetris — "playaround" by Baxter | 02:17.36 | [1502M](https://tasvideos.org/1502M) | `.fm2` | EverDrive N8 Pro | — |
 | [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (7x) |
