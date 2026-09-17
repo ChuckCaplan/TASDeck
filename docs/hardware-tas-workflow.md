@@ -210,9 +210,10 @@ mask counts, skip and delay values, captured range, and recent firmware status.
 
 A trace can show that every mask TASDeck served matched the converter's expected stream, bit for bit,
 with correct record alignment and no anomalies — and the run still desynchronized. This is a real
-outcome, not a sign the trace was captured wrong. It means the divergence is console-side: TASDeck
-delivered the movie faithfully and the console did something the emulator did not. Once serving
-verifies clean, stop looking for a firmware bug and start looking at the hardware.
+outcome, not a sign the trace was captured wrong. It establishes the output at the trace's sampling
+times. GPIO samples taken after the NES reads the controller cannot prove what the NES saw at that
+earlier instant. A clean trace narrows the investigation toward game timing and console state while
+leaving electrical timing as a possible cause.
 
 The usual console-side causes:
 
