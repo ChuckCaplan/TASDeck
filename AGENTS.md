@@ -87,6 +87,11 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
   continuous hardware trace, the sibling exporter trace, and the source FM2.
+- `scripts/patch-battletoads-startup.js`: Builds the experimental Battletoads EverDrive N8 Pro ROM
+  that preloads `$6000-7FFF` with open-bus bytes; source in
+  `scripts/rom-patches/battletoads-open-bus-preload.s`, tests in
+  `apps/web/tests/patch-battletoads-startup.test.js`, rationale in
+  `docs/design/battletoads-everdrive-open-bus.md`.
 - `firmware/uno_r4_wifi/uno_r4_wifi.ino`: Arduino UNO R4 WiFi serial bridge sketch.
 - `firmware/uno_r4_wifi/src/NesDeckProtocol.*`: Testable firmware command protocol parser.
 - `firmware/uno_r4_wifi/src/NesTasPlayback.*`: Testable latch-synchronized TAS mask playback.

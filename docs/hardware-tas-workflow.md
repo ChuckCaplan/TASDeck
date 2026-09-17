@@ -228,6 +228,14 @@ The usual console-side causes:
 - **The flash cart.** An EverDrive N8 Pro leaves the console in a different startup state than an
   original cartridge. A reproducible failure at a fixed location is worth retesting on a real
   cartridge when one is available.
+- **Open bus at `$6000-7FFF`.** On an original cartridge with no work RAM, these reads return
+  open bus — often the high byte of the address just used. The N8 Pro's official
+  [AxROM reference mapper](https://github.com/krikzz/edn8-pro-pub/blob/317f8caf8d2b917a260e94ec14d5edbbbfced8ba/fpga/000/map_007.sv#L33-L53)
+  requests SRAM there, but top-level configuration can disable the chip or mirror a smaller
+  memory region. The source does not prove unconditional 8 KiB SRAM or the behavior of every
+  installed mapper version. Different returned bytes can affect table overreads and glitches that
+  execute code in this range. An emulator configured for the original cartridge will need an
+  explicit model change to explore that difference.
 - **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern cannot be
   reproduced by any replay device.
 - **Mapper-specific behavior.** Some titles are documented as failing on every replay device, not
@@ -240,6 +248,15 @@ The usual console-side causes:
 When a run fails the same way repeatedly, note the record number where the trace's poll cadence
 first departs from a known-good run. That number identifies the retry point and often makes a failed
 attempt cost minutes instead of the movie's full length.
+
+[Battletoads On The EverDrive N8 Pro](design/battletoads-everdrive-open-bus.md) documents the
+open-bus investigation, model assumptions and hardware results. The user reports one animated
+game-end-glitch ending with v2 D from cold power-on/auto-load; other attempts, v3/v4 and both long
+movies have failed. Published TAStm32 verifications are not a comparison on this same setup, and
+their descriptions do not establish cartridge type or success rates. The verifier separately
+[warned of occasional power-on success](https://tasvideos.org/Forum/Posts/504290). The [NES-side input delivery test](../scripts/battletoads-input-test/README.md) checks
+what the console actually receives using Battletoads' exact controller-read loop. It has emulator
+validation with injected errors; no comparator hardware result is available yet.
 
 ## Continuous Trace Capture
 
