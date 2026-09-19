@@ -10,7 +10,8 @@ controller ports. With the correct ROM, TAS movie, power-on state, and cartridge
 this is the path for running one-controller and two-controller TAS movies on real NES hardware.
 
 TASDeck plays a raw `.r08` replay natively, and plays `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movies
-after converting them to a `.tdmask` byte stream with the included converter scripts.
+after converting them with the included converter scripts: the FM2 converter writes both a per-latch
+`.r08` and a `.tdmask` byte stream, and the BK2 converter writes a `.tdmask`.
 
 ## Hardware
 
@@ -257,11 +258,12 @@ port at a time.
 ## Prepare A TAS File
 
 Hardware playback accepts a raw `.r08` replay or a `.tdmask` byte stream. An `.r08` is loaded
-directly with no conversion. An `.fm2` (FCEUX) or `.bk2` (BizHawk) movie is first converted to a
-`.tdmask` with the converter scripts below. The exporter writes a versioned two-controller stream;
-port 2 bytes are zero when the movie has no player-2 input.
+directly with no conversion. An `.fm2` (FCEUX) or `.bk2` (BizHawk) movie is first converted with the
+converter scripts below. Both formats carry two controllers; port 2 bytes are zero when the movie
+has no player-2 input.
 
-To convert an FM2 movie, generate the TD2P stream from the ROM and matching movie with FCEUX:
+To convert an FM2 movie, play it through FCEUX with the ROM it was made on. One pass writes two
+streams:
 
 ```sh
 scripts/convert-fm2-to-tasdeck-mask.sh \
@@ -270,11 +272,20 @@ scripts/convert-fm2-to-tasdeck-mask.sh \
   "smb3.tdmask"
 ```
 
+- `smb3.polls.r08` holds one record per console latch. TASDeck loads it in `strobe` mode at
+  `Start delay 1`. Converter `.polls.r08` files have not yet been confirmed on a console at that
+  delay; if one desyncs within its first records, try `Start delay 0`.
+- `smb3.tdmask` holds one record per polled frame with lag frames removed, and plays in `poll` mode.
+
+Try the `.polls.r08` first. If the converter warns that the game wrote `$4015` with the DPCM enable
+bit set, start with the `.tdmask` instead. SMB3, the example above, is one of those games;
+[Generate A Stream](docs/hardware-tas-workflow.md#generate-a-stream) explains why.
+
 Use your actual FM2 path and ROM path. The ROM must match the movie; a different revision, header, or
-start state can desync the TAS. If you omit the third argument, the `.tdmask` file is written in the
+start state can desync the TAS. If you omit the third argument, both files are written in the
 current working directory using the FM2 base name. The converter also writes
-`<output>.trace.csv` next to the `.tdmask`; use that CSV if troubleshooting is needed to compare
-firmware poll traces against the emulator-exported mask stream.
+`<name>.tdmask.trace.csv` next to the `.tdmask`; use that CSV if troubleshooting is needed to
+compare firmware poll traces against the emulator-exported mask stream.
 
 On Windows, run the same command from Git Bash with the native FCEUX Win64 build. The converter finds
 `fceux64.exe` on `PATH` and translates all Git Bash paths before starting FCEUX. To select an
@@ -376,14 +387,16 @@ log `blocked` entries rather than silently dropping them.
 
 1. Put the NES, cartridge or EverDrive, and game at the clean state expected by the TAS movie. This may mean having the cartridge plugged in and the NES off.
 2. Press `Connect` if the Arduino bridge is not already connected.
-3. In TASDeck, choose the `.r08` file or generated `.tdmask` file. `.tdmask` is locked to
-   completed-read (poll) synchronization. `.r08` defaults to per-strobe synchronization — the
-   semantics default TAStm32 settings record — and exposes a `Sync Mode` picker to switch to poll
-   or latch-window mode if a replay is documented as needing TAStm32 `--dpcm`.
-4. Leave `Start delay` at its prefill: 0 for `.tdmask`, 1 for `.r08` in per-strobe mode (matching
-   the blank record default TAStm32 dumps prepend). `Start delay` waits after the console sync
-   point before releasing the first record; `Skip first` discards masks from the front of the
-   stream before arming. Change these only if the run needs alignment tuning.
+3. In TASDeck, choose the `.r08` file (including a `.polls.r08` from the FM2 converter) or the
+   generated `.tdmask` file. `.tdmask` is locked to completed-read (poll) synchronization. `.r08`
+   defaults to per-strobe synchronization — the semantics default TAStm32 settings record — and
+   exposes a `Sync Mode` picker to switch to poll or latch-window mode if a replay is documented as
+   needing TAStm32 `--dpcm`.
+4. Leave `Start delay` at its prefill: 0 for `.tdmask`, 1 for `.r08` in per-strobe mode. An `.r08`
+   holds no blank record; the prefill matches the `--blank 1` that the public NES replay corpus
+   uses for power-on runs (the TAStm32 client itself defaults to 0). `Start delay` waits after the
+   console sync point before releasing the first record; `Skip first` discards masks from the front
+   of the stream before arming. Change these only if the run needs alignment tuning.
 5. Wait for TASDeck to parse and preview the file. Once both the Arduino bridge and a valid file are
    ready, TASDeck uploads the TAS stream to the bridge while manual controls stay active.
 6. Press `Play` a single time to prebuffer and arm the Arduino. When the status is armed and the playback button
@@ -401,7 +414,7 @@ During hardware TAS playback, the Arduino advances through the byte stream from 
 holds each frame byte across repeated controller polls. Browser timers do not set the real-console
 timing.
 
-Your `.r08` replay, or your `.tdmask` converted from an FM2 or BK2 movie, should now be playing on
+Your `.r08` replay, or the stream you converted from an FM2 or BK2 movie, should now be playing on
 your real NES. The on-screen controller highlights the TAS button presses for the selected NES port so you
 can watch which buttons are being sent to the console as it plays.
 

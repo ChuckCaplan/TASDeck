@@ -2460,7 +2460,8 @@ function handleSyncDelayChange() {
   }
 }
 
-// Default TAStm32 dumps prepend one blank record (--blank 1), so strobe mode
+// .r08 dumps hold no blank record. The public NES replay corpus plays power-on
+// runs with TAStm32 --blank 1 (the client's own default is 0), so strobe mode
 // starts one accepted edge late; window modes start at the first window.
 function defaultSyncDelayForMode(syncMode) {
   return syncMode === "strobe" ? 1 : 0;
