@@ -3,9 +3,10 @@
 Console verification video: [Golf by link_7777](https://www.youtube.com/watch?v=OwDKHgDyLVg) —
 all eighteen holes, played back on a real NES by the procedure this document describes.
 
-Golf (USA) is the one verified run that cannot be played from the EverDrive N8 Pro's menu at any
-setting. The game reads uninitialized zero-page RAM, and the EverDrive's loader supplies exactly the
-one value that breaks the run. This document records the mechanism, the hardware procedure that
+Golf (USA) was the first verified run that cannot be played from the EverDrive N8 Pro's menu at any
+setting; [R.B.I. Baseball](rbi-baseball-uninitialized-ram.md) is the second, by the same mechanism.
+The game reads uninitialized zero-page RAM, and the EverDrive's loader supplies exactly the one value
+that breaks the run. This document records the mechanism, the hardware procedure that
 works around it, and how to recognize the same class of failure in other movies.
 
 For general playback and desync diagnosis, see [Hardware TAS Playback And
@@ -164,6 +165,10 @@ Any movie whose game reads an uninitialized zero-page byte at an address with bi
 to the same deviation. Exposure alone is not enough — Monopoly reads four such bytes and completes
 on the EverDrive regardless, because none of them changes its behavior. The byte has to feed
 something the run depends on.
+
+R.B.I. Baseball is the second verified case. It seeds its random number generator from `$0017`,
+which the EverDrive supplies as `$00`, and the same priming procedure runs it from a real cartridge
+at Start delay 0. See [R.B.I. Baseball And Uninitialized Work RAM](rbi-baseball-uninitialized-ram.md).
 
 The public replay corpus names these runs as requiring RAM cleared to the FCEUX and BizHawk pattern:
 Adventures of Tom Sawyer, Marble Madness, Mickey Mousecapade, Monopoly (both runs), Rad Racer,

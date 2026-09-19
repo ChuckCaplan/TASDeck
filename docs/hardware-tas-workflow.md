@@ -198,8 +198,10 @@ Before arming playback:
   TAStm32 client defaults to `--blank 0`, but the
   [alyosha-tas](https://github.com/alyosha-tas/NES_replay_files) corpus plays power-on runs with
   `--blank 1` and runs that start from reset with `--blank 0`, so strobe mode prefills
-  `Start delay 1`. The FM2 converter's `.polls.r08` files have not yet been confirmed on a console
-  at that delay; if one desyncs within its first records, try `Start delay 0`. A hand-entered delay
+  `Start delay 1`. The first FM2 converter `.polls.r08` confirmed on a console,
+  [R.B.I. Baseball's](design/rbi-baseball-uninitialized-ram.md), completed from a held-Reset
+  cartridge start at `Start delay 0`. None has been confirmed at the prefilled 1 yet; if one
+  desyncs within its first records, try `Start delay 0`. A hand-entered delay
   survives mode changes; the prefill applies only while the field is untouched. `.tdmask` always
   uses completed-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
@@ -273,8 +275,10 @@ The usual console-side causes:
 - **The flash cart.** An EverDrive N8 Pro leaves the console in a different startup state than an
   original cartridge. A reproducible failure at a fixed location is worth retesting on a real
   cartridge when one is available.
-- **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern cannot be
-  reproduced by any replay device.
+- **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern desync
+  from an EverDrive launch, whose loader zero-fills the zero page, and no TASDeck setting
+  compensates. Priming RAM and then swapping to a real cartridge under a held Reset does; see
+  [Golf](design/golf-uninitialized-ram.md) and [R.B.I. Baseball](design/rbi-baseball-uninitialized-ram.md).
 - **Mapper-specific behavior.** Some titles are documented as failing on every replay device, not
   only this one. Nightshade is the standing example: TASVideos testing reports it syncing about one
   attempt in twenty at one startup offset and somewhat better at another, with MMC3 mapper clocking

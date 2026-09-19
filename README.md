@@ -114,6 +114,7 @@ ports are driven, and `Skip first` is 0.
 | [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0 |
 | [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro | — |
 | [Pac-Man (Tengen) by eien86](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [5231M](https://tasvideos.org/5231M) | `.bk2` | EverDrive N8 Pro | — |
+| R.B.I. Baseball — "playaround" by adelikat | 04:28.79 | [1118M](https://tasvideos.org/1118M) | `.fcm` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, work RAM primed the same way as Golf, and the converter's `.polls.r08` at start delay 0 — see [R.B.I. Baseball and uninitialized work RAM](docs/design/rbi-baseball-uninitialized-ram.md) |
 | [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro | — |
 | [Super Mario Bros. — "warpless" by HappyLee & Mars608](https://www.youtube.com/watch?v=JpjCpAvx-Nk) | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro | — |
 | [Super Mario Bros. — "Playaround" by flamexx](https://www.youtube.com/watch?v=OOrngcD9NOQ) | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro | Ends on 7-1 |
