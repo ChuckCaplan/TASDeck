@@ -30,7 +30,10 @@ is with those published verifications, not a test of TAStm32 on this same consol
 Only the patched game-end-glitch movie has finished on this setup so far.
 
 In [March 2021](https://tasvideos.org/Forum/Posts/504290), before publishing these verifications,
-Alyosha warned that the recent Battletoads runs worked only occasionally from power-on. His
+Alyosha warned that the recent Battletoads runs worked only occasionally from power-on. Verbatim,
+from post 504298 in that thread, dated March 30 2021: "Also the recent Battletoads runs would be
+cool to see, but they would only work from power on, and then will only work occasionally, but
+should be doable." He does not quantify "occasionally", so this sets no expected hit rate. His
 [June 2021 startup-state update](https://tasvideos.org/Forum/Posts/506829) retained Battletoads sync
 with minor initial lag adjustments. These reports support investigating startup timing; they do
 not establish the cause of the current failures or a success rate for these three files.
