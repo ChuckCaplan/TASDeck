@@ -8,6 +8,16 @@ that the RAM declaration caused the success or that the patch reliably fixes the
 See [Checking The EverDrive's RAM](#checking-the-everdrives-ram) and
 [What v2 Does Not Address](#what-v2-does-not-address).
 
+> **Update, 2026-09-22 — see [Battletoads On An Original Cartridge](battletoads-real-cartridge.md).**
+> The game-end glitch has since been run on an original cartridge, which drives real open bus at
+> `$6000-7FFF` and makes this document's patched ROMs unnecessary. Two findings there bear on this
+> one. First, **the Dark Queen message-table landing is not diagnostic of the N8's work RAM**: an
+> original cartridge with genuine open bus reproduces it, so it is also a power-on alignment outcome.
+> Second, the landing is decided by zero page `$75` at the exact frame the glitch fires — the byte
+> `ADC $75,X` leaves on the bus to fill the slide — and not by the `JMP ($0013)` vector, which holds
+> `$8006` in winning and losing runs alike. Input delivery has also been verified from the console
+> side and excluded as a cause.
+
 The three supplied R08 movies have published TASVideos console verifications:
 `battletoads_2p.r08` (warpless, [4267M](https://tasvideos.org/4267M)),
 `battletoads_2p_warp.r08` (warps, [4271M](https://tasvideos.org/4271M)), and `Battletoads_GEG.r08`
