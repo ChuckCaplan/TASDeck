@@ -9,6 +9,18 @@ namespace tasdeck {
 
 constexpr uint16_t kTasBufferCapacity = 512;
 constexpr uint16_t kTasStartBufferedFrames = 120;
+// RA4M1 core clock: DWT->CYCCNT ticks per micros() microsecond.
+constexpr uint32_t kCoreCyclesPerMicro = 48;
+
+// Back-dates a micros() reading to an earlier DWT cycle stamp. The strobe
+// latch ISR reads micros() late (the fast path only in its preemptible tail,
+// after the console's clock ISRs), so every latch timestamp is referred back
+// to the ISR's entry cycle; otherwise the first fast-path latch after a start
+// delay read ~13 us later than the delay latches before it. Unsigned
+// subtraction keeps both counters correct across wraparound.
+inline uint32_t microsAtCycle(uint32_t nowMicros, uint32_t nowCycles, uint32_t cycleStamp) {
+  return nowMicros - (nowCycles - cycleStamp) / kCoreCyclesPerMicro;
+}
 
 enum class TasPlaybackResult {
   Ok,

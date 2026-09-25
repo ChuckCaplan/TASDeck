@@ -735,6 +735,18 @@ void testTasPlaybackHandlesTimestampWraparound() {
   assert(playback.currentFrame() == 1);
 }
 
+void testMicrosAtCycleBackdatesToEntry() {
+  // A strobe fast-path tail that reads micros() 624 cycles (13 us) after entry
+  // must report the entry time, like the general path's delay latches.
+  assert(tasdeck::microsAtCycle(1000013u, 50624u, 50000u) == 1000000u);
+  // Sub-microsecond remainders truncate toward the later reading.
+  assert(tasdeck::microsAtCycle(500u, 1047u, 1000u) == 500u);
+  // DWT->CYCCNT wraps every ~89 s at 48 MHz.
+  assert(tasdeck::microsAtCycle(2000013u, 400u, 4294967072u) == 2000000u);
+  // micros() wraps every ~71.6 minutes.
+  assert(tasdeck::microsAtCycle(5u, 50624u, 50000u) == 4294967288u);
+}
+
 void testTasPlaybackPreAdvancesAtWindowExpiry() {
   NesTasPlayback playback;
   const uint8_t masks[] = {0x01, 0x00, 0x80};
@@ -1559,6 +1571,7 @@ int main() {
   testTasLatchPlaybackCompletesAndReportsUnderrun();
   testTasLatchPlaybackServesTwoControllerMasks();
   testTasPlaybackHandlesTimestampWraparound();
+  testMicrosAtCycleBackdatesToEntry();
   testTasPlaybackPreAdvancesAtWindowExpiry();
   testTasPlaybackHandlesKq5DoubleReadAndFrames();
   testTasPlaybackPreAdvanceRequiresCompletedPoll();
