@@ -503,6 +503,7 @@ class SerialBridge {
     run.paused = false;
     run.stopped = false;
     run.started = false;
+    run.startDelayPolls = undefined;
     run.nextFrameIndex = 0;
     run.uploadEnded = false;
     run.error = "ok";
@@ -577,9 +578,8 @@ class SerialBridge {
       throw new Error("Invalid TAS start delay.");
     }
 
-    run.startDelayPolls = startDelayPolls;
     const status = await this.sendFirmwareTasCommand(command, (message) => message.command === "tas_start");
-    this.markTasRunStarted(run);
+    this.markTasRunStarted(run, startDelayPolls);
     this.applyTasFirmwareStatus(run, status, "tas_start");
     this.startTasTraceStream(run);
 
@@ -720,7 +720,8 @@ class SerialBridge {
     run.state = state;
   }
 
-  markTasRunStarted(run) {
+  markTasRunStarted(run, startDelayPolls) {
+    run.startDelayPolls = startDelayPolls;
     run.started = true;
     run.paused = false;
     run.state = "streaming";
@@ -995,7 +996,14 @@ class SerialBridge {
   }
 
   applyTasFirmwareStatus(run, status, command) {
-    run.firmwareStatus = status;
+    // Compact chunk acknowledgements omit identity and diagnostics. Retain only
+    // identity; counters and timings must describe the latest response.
+    run.firmwareStatus = {
+      fw: run.firmwareStatus?.fw,
+      latch_edge: run.firmwareStatus?.latch_edge,
+      clock_edge: run.firmwareStatus?.clock_edge,
+      ...status,
+    };
     run.error = status.error || "ok";
     if (Number(status.received || 0) > run.nextFrameIndex) {
       run.nextFrameIndex = Math.min(Number(status.received), run.frameCount);
@@ -1088,6 +1096,7 @@ class SerialBridge {
       tasFileName: run.fileName,
       bridgeRunId: run.id,
       skipPolls: run.skipPolls || 0,
+      delayPolls: run.startDelayPolls,
       originalPolls: run.originalFrameCount || run.frameCount,
       effectivePolls: run.frameCount,
       portCount: run.portCount || 1,
@@ -1217,6 +1226,7 @@ class SerialBridge {
           `# tas_file: ${run.fileName}`,
           `# bridge_run_id: ${run.id}`,
           `# effective_polls: ${run.frameCount}`,
+          `# delay_polls: ${run.startDelayPolls ?? ""}`,
           `# started: ${startedAt.toISOString()}`,
           TAS_TRACE_CSV_HEADER,
         ];
@@ -1249,7 +1259,7 @@ class SerialBridge {
       const finalStatus = run.firmwareStatus || {};
       await fsp.appendFile(
         filePath,
-        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? 0} torn_strobes=${finalStatus.torn_strobes ?? 0} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""} latch_head_last_cyc=${finalStatus.latch_head_last_cyc ?? ""} latch_head_max_cyc=${finalStatus.latch_head_max_cyc ?? ""} latch_tail_max_cyc=${finalStatus.latch_tail_max_cyc ?? ""} latch_prefetch_masked_max_cyc=${finalStatus.latch_prefetch_masked_max_cyc ?? ""} clock_write_max_cyc=${finalStatus.clock_write_max_cyc ?? ""}\n`,
+        `# end: rows=${totalRows} gaps=${totalGaps} bare_strobes=${finalStatus.bare_strobes ?? ""} torn_strobes=${finalStatus.torn_strobes ?? ""} latch_isr_last_cyc=${finalStatus.latch_isr_last_cyc ?? ""} latch_isr_max_cyc=${finalStatus.latch_isr_max_cyc ?? ""} latch_head_last_cyc=${finalStatus.latch_head_last_cyc ?? ""} latch_head_max_cyc=${finalStatus.latch_head_max_cyc ?? ""} latch_tail_max_cyc=${finalStatus.latch_tail_max_cyc ?? ""} latch_prefetch_masked_max_cyc=${finalStatus.latch_prefetch_masked_max_cyc ?? ""} clock_write_max_cyc=${finalStatus.clock_write_max_cyc ?? ""}\n`,
         "utf8",
       );
       const gapNote = totalGaps > 0 ? ` (${totalGaps} rows lost to ring overwrite)` : "";
@@ -2602,7 +2612,7 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `bridge_run_id: ${metadata.bridgeRunId ?? run?.id ?? ""}`,
     `client_run_id: ${run?.clientRunId ?? ""}`,
     `skip_polls: ${metadata.skipPolls ?? run?.skipPolls ?? 0}`,
-    `delay_polls: ${metadata.delayPolls ?? run?.startDelayPolls ?? ""}`,
+    `delay_polls: ${run?.startDelayPolls ?? metadata.delayPolls ?? ""}`,
     `boot_timing: ${run?.bootTimingMessage ?? ""}`,
     `sync_mode: ${metadata.syncMode ?? run?.syncMode ?? HARDWARE_TAS_SYNC_MODE}`,
     `port_count: ${metadata.portCount ?? run?.portCount ?? ""}`,
@@ -2624,8 +2634,8 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `firmware_received: ${firmwareStatus.received ?? ""}`,
     `firmware_buffered: ${firmwareStatus.buffered ?? ""}`,
     `firmware_error: ${firmwareStatus.error ?? run?.error ?? ""}`,
-    `firmware_bare_strobes: ${firmwareStatus.bare_strobes ?? 0}`,
-    `firmware_torn_strobes: ${firmwareStatus.torn_strobes ?? 0}`,
+    `firmware_bare_strobes: ${firmwareStatus.bare_strobes ?? ""}`,
+    `firmware_torn_strobes: ${firmwareStatus.torn_strobes ?? ""}`,
     `firmware_anomaly_count: ${firmwareStatus.anomaly_count ?? ""}`,
     `firmware_anomaly_seq: ${firmwareStatus.anomaly_seq ?? ""}`,
     `firmware_anomaly_kind: ${firmwareStatus.anomaly_kind ?? ""}`,

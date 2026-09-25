@@ -941,6 +941,63 @@ test("collects TAS trace rows forward from a cursor and counts overwritten rows 
   assert.deepEqual(dump.rows.map((row) => row.sequence), [10, 11, 12, 13]);
 });
 
+test("trace dumps retain start delay and identity without carrying stale diagnostics", async (t) => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-trace-metadata-"));
+  t.after(() => fsp.rm(logDir, { recursive: true, force: true }));
+  const bridge = new SerialBridge({ logDir });
+  const masks = [0x01, 0x00, 0x80];
+  const run = bridge.createTasRun({
+    fileName: "metadata.tdmask",
+    frameCount: masks.length,
+    masks,
+    checksum: tasRunChecksum(masks),
+  });
+  bridge.activeTasRun = run;
+  run.state = "armed";
+  bridge.sendFirmwareTasCommand = async (command) => {
+    assert.equal(command, "TAS_START 12");
+    return { start_delay_polls: 12, error: "ok" };
+  };
+  bridge.startTasTraceStream = () => {};
+  bridge.continueTasStream = async () => {};
+  await bridge.startTasRun({ delayPolls: 12 });
+  await run.streamTask;
+
+  const dump = { rows: [], requestedStart: 0, next: 0, capacity: 512 };
+  bridge.applyTasFirmwareStatus(run, {
+    fw: "test-build", latch_edge: "rising", clock_edge: "falling",
+    start_delay_polls: 0, current: 1, bare_strobes: 7, torn_strobes: 3,
+    latch_isr_max_cyc: 150,
+  }, "tas_status");
+  let filePath = await bridge.writeTasTraceDumpFile(run, dump, []);
+  let contents = await fsp.readFile(filePath, "utf8");
+  assert.match(contents, /^delay_polls: 12$/m);
+  assert.match(contents, /^firmware_bare_strobes: 7$/m);
+  assert.match(contents, /^firmware_torn_strobes: 3$/m);
+  assert.match(contents, /^firmware_latch_isr_max_cyc: 150$/m);
+
+  bridge.applyTasFirmwareStatus(run, { current: 2, buffered: 1, error: "ok" }, "tas_chunk");
+  assert.equal(run.startDelayPolls, 12);
+  assert.equal(run.firmwareStatus.torn_strobes, undefined);
+  assert.equal(bridge.tasStatusPayload("tas_chunk", run).fw, "test-build");
+  filePath = await bridge.writeTasTraceDumpFile(run, dump, []);
+  contents = await fsp.readFile(filePath, "utf8");
+  assert.match(contents, /^delay_polls: 12$/m);
+  assert.match(contents, /^firmware_id: test-build$/m);
+  assert.match(contents, /^firmware_latch_edge: rising$/m);
+  assert.match(contents, /^firmware_clock_edge: falling$/m);
+  assert.match(contents, /^firmware_current: 2$/m);
+  assert.match(contents, /^firmware_bare_strobes: $/m);
+  assert.match(contents, /^firmware_torn_strobes: $/m);
+  assert.match(contents, /^firmware_latch_isr_max_cyc: $/m);
+
+  bridge.applyTasFirmwareStatus(run, { bare_strobes: 0, torn_strobes: 0 }, "tas_status");
+  filePath = await bridge.writeTasTraceDumpFile(run, dump, []);
+  contents = await fsp.readFile(filePath, "utf8");
+  assert.match(contents, /^firmware_bare_strobes: 0$/m);
+  assert.match(contents, /^firmware_torn_strobes: 0$/m);
+});
+
 test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
   const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-stream-trace-"));
   const bridge = new SerialBridge({ logDir });
@@ -981,6 +1038,7 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
     stopped: false,
     paused: false,
     uploadEnded: true,
+    startDelayPolls: 12,
     firmwareStatus: {
       trace_frozen: 0,
       bare_strobes: 7,
@@ -1000,11 +1058,18 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
   assert.match(files[0], /\.stream\.csv$/);
   const contents = await fsp.readFile(path.join(traceDir, files[0]), "utf8");
   assert.match(contents, /# tasdeck trace stream v1/);
+  assert.match(contents, /^# delay_polls: 12$/m);
   assert.match(contents, /sequence,timestampMicros,tasFrame/);
   assert.match(contents, /^0,100,0,2,16,8,01,00,01,8,ok,01,03(?:,.*)?$/m);
   assert.match(contents, /^2,300,2,6,48,8,80,00,80,8,ok,80,02(?:,.*)?$/m);
   assert.match(contents, /# end: rows=3 gaps=0 bare_strobes=7 torn_strobes=3/);
   assert.match(contents, /^# end: .* clock_write_max_cyc=62$/m);
+  run.fileName = "compact-status.tdmask";
+  bridge.applyTasFirmwareStatus(run, { complete: 1, current: 3 }, "tas_chunk");
+  await bridge.streamTasTraceRows(run);
+  const compactFile = (await fsp.readdir(traceDir)).find((file) => file.includes("compact-status"));
+  const compactContents = await fsp.readFile(path.join(traceDir, compactFile), "utf8");
+  assert.match(compactContents, /# end: rows=3 gaps=0 bare_strobes= torn_strobes= /);
   await fsp.rm(logDir, { recursive: true, force: true });
 });
 

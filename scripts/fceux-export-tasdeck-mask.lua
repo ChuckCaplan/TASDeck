@@ -1,6 +1,7 @@
 local output_filename = os.getenv("TASDECK_MASK_OUTPUT")
 local trace_filename = os.getenv("TASDECK_MASK_TRACE_OUTPUT")
 local completion_filename = os.getenv("TASDECK_MASK_COMPLETION_OUTPUT")
+local r08_filename = os.getenv("TASDECK_R08_OUTPUT")
 
 if output_filename == nil or output_filename == "" then
   error("TASDECK_MASK_OUTPUT must be set")
@@ -20,6 +21,10 @@ end
 
 local output = assert(io.open(output_filename, "wb"))
 local trace_output = assert(io.open(trace_filename, "w"))
+local r08_output = nil
+if r08_filename ~= nil and r08_filename ~= "" then
+  r08_output = assert(io.open(r08_filename, "wb"))
+end
 local movie_loaded = false
 local movie_length = 0
 local current_movie_frame = -1
@@ -30,6 +35,10 @@ local ignored_reads = 0
 local strobe_high = false
 local observed_mismatches = 0
 local intra_frame_mismatches = 0
+local latch_edges = 0
+local unread_latches = 0
+local latch_was_read = true
+local dmc_enables = 0
 
 -- Versioned two-controller TASDeck header: magic, version, port count, CRLF,
 -- then the source movie's total video-frame count (big-endian uint32, lag
@@ -103,6 +112,38 @@ local function current_masks()
   return input_to_byte(joypad.get(1)), input_to_byte(joypad.get(2))
 end
 
+-- .r08 bytes use NES serial order: A in bit 7 through Right in bit 0, the
+-- reverse of the mask layout above.
+local function r08_byte(mask)
+  local value = 0
+
+  for bit = 0, 7 do
+    if math.floor(mask / 2 ^ bit) % 2 == 1 then
+      value = value + 2 ^ (7 - bit)
+    end
+  end
+
+  return value
+end
+
+-- The per-latch stream holds one port 1 / port 2 record for every rising
+-- strobe edge, the same edge the firmware's strobe mode consumes a record on.
+-- Unlike the frame stream it keeps latches that no read follows and every
+-- latch of a multi-poll frame, so the console's latch count alone keeps it
+-- aligned.
+local function note_latch_edge()
+  if not latch_was_read then
+    unread_latches = unread_latches + 1
+  end
+  latch_edges = latch_edges + 1
+  latch_was_read = false
+
+  if r08_output ~= nil then
+    local mask1, mask2 = current_masks()
+    r08_output:write(string.char(r08_byte(mask1), r08_byte(mask2)))
+  end
+end
+
 local function reset_read(port_index)
   local port = ports[port_index]
   local mask1, mask2 = current_masks()
@@ -154,6 +195,7 @@ end
 
 local function note_completed_poll(port_index, mismatch)
   local mask1, mask2 = current_masks()
+  latch_was_read = true
 
   if not frame_has_poll then
     frame_has_poll = true
@@ -185,28 +227,43 @@ end
 local function finish(reason)
   finish_all_partial_reads()
   flush_frame()
+  if not latch_was_read then
+    unread_latches = unread_latches + 1
+  end
   memory.registerread(0x4016, nil)
   memory.registerread(0x4017, nil)
   memory.registerwrite(0x4016, nil)
+  memory.registerwrite(0x4015, nil)
   backfill_movie_frame_count()
   output:close()
   trace_output:close()
+  if r08_output ~= nil then
+    r08_output:close()
+  end
   local completion_output = assert(io.open(completion_filename, "w"))
   completion_output:write(string.format(
-    "complete frames=%d polls=%d reason=%s\n",
+    "complete frames=%d polls=%d latches=%d unread_latches=%d dmc_enables=%d mismatches=%d reason=%s\n",
     written_frames,
     written_polls,
+    latch_edges,
+    unread_latches,
+    dmc_enables,
+    observed_mismatches,
     reason
   ))
   completion_output:close()
   print(string.format(
-    "TASDeck two-controller mask export complete: output=%s trace=%s movie_frames=%d polled_frames=%d polls=%d strobes=%d incomplete=%d ignored_reads=%d mismatches=%d intra_frame_mismatches=%d reason=%s",
+    "TASDeck two-controller mask export complete: output=%s trace=%s r08=%s movie_frames=%d polled_frames=%d polls=%d strobes=%d latches=%d unread_latches=%d dmc_enables=%d incomplete=%d ignored_reads=%d mismatches=%d intra_frame_mismatches=%d reason=%s",
     output_filename,
     trace_filename,
+    r08_output ~= nil and r08_filename or "none",
     movie_length,
     written_frames,
     written_polls,
     strobe_falls,
+    latch_edges,
+    unread_latches,
+    dmc_enables,
     incomplete_reads,
     ignored_reads,
     observed_mismatches,
@@ -227,7 +284,15 @@ local function finish(reason)
 end
 
 local function on_4016_write(address, size, value)
+  if not movie_loaded then
+    return
+  end
+
   local next_strobe_high = value % 2 == 1
+
+  if next_strobe_high and not strobe_high then
+    note_latch_edge()
+  end
 
   if strobe_high and not next_strobe_high then
     finish_all_partial_reads()
@@ -242,6 +307,10 @@ local function on_4016_write(address, size, value)
 end
 
 local function on_controller_read(port_index, value)
+  if not movie_loaded then
+    return
+  end
+
   local port = ports[port_index]
   if not port.capturing or strobe_high then
     ignored_reads = ignored_reads + 1
@@ -272,7 +341,19 @@ local function on_controller_read(port_index, value)
   end
 end
 
+-- The hooks can fire for emulation that runs before movie.playbeginning()
+-- restarts the movie. The handlers ignore it: a latch recorded then would add a
+-- record at the front of the per-latch stream and shift every record after it.
 memory.registerwrite(0x4016, on_4016_write)
+-- A $4015 write with bit 4 set enables DPCM playback, which starts a sample only
+-- when the previous one has finished, so this counts enables, not samples. On a
+-- console the sample DMA can corrupt a controller read, and games that guard
+-- against it strobe again, adding latches no emulator dump can predict.
+memory.registerwrite(0x4015, function(address, size, value)
+  if movie_loaded and value % 32 >= 16 then
+    dmc_enables = dmc_enables + 1
+  end
+end)
 memory.registerread(0x4016, function(address, size, value)
   on_controller_read(1, value)
 end)

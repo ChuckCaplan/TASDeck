@@ -70,8 +70,23 @@ depends on the file matching this convention.
 
 ## Generate A Stream
 
-Use the same ROM targeted by the movie. On macOS, the FM2 converter locates FCEUX through
-`FCEUX_BIN`, on `PATH`, or at `/opt/homebrew/bin/fceux`:
+Use the same ROM targeted by the movie. The FM2 converter plays the movie once in FCEUX and writes
+two streams from that one pass:
+
+- `<name>.polls.r08`: one record for every rising strobe edge the game writes to `$4016`, in the
+  [`.r08` convention](#r08-format). It keeps every latch of a frame that polls several times and
+  every latch no controller read follows, so it stays aligned as long as the console latches as
+  many times as the emulator did. Play it in `strobe` mode at the prefilled `Start delay 1` (see
+  [Console Synchronization](#console-synchronization)). It is the same per-latch dump as the
+  `.polls.r08` files in TASBot's replay library: for the three movies compared (Tetris, Zelda, and
+  Kirby), every record matches byte for byte, and TASBot's files differ only by blank records
+  appended after the movie ends. Like those files, it starts at the first latch FCEUX sees and holds
+  no leading blank record.
+- `<name>.tdmask`: one record per movie frame that completes a poll, with lag frames removed. It
+  plays in `poll` mode, which coalesces every latch inside a frame's latch window onto one record.
+
+On macOS, the converter locates FCEUX through `FCEUX_BIN`, on `PATH`, or at
+`/opt/homebrew/bin/fceux`:
 
 ```sh
 scripts/convert-fm2-to-tasdeck-mask.sh \
@@ -106,19 +121,42 @@ scripts/convert-bk2-to-tasdeck-mask.sh \
 BizHawk can be overridden when needed, for example with
 `BIZHAWK_BIN=/c/BizHawk/EmuHawk.exe`.
 
-The output path is optional. The converter also accepts the movie and ROM arguments in the opposite
-order. For `.bk2`, it restarts the movie at frame 0 in BizHawk, writes both controller masks for each
-non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings required by the
-movie in the BizHawk installation used for the export.
+The output path is optional. An output path ending in `.r08` names the per-latch stream, and the
+`.tdmask` is written beside it. The converter also accepts the movie and ROM arguments in the
+opposite order. It refuses an output path that names the movie or ROM, however it is spelled, and
+refuses two outputs that resolve to the same path.
+
+When it finishes, the FM2 converter reports how many latches the movie made per polled frame, the
+exact difference between the latch count and the polled-frame count, and how many latches had no
+completed eight-clock read. When the difference is 0, the two streams hold the same number of
+records. Otherwise only the `.polls.r08` in `strobe` mode serves every latch its own record. The
+converter also warns when a controller read returned input that changed after its latch: the
+`.polls.r08` holds each latch's input, so at those reads it differs from what FCEUX delivered.
+
+Try the `.polls.r08` first unless the converter warns that the game wrote `$4015` with the DPCM
+enable bit set. On a console, DPCM sample DMA can corrupt a controller read, and games that guard
+against it strobe again until two reads agree. Those extra latches depend on console timing, and
+FCEUX does not add them: Super Mario Bros. 3 exports exactly four latches on every one of its polled
+frames. For those games, start with the `.tdmask`, whose `poll` mode absorbs a re-read inside the
+same latch window.
+
+The BizHawk converter writes only the `.tdmask`. `scripts/convert-bk2-to-fm2.js` is not a route to
+a per-latch `.r08`: it exists to feed the hardware-trace expander, drops Reset and Power input,
+ignores savestate starts, and a NesHawk movie replayed in FCEUX can desync.
+
+For `.bk2`, the BizHawk converter restarts the movie at frame 0 in BizHawk, writes both controller
+masks for each non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings
+required by the movie in the BizHawk installation used for the export.
 
 Before launching the emulator, both converters inspect the movie's controller configuration and
 input columns. They accept only standard NES controller buttons on ports 1 and 2 and fail on Zapper,
 Arkanoid paddle, Power Pad, Four Score/P3/P4, microphone, expansion-port, or unknown controller
 input. Those devices use protocols or data lines that TASDeck does not drive.
 
-Each converter also creates `<output>.trace.csv`. The FCEUX trace has one row per completed emulator
-poll and includes poll-level diagnostic fields. The BizHawk trace maps each emitted mask pair to its
-source BK2 movie frame.
+Each converter also creates a trace CSV named after its `.tdmask`, `<name>.tdmask.trace.csv`,
+even when the FM2 converter's output path names the `.r08`. The FCEUX trace has one row per
+completed emulator poll and includes poll-level diagnostic fields. The BizHawk trace maps each
+emitted mask pair to its source BK2 movie frame.
 
 The ROM, movie, and initial console state must match. A different ROM revision, header, save state,
 or startup path can change lag and controller polling enough to desynchronize the run.
@@ -137,6 +175,7 @@ gate; both windowed modes exist for dumps documented as needing TAStm32 `--dpcm`
 | `.tdmask` from FCEUX/BizHawk (lag-stripped, one record per polled frame) | `poll` |
 | `.r08` verified with default TAStm32 settings | `strobe` |
 | `.r08` documented as requiring TAStm32 `--dpcm` | `poll` or `latch` |
+| `.polls.r08` from the FM2 converter (one record per latch) | `strobe` |
 | A future SubNESHawk per-latch dump | `strobe` |
 
 This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt a controller read,
@@ -154,10 +193,17 @@ Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.
 - Use `Start delay` to wait before releasing record 0. It counts blank windows in `poll`/`latch`
-  mode and accepted edges in `strobe` mode; TAStm32 `--blank N` maps directly to strobe-mode
-  `Start delay N`, so strobe mode prefills `Start delay 1` to match the one blank record default
-  TAStm32 dumps prepend. A hand-entered delay survives mode changes; the prefill applies only while
-  the field is untouched. `.tdmask` always uses completed-read windows.
+  mode and accepted edges in `strobe` mode, and strobe-mode `Start delay N` matches TAStm32
+  `--blank N`. An `.r08` dump holds no blank record; a replay device adds it at playback. The
+  TAStm32 client defaults to `--blank 0`, but the
+  [alyosha-tas](https://github.com/alyosha-tas/NES_replay_files) corpus plays power-on runs with
+  `--blank 1` and runs that start from reset with `--blank 0`, so strobe mode prefills
+  `Start delay 1`. The first FM2 converter `.polls.r08` confirmed on a console,
+  [R.B.I. Baseball's](design/rbi-baseball-uninitialized-ram.md), completed from a held-Reset
+  cartridge start at `Start delay 0`. None has been confirmed at the prefilled 1 yet; if one
+  desyncs within its first records, try `Start delay 0`. A hand-entered delay
+  survives mode changes; the prefill applies only while the field is untouched. `.tdmask` always
+  uses completed-read windows.
 - Use `Skip first` to discard masks from the front of the uploaded stream.
 
 For a power-on movie, load the `.tdmask` or `.r08` and press `Play` once to arm it. While the NES is off or
@@ -194,7 +240,7 @@ reconstructed masks with the expected input stream and inspect `bare_strobes` an
 instead of treating a zero anomaly count as complete proof.
 
 Compare the hardware rows near the first visible desync with the converter's
-`<output>.trace.csv`. Two-port traces contain separate rows tagged by port; correlate them by
+`<name>.tdmask.trace.csv`. Two-port traces contain separate rows tagged by port; correlate them by
 sequence and timestamp.
 
 Trace filenames use local time and its UTC offset:
@@ -210,9 +256,10 @@ mask counts, skip and delay values, captured range, and recent firmware status.
 
 A trace can show that every mask TASDeck served matched the converter's expected stream, bit for bit,
 with correct record alignment and no anomalies — and the run still desynchronized. This is a real
-outcome, not a sign the trace was captured wrong. It means the divergence is console-side: TASDeck
-delivered the movie faithfully and the console did something the emulator did not. Once serving
-verifies clean, stop looking for a firmware bug and start looking at the hardware.
+outcome, not a sign the trace was captured wrong. It establishes the output at the trace's sampling
+times. GPIO samples taken after the NES reads the controller cannot prove what the NES saw at that
+earlier instant. A clean trace narrows the investigation toward game timing and console state while
+leaving electrical timing as a possible cause.
 
 The usual console-side causes:
 
@@ -235,15 +282,14 @@ The usual console-side causes:
   original cartridge. A reproducible failure at a fixed location is worth retesting on a real
   cartridge when one is available.
 - **Open bus at `$6000-7FFF`.** On an original cartridge with no work RAM, these reads return
-  open bus — often the high byte of the address just used. The N8 Pro's official
-  [AxROM reference mapper](https://github.com/krikzz/edn8-pro-pub/blob/317f8caf8d2b917a260e94ec14d5edbbbfced8ba/fpga/000/map_007.sv#L33-L53)
-  requests SRAM there, but top-level configuration can disable the chip or mirror a smaller
-  memory region. The source does not prove unconditional 8 KiB SRAM or the behavior of every
-  installed mapper version. Different returned bytes can affect table overreads and glitches that
-  execute code in this range. An emulator configured for the original cartridge will need an
-  explicit model change to explore that difference.
-- **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern cannot be
-  reproduced by any replay device.
+  open bus. The EverDrive N8 Pro answers every CPU read from `$4020` up, with save RAM or its own
+  stand-in value, so table overreads and glitches that execute code in this range can behave
+  differently on it. Open bus itself also differs between consoles; see
+  [Battletoads](design/battletoads/README.md).
+- **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern desync
+  from an EverDrive launch, whose loader zero-fills the zero page, and no TASDeck setting
+  compensates. Priming RAM and then swapping to a real cartridge under a held Reset does; see
+  [Golf](design/golf-uninitialized-ram.md) and [R.B.I. Baseball](design/rbi-baseball-uninitialized-ram.md).
 - **Mapper-specific behavior.** Some titles are documented as failing on every replay device, not
   only this one. Nightshade is the standing example: TASVideos testing reports it syncing about one
   attempt in twenty at one startup offset and somewhat better at another, with MMC3 mapper clocking

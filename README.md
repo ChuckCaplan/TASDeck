@@ -41,11 +41,11 @@ npm start
 Open `http://localhost:8000`, or use one of the printed LAN URLs from a phone on the same network. Press `Connect` in the web app to open the Arduino USB bridge. Rotate the phone to landscape mode for the touch controller view; the layout is designed to feel like a handheld controller for driving the real NES.
 
 TASDeck supports live controller input from the on-screen controls or keyboard, routes input to NES
-port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. A
-`.tdmask` is generated from an `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movie using the converter
-scripts in `scripts/` (see the [Installation guide](INSTALL.md)) rather than loaded into the web UI
-directly; an `.r08` can be played as-is with no conversion, defaulting to a per-strobe mode that
-matches default TAStm32 replay semantics.
+port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. An
+`.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movie is converted with the scripts in `scripts/` (see the
+[Installation guide](INSTALL.md)) rather than loaded into the web UI directly; the FM2 converter
+writes both a per-latch `.r08` and a `.tdmask` from one FCEUX pass. An `.r08` can be played as-is
+with no conversion, defaulting to a per-strobe mode that matches default TAStm32 replay semantics.
 
 TASDeck drives standard NES controllers on either port. Zapper, Arkanoid paddle, Power Pad, Four
 Score, microphone, and expansion-port input are outside its scope, and the converters reject movies
@@ -109,11 +109,12 @@ ports are driven, and `Skip first` is 0.
 | [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro | — |
 | [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro | 2 controllers |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro | — |
-| [Golf by link_7777](https://www.youtube.com/watch?v=OwDKHgDyLVg) | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, primed work RAM, and a per-console start delay — see [Golf and uninitialized work RAM](docs/design/golf-uninitialized-ram.md) |
+| [Golf by link_7777](https://www.youtube.com/watch?v=OwDKHgDyLVg) | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, primed work RAM, and a per-console start delay (255 on the verified console) — see [Golf and uninitialized work RAM](docs/design/golf-uninitialized-ram.md) |
 | [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro | — |
 | [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0 |
 | [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro | — |
 | [Pac-Man (Tengen) by eien86](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [5231M](https://tasvideos.org/5231M) | `.bk2` | EverDrive N8 Pro | — |
+| R.B.I. Baseball — "playaround" by adelikat | 04:28.79 | [1118M](https://tasvideos.org/1118M) | `.fcm` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, work RAM primed the same way as Golf, and the converter's `.polls.r08` at start delay 0 — see [R.B.I. Baseball and uninitialized work RAM](docs/design/rbi-baseball-uninitialized-ram.md) |
 | [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro | — |
 | [Super Mario Bros. — "warpless" by HappyLee & Mars608](https://www.youtube.com/watch?v=JpjCpAvx-Nk) | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro | — |
 | [Super Mario Bros. — "Playaround" by flamexx](https://www.youtube.com/watch?v=OOrngcD9NOQ) | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro | Ends on 7-1 |

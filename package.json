@@ -24,8 +24,8 @@
     "check": "sh scripts/check.sh"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
-    "eslint": "^10.9.1"
+    "@playwright/test": "^1.63.0",
+    "eslint": "^10.10.0"
   },
   "optionalDependencies": {
     "serialport": "^13.0.0"

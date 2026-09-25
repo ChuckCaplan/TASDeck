@@ -58,7 +58,9 @@ npm run check
 The web tests use Node's built-in test runner. Firmware tests compile the protocol, controller
 state, and TAS playback helpers with the host C++ compiler. `npm test` also runs Playwright UI
 specs. `npm run lint` runs ESLint against the web JavaScript and test files. The Arduino compile
-target is `arduino:renesas_uno:unor4wifi`.
+target is `arduino:renesas_uno:unor4wifi`. When FCEUX is installed (`FCEUX_BIN`, `PATH`, or
+`/opt/homebrew/bin/fceux`), the FM2 converter tests also run the Lua exporter in an offscreen FCEUX
+against a synthetic ROM; set `TASDECK_SKIP_FCEUX_TESTS=1` to skip them.
 
 ## File Map
 
@@ -81,8 +83,10 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `apps/web/tests/ui/*.spec.js`: Playwright UI regression tests.
 - `playwright.config.js`: Playwright web-server and browser test configuration.
 - `docs/hardware-tas-workflow.md`: FM2/BK2-to-`.tdmask` hardware playback workflow.
-- `scripts/convert-fm2-to-tasdeck-mask.sh`: FCEUX wrapper for producing `.tdmask` files.
-- `scripts/fceux-export-tasdeck-mask.lua`: FCEUX Lua exporter for lag-stripped mask streams.
+- `scripts/convert-fm2-to-tasdeck-mask.sh`: FCEUX wrapper for producing `.tdmask` and per-latch
+  `.polls.r08` files from one emulator pass.
+- `scripts/fceux-export-tasdeck-mask.lua`: FCEUX Lua exporter for lag-stripped mask streams and
+  per-latch `.r08` streams (one record per rising `$4016` strobe edge).
 - `scripts/convert-bk2-to-tasdeck-mask.sh`: Git Bash BizHawk BK2 converter for Windows.
 - `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
@@ -190,16 +194,18 @@ The UI accepts versioned `TD2P` `.tdmask` files with interleaved port 1 / port 2
 files with two bytes per record. TD2P bytes use A, B, Select, Start, Up, Down, Left, Right bit order;
 R08 bytes are reversed from their NES serial order during import. `.tdmask` always uses completed-read
 poll mode. `.r08` defaults to per-strobe playback, which matches default TAStm32 `.r08` semantics by
-consuming one two-port record on every accepted latch edge, and prefills `Start delay 1` to mirror
-the blank record default TAStm32 dumps prepend (the prefill only applies while the delay field is
-untouched). The UI picker can switch an `.r08` to completed-read poll or accepted-latch-window mode
-for dumps documented as needing TAStm32 `--dpcm`.
+consuming one two-port record on every accepted latch edge, and prefills `Start delay 1`. An `.r08`
+dump holds no blank record; a replay device adds it at playback, and the prefill mirrors the
+`--blank 1` the public NES replay corpus uses for power-on runs. The TAStm32 client itself defaults
+to `--blank 0`. The prefill only applies while the delay field is untouched. The UI picker can
+switch an `.r08` to completed-read poll or accepted-latch-window mode for dumps documented as
+needing TAStm32 `--dpcm`.
 
 Hardware TAS playback uses the upload/chunk protocol with pre-generated mask bytes. Do not send
 browser-timed TAS button diffs to the real hardware bridge.
 
-The FM2-to-mask converter also writes `<output>.trace.csv`, which is the emulator-side comparison
-file for firmware trace logs.
+The FM2-to-mask converter also writes `<name>.tdmask.trace.csv`, which is the emulator-side
+comparison file for firmware trace logs.
 
 ## Firmware Core Concepts
 
@@ -318,8 +324,8 @@ are the constraints that shape implementation decisions:
 - `.r08` carries no header, so frame-versus-latch semantics, port count, and ROM identity cannot be
   validated at load time. Import relies on the replay-device convention documented in
   [`.r08` Format](docs/hardware-tas-workflow.md#r08-format).
-- The web UI does not accept raw FM2 or BK2 files; convert the movie plus its matching ROM to
-  `.tdmask` first.
+- The web UI does not accept raw FM2 or BK2 files; convert the movie plus its matching ROM first.
+  The FM2 converter writes a `.polls.r08` and a `.tdmask`; the BK2 converter writes a `.tdmask`.
 - The bridge serves record upload and trace streaming over one serial link with no arbitration
   beyond a buffer-level backoff that reads a status value which can go stale under load. High
   trace-row rates — worst case a two-port `strobe` run, which emits a row per port per latch edge —
