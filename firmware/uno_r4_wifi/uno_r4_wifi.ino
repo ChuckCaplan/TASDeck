@@ -38,7 +38,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v75";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v76";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -2309,7 +2309,10 @@ TASDECK_RAM_ISR void handleStrobeLatchEdge() {
       }
       controllerDiagWindowKind =
         static_cast<uint8_t>(tasdeck::TasEdgeKind::PreAdvanced);
-      const uint32_t fastLatchMicros = micros();
+      // Stamp the edge, not this tail: the clock ISRs have preempted it by now.
+      const uint32_t tailMicros = micros();
+      const uint32_t fastLatchMicros =
+        tasdeck::microsAtCycle(tailMicros, DWT->CYCCNT, cyclesAtEntry);
       controllerLastLatchMicros = fastLatchMicros;
       tasPlayback.noteLatchTimestamp(fastLatchMicros);
       stageStrobeEdgeEvent(
@@ -2333,7 +2336,10 @@ TASDECK_RAM_ISR void handleStrobeLatchEdge() {
     __set_PRIMASK(primask);
   }
 
-  const uint32_t latchMicros = micros();
+  // Entry-referred like the fast path, so delay and playback latches compare.
+  const uint32_t generalMicros = micros();
+  const uint32_t latchMicros =
+    tasdeck::microsAtCycle(generalMicros, DWT->CYCCNT, cyclesAtEntry);
 
   // General path (windowed edges; strobe start/fallback/complete edges).
   // Held under PRIMASK end to end: a no-op in windowed modes (this ISR is

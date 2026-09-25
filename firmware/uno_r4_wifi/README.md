@@ -35,7 +35,7 @@ The tested parser lives in `src/NesDeckProtocol.cpp`, the controller-state helpe
 The current serial build reports this firmware id in the boot banner and `STATUS` response:
 
 ```txt
-fw=tasdeck-uno-r4-serial-latchwin-v75 transport=serial
+fw=tasdeck-uno-r4-serial-latchwin-v76 transport=serial
 ```
 
 ## NES Pins
@@ -146,6 +146,14 @@ instructions from `cpsid` through `msr PRIMASK` (roughly 22–23 core cycles by 
 Added to v74's measured 62-cycle clock-write maximum and roughly 12 cycles of exception entry, that
 is about 96–97 cycles against Golf's 107-cycle tightest spacing. Confirm the exact maximum on
 hardware in `latch_prefetch_masked_max_cyc`.
+
+v76 changes only where strobe latches are timestamped. The fast path used to read `micros()` in its
+preemptible tail, after the console's clock ISRs had preempted it, about 13 µs after the strobe,
+while start-delay and other general-path edges read it at entry. The gap from the last Start delay
+latch to the first playback latch therefore read 20-34 NES cycles long in `Boot timing` lines and
+trace rows. Both paths now refer `micros()` back to the ISR's entry cycle with
+`tasdeck::microsAtCycle`. Playback is unaffected: in strobe mode the timestamps feed only the trace and
+millisecond-scale window checks.
 
 The same firmware also selects the interrupt-handler path automatically at `TAS_BEGIN`. `poll` and
 `latch` use the lean window callbacks through the stock Arduino/FSP dispatch path, preserving the
