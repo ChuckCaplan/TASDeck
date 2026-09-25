@@ -8,6 +8,11 @@ that the RAM declaration caused the success or that the patch reliably fixes the
 See [Checking The EverDrive's RAM](#checking-the-everdrives-ram) and
 [What v2 Does Not Address](#what-v2-does-not-address).
 
+> **Update, 2026-09-23 — all three movies beaten on the EverDrive.** `Battletoads (TASDeck sync
+> v5).nes` adds a power-on synchronizer to v2 D that forces the start state the movies were dumped
+> with. It beat the game-end glitch, warpless and warps on this console. See
+> [Battletoads On An Original Cartridge](battletoads-real-cartridge.md#sync-v5-forcing-the-winning-state-on-the-everdrive).
+
 > **Update, 2026-09-22 — see [Battletoads On An Original Cartridge](battletoads-real-cartridge.md).**
 > The game-end glitch has since been run on an original cartridge, which drives real open bus at
 > `$6000-7FFF` and makes this document's patched ROMs unnecessary. Two findings there bear on this
@@ -96,6 +101,15 @@ When SRAM is enabled, reads and writes use that memory. When it is disabled, the
 selects the memory-data path instead of the address-high-byte fallback, but that does not prove
 that retained SRAM data is returned. Thus this source does not establish unconditional readable
 and writable 8 KiB RAM regardless of header or configuration.
+
+**The N8 Pro never shows the console's own open bus above `$4020`** (checked 2026-09-25 in
+`fpga/base_sv/everdrive.sv`). `cpu_dir = cart_space & cpu_rw & cpu.m2` turns the cartridge-edge
+transceiver toward the console for every M2-high read of `$4020-$FFFF`, and when no mapper or system
+source claims the read, the FPGA drives `{!cpu_ce, cpu_addr[14:8]}`, the address high byte, as its
+`//open bus`. Only `$4000-$401F` is left to the console. So no header or mapper setting makes the
+EverDrive reproduce a cartridge's open bus at `$6000-7FFF`, including the hardware-dependent quirk
+that decides the game-end glitch on an original cartridge; see
+[Alyosha's Win](battletoads-real-cartridge.md#alyoshas-win-an-open-bus-quirk-of-his-hardware).
 
 The repository describes its FPGA sources as
 [examples and reference projects](https://github.com/krikzz/edn8-pro-pub#contents). Equivalence to the

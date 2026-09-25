@@ -32,6 +32,9 @@ yarn-error.log*
 diagnostics/
 logs/
 
+# Python bytecode
+__pycache__/
+
 # Test and lint outputs
 coverage/
 .nyc_output/
