@@ -129,7 +129,11 @@ Important event types:
 
 The event log keeps the newest 120 entries and displays the retained count. `Copy` copies the
 visible log. `Trace` captures the firmware trace ring, logs compact rows and anomaly summaries, and
-saves the full event log to `logs/trace/<timestamp>_<tdmask-base>.trace`.
+saves the full event log to `logs/trace/<timestamp>_<tdmask-base>.trace`. Once a started run has
+seen 16 latches, the middleware pages the start of the trace ring once and logs a `Boot timing`
+bridge event with the gaps between the first latches in NTSC frames and CPU cycles, a fingerprint
+of the console's power-on timing state; it also appends each line to `logs/trace/boot-timing.log`
+and writes it into saved `.trace` headers.
 
 ### Controller Input
 
@@ -291,6 +295,7 @@ hardware-flow changes:
   TD2P v2 source-movie frame count, otherwise a `~` estimate refined by the measured record
   consumption rate every ten elapsed seconds — and notes when the console stops reading input.
 - Pressing `Trace` logs trace rows/anomaly status and saves a `.trace` file under `logs/trace/`.
+- A started hardware run logs exactly one `Boot timing` line shortly after its 16th latch.
 - Event-log actions remain usable at narrow mobile width; `Trace`, `Copy`, and `Clear` should not
   overflow off screen.
 - Layout remains usable at desktop width, tablet width, and narrow mobile width.

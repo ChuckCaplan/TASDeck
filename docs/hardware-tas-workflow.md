@@ -271,7 +271,12 @@ The usual console-side causes:
 - **Power-on phase.** The above is often decided at boot. Because a lag frame is a threshold
   crossing on a continuously varying power-on phase, the result can be stable across several boots
   and then flip, so a handful of identical runs is not proof of determinism. Boot-cycle at least
-  three or four times before concluding a movie cannot sync.
+  three or four times before concluding a movie cannot sync. Each run logs a `Boot timing` line
+  once 16 latches have passed: the gaps between the first latches, in NTSC frames and CPU cycles,
+  and appends it to `logs/trace/boot-timing.log`.
+  Those gaps come from the console's startup timing, so boots that print different gaps started
+  in different states, and a game-specific table of winning gaps can reject a doomed boot seconds
+  after the first controller read instead of minutes later.
 - **The flash cart.** An EverDrive N8 Pro leaves the console in a different startup state than an
   original cartridge. A reproducible failure at a fixed location is worth retesting on a real
   cartridge when one is available.
