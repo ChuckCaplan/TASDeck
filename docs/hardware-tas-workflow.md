@@ -226,7 +226,7 @@ The usual console-side causes:
   and then flip, so a handful of identical runs is not proof of determinism. Boot-cycle at least
   three or four times before concluding a movie cannot sync. Each run logs a `Boot timing` line
   once 16 latches have passed: the gaps between the first latches, in NTSC frames and CPU cycles,
-  and appends it to `logs/trace/boot-timing.log`. `scripts/boot-timing-test/` builds a ROM that
+  and appends it to `logs/trace/boot-timing.log`. `docs/design/battletoads/boot-timing-test/` builds a ROM that
   checks those numbers against reads timed by the NES itself.
   Those gaps come from the console's startup timing, so boots that print different gaps started
   in different states, and a game-specific table of winning gaps can reject a doomed boot seconds
@@ -255,14 +255,8 @@ When a run fails the same way repeatedly, note the record number where the trace
 first departs from a known-good run. That number identifies the retry point and often makes a failed
 attempt cost minutes instead of the movie's full length.
 
-[Battletoads On An Original Cartridge](design/battletoads-real-cartridge.md) is the worked example
-of a power-on-phase failure. All three Battletoads movies were beaten on 2026-09-23 with the
-EverDrive and a patched ROM that forces the power-on timing they were dumped with, while the
-original cartridge has not won on this console. [Battletoads On The EverDrive
-N8 Pro](design/battletoads-everdrive-open-bus.md) covers the flashcart's work-RAM problem. The
-verifier [warned of occasional power-on success](https://tasvideos.org/Forum/Posts/504290). The
-[NES-side input delivery test](../scripts/battletoads-input-test/README.md) checks what the console
-actually receives using Battletoads' exact controller-read loop, and passed on hardware.
+[Battletoads](design/battletoads/README.md) is the worked example of power-on-phase failures and
+of how console hardware, not the replay device, can decide an ACE run.
 
 ## Continuous Trace Capture
 

@@ -58,7 +58,7 @@ module.exports = [
     rules: sharedRules,
   },
   {
-    files: ["apps/web/tests/**/*.js", "eslint.config.js"],
+    files: ["apps/web/tests/**/*.js", "docs/design/*/tests/*.js", "eslint.config.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "commonjs",
@@ -70,7 +70,7 @@ module.exports = [
     rules: sharedRules,
   },
   {
-    files: ["scripts/*.js"],
+    files: ["scripts/*.js", "docs/design/*/tools/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "commonjs",

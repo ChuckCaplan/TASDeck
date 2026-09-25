@@ -11,9 +11,9 @@ See [Checking The EverDrive's RAM](#checking-the-everdrives-ram) and
 > **Update, 2026-09-23 — all three movies beaten on the EverDrive.** `Battletoads (TASDeck sync
 > v5).nes` adds a power-on synchronizer to v2 D that forces the start state the movies were dumped
 > with. It beat the game-end glitch, warpless and warps on this console. See
-> [Battletoads On An Original Cartridge](battletoads-real-cartridge.md#sync-v5-forcing-the-winning-state-on-the-everdrive).
+> [Battletoads On An Original Cartridge](real-cartridge.md#sync-v5-forcing-the-winning-state-on-the-everdrive).
 
-> **Update, 2026-09-22 — see [Battletoads On An Original Cartridge](battletoads-real-cartridge.md).**
+> **Update, 2026-09-22 — see [Battletoads On An Original Cartridge](real-cartridge.md).**
 > The game-end glitch has since been run on an original cartridge, which drives real open bus at
 > `$6000-7FFF` and makes this document's patched ROMs unnecessary. Two findings there bear on this
 > one. First, **the Dark Queen message-table landing is not diagnostic of the N8's work RAM**: an
@@ -44,7 +44,7 @@ with minor initial lag adjustments. These reports support investigating startup 
 not establish the cause of the current failures or a success rate for these three files.
 
 For general playback and desync diagnosis, see [Hardware TAS Playback And
-Troubleshooting](../hardware-tas-workflow.md).
+Troubleshooting](../../hardware-tas-workflow.md).
 
 ## Hardware Results So Far
 
@@ -109,7 +109,7 @@ source claims the read, the FPGA drives `{!cpu_ce, cpu_addr[14:8]}`, the address
 `//open bus`. Only `$4000-$401F` is left to the console. So no header or mapper setting makes the
 EverDrive reproduce a cartridge's open bus at `$6000-7FFF`, including the hardware-dependent quirk
 that decides the game-end glitch on an original cartridge; see
-[Alyosha's Win](battletoads-real-cartridge.md#alyoshas-win-an-open-bus-quirk-of-his-hardware).
+[Alyosha's Win](real-cartridge.md#alyoshas-win-an-open-bus-quirk-of-his-hardware).
 
 The repository describes its FPGA sources as
 [examples and reference projects](https://github.com/krikzz/edn8-pro-pub#contents). Equivalence to the
@@ -176,7 +176,7 @@ ROM in 95 bytes, four of them in the header; file offsets include the 16-byte he
 | 7 | `$80BC` | `$380CC` | 59 | Preload and delay, in padding after the table byte read at `$80BB` |
 
 Both calls use the game's own bank-call helper at `$FFCB`, which is identical in every bank. Source:
-[battletoads-open-bus-preload.s](../../scripts/rom-patches/battletoads-open-bus-preload.s).
+[battletoads-open-bus-preload.s](rom-patches/battletoads-open-bus-preload.s).
 
 ### Timing
 
@@ -197,7 +197,7 @@ parity 1. Editing any instruction in the preload changes the cycle count and mus
 Build from the repository root with your own copy of the ROM:
 
 ```sh
-node scripts/patch-battletoads-startup.js \
+node docs/design/battletoads/tools/patch-startup.js \
   "/path/to/Battletoads (USA).nes" \
   "/path/to/Battletoads (USA) - TASDeck open bus v2.nes"
 ```
@@ -210,7 +210,7 @@ To check the builder against your ROM:
 
 ```sh
 BATTLETOADS_TEST_ROM="/path/to/Battletoads (USA).nes" \
-  node --test apps/web/tests/patch-battletoads-startup.test.js
+  node --test docs/design/battletoads/tests/patch-startup.test.js
 ```
 
 The reported successful attempt used **cold power-on with EverDrive auto-load**, not launching the
@@ -225,7 +225,7 @@ pass. Record the exact ROM variant, cold-power/reset procedure and first diverge
 The long movies have not completed on hardware; removing the extra level-3 enemy on every boot is
 an unverified target, not a promised result of v2.
 
-The next diagnostic is the [NES-side input delivery test](../../scripts/battletoads-input-test/README.md).
+The next diagnostic is the [NES-side input delivery test](input-test/README.md).
 It uses Battletoads' exact controller-read loop and compares the NES's received bytes with 8,196
 expected two-port records. It stops on the first mismatch and displays the record and both ports'
 expected/received bytes. Existing Arduino traces sample the output at different times and cannot

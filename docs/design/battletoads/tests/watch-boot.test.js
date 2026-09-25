@@ -11,10 +11,10 @@ const {
   createLogReader,
   formatVerdict,
   TIMING_TEST_SCHEDULE,
-} = require("../../../scripts/watch-battletoads-boot.js");
+} = require("../tools/watch-boot.js");
 
-const script = path.resolve(path.dirname(module.filename), "../../../scripts/watch-battletoads-boot.js");
-const timingTestBuilder = path.resolve(path.dirname(module.filename), "../../../scripts/boot-timing-test/build.py");
+const script = path.resolve(path.dirname(module.filename), "../tools/watch-boot.js");
+const timingTestBuilder = path.resolve(path.dirname(module.filename), "../boot-timing-test/build.py");
 
 // `clock` is the per-boot error, in ppm, left after the bridge's fixed micros()
 // correction: the logged cycles run that much short of the console's.

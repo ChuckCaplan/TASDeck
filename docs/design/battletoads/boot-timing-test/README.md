@@ -6,7 +6,7 @@ with Battletoads' read routine, with rendering and interrupts off, separated by 
 The screen then lists the gaps TASDeck should report.
 
 ```sh
-python3 scripts/boot-timing-test/build.py <output-dir>
+python3 docs/design/battletoads/boot-timing-test/build.py <output-dir>
 ```
 
 The output directory gets `TASDeck boot timing test.nes`, a 64-record blank
@@ -18,7 +18,7 @@ Battletoads boot: 12.99 / 11.04 / 13.95 title gaps and a gap 7 − gap 6 of +306
 
 ## Use
 
-1. Run `node scripts/watch-battletoads-boot.js` in a terminal.
+1. Run `node docs/design/battletoads/tools/watch-boot.js` in a terminal.
 2. Load `boot_timing_test.r08` with two ports, per-strobe, **Start delay 6**, Skip first 0, and arm.
 3. Power on the test ROM the same way you launch a movie.
 4. About 20 seconds later the watcher prints PASS or FAIL for the capture.

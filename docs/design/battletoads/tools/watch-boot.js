@@ -6,8 +6,8 @@ const path = require("node:path");
 const { StringDecoder } = require("node:string_decoder");
 const { setInterval, clearInterval } = require("node:timers");
 
-const DEFAULT_LOG = path.resolve(__dirname, "../logs/trace/boot-timing.log");
-// Reference tables: docs/design/battletoads-real-cartridge.md and the 2026-09-23
+const DEFAULT_LOG = path.resolve(__dirname, "../../../../logs/trace/boot-timing.log");
+// Reference tables: docs/design/battletoads/real-cartridge.md and the 2026-09-23
 // research sweeps, which ran every modeled power-on state at each Start delay.
 // These are model predictions, not measured cartridge odds. They hold for an
 // original cartridge and for the EverDrive v2 D and v5 ROMs, not for the plain
@@ -91,7 +91,7 @@ const MAX_CLOCK_ERROR = 0.001;
 const CYCLES_PER_FRAME = 29780.5;
 const MAYBE_TITLE = "13/10/13";
 
-// scripts/boot-timing-test/build.py SCHEDULE: the test ROM's cycle-exact read gaps,
+// docs/design/battletoads/boot-timing-test/build.py SCHEDULE: the test ROM's cycle-exact read gaps,
 // which the log reports as gaps 2 onward. Gap 1 (power-on latch to first read) is
 // not comparable.
 const TIMING_TEST_MOVIE = "boot_timing_test.r08";
@@ -338,7 +338,7 @@ function main(args) {
   let once = false;
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--help") {
-      console.log("Usage: node scripts/watch-battletoads-boot.js [--log PATH] [--once]\nWithout --once, follows new attempts only. --once classifies the existing log and exits.");
+      console.log("Usage: node docs/design/battletoads/tools/watch-boot.js [--log PATH] [--once]\nWithout --once, follows new attempts only. --once classifies the existing log and exits.");
       return;
     }
     if (args[index] === "--once") {

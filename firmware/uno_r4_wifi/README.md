@@ -153,7 +153,7 @@ while start-delay and other general-path edges read it at entry. The gap from th
 latch to the first playback latch therefore read 20-34 NES cycles long in `Boot timing` lines and
 trace rows. Both paths now refer `micros()` back to the ISR's entry cycle with
 `tasdeck::microsAtCycle`. Playback is unaffected: in strobe mode the timestamps feed only the trace and
-millisecond-scale window checks.
+millisecond-scale window checks. `docs/design/battletoads/boot-timing-test` at Start delay 6 verifies it on hardware.
 
 The same firmware also selects the interrupt-handler path automatically at `TAS_BEGIN`. `poll` and
 `latch` use the lean window callbacks through the stock Arduino/FSP dispatch path, preserving the

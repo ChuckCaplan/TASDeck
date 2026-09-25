@@ -50,7 +50,7 @@ Python 3 and the existing cc65 tools (`ca65`, `ld65`) are required. No commercia
 From the repository root:
 
 ```sh
-python3 scripts/battletoads-input-test/build.py /tmp/battletoads-input-test
+python3 docs/design/battletoads/input-test/build.py /tmp/battletoads-input-test
 ```
 
 Output: the ROM, replay, and SHA256 manifest. Rebuilding replaces those diagnostic output files;

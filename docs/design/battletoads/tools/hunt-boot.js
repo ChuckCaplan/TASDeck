@@ -2,7 +2,7 @@
 "use strict";
 
 // Power-cycles the NES through a TP-Link Kasa smart plug until a Battletoads boot
-// gets an accepted watch-battletoads-boot.js verdict, then lets that run play out.
+// gets an accepted watch-boot.js verdict, then lets that run play out.
 // Each attempt: cancel the previous run, power off, re-upload, arm, and start the
 // .r08 while the console is off, power on, and classify the bridge's Boot timing
 // line. Re-uploading every attempt matters: the bridge captures Boot timing once
@@ -22,13 +22,13 @@ const {
   tasMasksPortCount,
   tasMasksToWire,
   tasRunChecksum,
-} = require("../apps/web/src/tas.js");
-const { classifyBootLine, createLogReader, formatVerdict } = require("./watch-battletoads-boot.js");
+} = require("../../../../apps/web/src/tas.js");
+const { classifyBootLine, createLogReader, formatVerdict } = require("./watch-boot.js");
 
-const DEFAULT_LOG = path.resolve(__dirname, "../logs/trace/boot-timing.log");
-const HUNT_LOG = path.resolve(__dirname, "../logs/trace/boot-hunt.log");
+const DEFAULT_LOG = path.resolve(__dirname, "../../../../logs/trace/boot-timing.log");
+const HUNT_LOG = path.resolve(__dirname, "../../../../logs/trace/boot-hunt.log");
 const DEFAULTS = {
-  plugHost: "10.0.0.60",
+  plugHost: process.env.TASDECK_PLUG_HOST || "",
   bridge: "ws://localhost:8000/bridge",
   delay: null,
   offSeconds: 10,
@@ -297,13 +297,13 @@ function parseArgs(argv) {
   return options;
 }
 
-const USAGE = `Usage: node scripts/hunt-battletoads-boot.js FILE.r08 [options]
+const USAGE = `Usage: node docs/design/battletoads/tools/hunt-boot.js FILE.r08 [options]
   --accept GOOD[,MAYBE]   verdicts that get played out (default GOOD)
   --delay N               Start delay in strobes (default 4 for GEG files, else 1)
   --off-seconds N         power-off time before each boot (default 10)
   --boot-timeout N        seconds to wait for Boot timing after power-on (default 60)
   --max-attempts N        stop after this many boots (default 50)
-  --plug HOST             Kasa smart plug address (default 10.0.0.60)
+  --plug HOST             Kasa smart plug address (or set TASDECK_PLUG_HOST)
   --bridge URL            bridge WebSocket (default ws://localhost:8000/bridge)
 Requires npm start. Close the web UI tab while it runs. Ctrl+C cancels the run.`;
 
@@ -312,6 +312,9 @@ async function main(argv) {
   if (options.help || !options.file) {
     console.log(USAGE);
     return;
+  }
+  if (!options.plugHost) {
+    throw new Error("no smart plug address: pass --plug HOST or set TASDECK_PLUG_HOST");
   }
   const upload = loadUpload(options.file);
   const { fileName } = upload;

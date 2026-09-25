@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // Build a separate experimental ROM; never modify the supplied ROM.
-// Assembly and cycle counts: rom-patches/battletoads-open-bus-preload.s
+// Assembly and cycle counts: ../rom-patches/battletoads-open-bus-preload.s
 const { Buffer } = require("node:buffer");
 const { createHash } = require("node:crypto");
 const { readFileSync, writeFileSync } = require("node:fs");
@@ -73,7 +73,7 @@ function buildPatchedRom(source) {
 
 function main(args) {
   if (args.length !== 2) {
-    throw new Error('Usage: node scripts/patch-battletoads-startup.js "source.nes" "new-output.nes"');
+    throw new Error('Usage: node docs/design/battletoads/tools/patch-startup.js "source.nes" "new-output.nes"');
   }
   const [input, output] = args.map((name) => path.resolve(name));
   if (input === output) {

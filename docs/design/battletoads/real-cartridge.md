@@ -51,7 +51,7 @@ Most failures of a Battletoads run are decided by the console's power-on CPU/PPU
 replay device. The game-end glitch adds a second, deterministic failure on real cartridges, covered
 first below.
 
-Companion document: [Battletoads On The EverDrive N8 Pro](battletoads-everdrive-open-bus.md), which
+Companion document: [Battletoads On The EverDrive N8 Pro](everdrive-open-bus.md), which
 covers the flashcart `$6000-7FFF` work-RAM problem and the v2/v3/v4 patched ROMs. **That problem does
 not exist on an original cartridge**, which drives open bus in that range as the reference run
 expects. Patched ROMs run only on the EverDrive.
@@ -368,7 +368,7 @@ On-target boots won 3 of 4. The synchronizer hit the target on 4 of 7 boots.
 
 ### 2026-09-23 evening, original cartridge, game-end glitch with the boot watcher
 
-`scripts/watch-battletoads-boot.js` verdicts from `logs/trace/boot-timing.log`. Gaps 2-4 are the
+`docs/design/battletoads/tools/watch-boot.js` verdicts from `logs/trace/boot-timing.log`. Gaps 2-4 are the
 title at delay 1; at delay 4 the title is gaps 5-7 and the difference is gap 10 − gap 9. Boots not
 listed with an outcome were powered off after the verdict or not reported.
 
@@ -561,7 +561,7 @@ edge and never consults the clock.
 
 ### Checking The Measurement With The Test ROM
 
-`scripts/boot-timing-test/build.py` builds `TASDeck boot timing test.nes`, which performs 20 reads at
+`docs/design/battletoads/boot-timing-test/build.py` builds `TASDeck boot timing test.nes`, which performs 20 reads at
 the game-end-glitch default state's latch gaps, exact to the cycle, and shows them on screen. The
 ROM's gaps are straight-line CPU code with rendering, interrupts and DMA off, and all 19 match the
 2021 reference to the cycle, so they are a ruler the NES itself controls.
@@ -588,7 +588,7 @@ not been run on hardware.
 Run this in a separate terminal before starting attempts:
 
 ```sh
-node scripts/watch-battletoads-boot.js
+node docs/design/battletoads/tools/watch-boot.js
 ```
 
 It follows new entries in `logs/trace/boot-timing.log`, detecting the movie filename and Start

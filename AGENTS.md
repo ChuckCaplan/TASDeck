@@ -87,25 +87,10 @@ target is `arduino:renesas_uno:unor4wifi`.
 - `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
   continuous hardware trace, the sibling exporter trace, and the source FM2.
-- `scripts/boot-timing-test/build.py`: Builds an NROM test ROM that performs controller reads at
-  exact CPU-cycle intervals and shows the `Boot timing` gaps TASDeck should log.
-- `scripts/watch-battletoads-boot.js`: Follows `logs/trace/boot-timing.log`, calibrates each boot's
-  clock, and prints a model GOOD / BAD / MAYBE / OFF-MODEL verdict for each Battletoads boot and a
-  PASS / FAIL check for `boot_timing_test.r08` captures; tests in
-  `apps/web/tests/watch-battletoads-boot.test.js`.
-- `scripts/hunt-battletoads-boot.js`: Power-cycles the NES through the Kasa smart plug, re-arming the
-  `.r08` through the bridge WebSocket each time, until a boot gets an accepted watcher verdict, then
-  lets that run play out; appends each attempt to `logs/trace/boot-hunt.log`. After each rejected
-  boot it powers the NES off and arms only after the off time, so the operator can press the
-  Arduino's RESET button during it.
-- `scripts/patch-battletoads-startup.js`: Builds the experimental Battletoads EverDrive N8 Pro ROM
-  that preloads `$6000-7FFF` with open-bus bytes; source in
-  `scripts/rom-patches/battletoads-open-bus-preload.s`, tests in
-  `apps/web/tests/patch-battletoads-startup.test.js`, rationale in
-  `docs/design/battletoads-everdrive-open-bus.md`.
-- `docs/design/battletoads-real-cartridge.md`: Battletoads on the original cartridge: hardware run
-  log, boot-timing model, the open-bus analysis of the game-end glitch, and how to rebuild the
-  BizHawk research harnesses under `logs/research/`.
+- `docs/design/<game>/`: Game-specific case studies with their own tools and tests. Test files in
+  `docs/design/*/tests/` run with `npm test` and are linted with `docs/design/*/tools/`.
+  `docs/design/battletoads/README.md` lists the Battletoads write-ups, boot watcher, boot hunter,
+  EverDrive patch and test ROMs.
 - `firmware/uno_r4_wifi/uno_r4_wifi.ino`: Arduino UNO R4 WiFi serial bridge sketch.
 - `firmware/uno_r4_wifi/src/NesDeckProtocol.*`: Testable firmware command protocol parser.
 - `firmware/uno_r4_wifi/src/NesTasPlayback.*`: Testable latch-synchronized TAS mask playback.

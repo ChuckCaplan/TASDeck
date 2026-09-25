@@ -8,10 +8,10 @@ const path = require("node:path");
 const process = require("node:process");
 const test = require("node:test");
 const { promisify } = require("node:util");
-const { buildPatchedRom } = require("../../../scripts/patch-battletoads-startup.js");
+const { buildPatchedRom } = require("../tools/patch-startup.js");
 
 const execFileAsync = promisify(execFile);
-const script = path.resolve("scripts/patch-battletoads-startup.js");
+const script = path.resolve(path.dirname(module.filename), "../tools/patch-startup.js");
 
 test("Battletoads patch rejects unknown ROMs without changing their bytes", () => {
   const rom = Buffer.alloc(262160);
