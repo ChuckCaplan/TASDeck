@@ -37,6 +37,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 const WEB_ROOT = path.join(ROOT_DIR, "apps", "web");
 const EVENT_LOG_DIR = path.join(ROOT_DIR, "logs");
 const TRACE_LOG_DIR_NAME = "trace";
+const BOOT_TIMING_LOG_NAME = "boot-timing.log";
 const DEFAULT_PORT = 8000;
 const SERIAL_BAUD = 115200;
 const MAX_WS_PAYLOAD_BYTES = 8 * 1024 * 1024;
@@ -59,6 +60,16 @@ const BRIDGE_TAS_TRACE_STREAM_IDLE_MS = 400;
 const BRIDGE_TAS_TRACE_STREAM_BACKOFF_MS = 250;
 const BRIDGE_TAS_TRACE_STREAM_MAX_FAILURES = 5;
 const BRIDGE_TAS_TRACE_STREAM_DRAIN_BATCH_LIMIT = 40;
+// Boot timing: once a started run has seen this many latches, page the first
+// trace rows once and log the gaps between them. The gaps are set by the
+// console's power-on CPU/PPU timing, so they show which startup state a boot
+// landed in while the ring still holds the first latches.
+const BRIDGE_BOOT_TIMING_LATCHES = 16;
+const BRIDGE_BOOT_TIMING_TRACE_ROWS = 48;
+const NES_NTSC_CPU_HZ = 1789772.7;
+const NES_NTSC_CYCLES_PER_FRAME = 29780.5;
+// The UNO R4's micros() runs slow against the console; measured 1.001228.
+const ARDUINO_MICROS_TO_REAL = 1.001228;
 const TAS_TRACE_CSV_HEADER = [
   "sequence",
   "timestampMicros",
@@ -566,6 +577,7 @@ class SerialBridge {
       throw new Error("Invalid TAS start delay.");
     }
 
+    run.startDelayPolls = startDelayPolls;
     const status = await this.sendFirmwareTasCommand(command, (message) => message.command === "tas_start");
     this.markTasRunStarted(run);
     this.applyTasFirmwareStatus(run, status, "tas_start");
@@ -995,7 +1007,52 @@ class SerialBridge {
       run.state = "complete";
     }
     this.maybeDumpFrozenTasTrace(run, status);
+    this.maybeCaptureBootTiming(run, status);
     this.broadcast(this.tasStatusPayload(command, run, status));
+  }
+
+  maybeCaptureBootTiming(run, status) {
+    if (
+      !this.isConnected() ||
+      !run ||
+      !run.started ||
+      run.stopped ||
+      run.bootTimingRequested ||
+      Number(status?.latch || 0) < BRIDGE_BOOT_TIMING_LATCHES
+    ) {
+      return;
+    }
+
+    run.bootTimingRequested = true;
+    run.bootTimingTask = this.captureBootTiming(run).catch((error) => {
+      this.broadcastBridge(`Boot timing capture failed: ${error.message}`);
+    });
+  }
+
+  async captureBootTiming(run) {
+    const dump = await this.collectTasTraceRowsFrom(0, BRIDGE_BOOT_TIMING_TRACE_ROWS);
+    if (this.activeTasRun !== run) {
+      return;
+    }
+
+    const summary = dump.clippedRows > 0 ? null : summarizeBootTiming(dump.rows);
+    if (!summary) {
+      this.broadcastBridge("Boot timing unavailable: the trace ring no longer holds the first latches.");
+      return;
+    }
+
+    run.bootTiming = summary;
+    run.bootTimingMessage = formatBootTimingMessage(summary);
+    this.broadcastBridge(run.bootTimingMessage);
+    // The event log keeps only its newest entries, so keep every boot's line on disk too.
+    const outputDir = path.join(this.logDir, TRACE_LOG_DIR_NAME);
+    const line = `${new Date().toISOString()} ${run.fileName} delay=${run.startDelayPolls ?? ""} ${run.bootTimingMessage}\n`;
+    try {
+      await fsp.mkdir(outputDir, { recursive: true });
+      await fsp.appendFile(path.join(outputDir, BOOT_TIMING_LOG_NAME), line, "utf8");
+    } catch (error) {
+      this.broadcastBridge(`Boot timing save failed: ${error.message}`);
+    }
   }
 
   maybeDumpFrozenTasTrace(run, status) {
@@ -2545,7 +2602,8 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `bridge_run_id: ${metadata.bridgeRunId ?? run?.id ?? ""}`,
     `client_run_id: ${run?.clientRunId ?? ""}`,
     `skip_polls: ${metadata.skipPolls ?? run?.skipPolls ?? 0}`,
-    `delay_polls: ${metadata.delayPolls ?? ""}`,
+    `delay_polls: ${metadata.delayPolls ?? run?.startDelayPolls ?? ""}`,
+    `boot_timing: ${run?.bootTimingMessage ?? ""}`,
     `sync_mode: ${metadata.syncMode ?? run?.syncMode ?? HARDWARE_TAS_SYNC_MODE}`,
     `port_count: ${metadata.portCount ?? run?.portCount ?? ""}`,
     `original_polls: ${metadata.originalPolls ?? run?.originalFrameCount ?? ""}`,
@@ -2641,6 +2699,47 @@ function parseTasTraceRows(value) {
       raw: row,
     };
   });
+}
+
+// Reduces the first trace rows of a run to the gaps between consecutive
+// latches, using port 1 rows (or legacy rows without a port column).
+function summarizeBootTiming(rows, maxLatches = BRIDGE_BOOT_TIMING_LATCHES) {
+  const firstSeen = new Map();
+  for (const row of rows) {
+    if ((row.port !== null && row.port !== 1) || !Number.isSafeInteger(row.latchCount) || row.latchCount < 1) {
+      continue;
+    }
+    const previous = firstSeen.get(row.latchCount);
+    if (!previous || row.sequence < previous.sequence) {
+      firstSeen.set(row.latchCount, row);
+    }
+  }
+
+  const latches = [...firstSeen.values()]
+    .sort((a, b) => a.latchCount - b.latchCount)
+    .slice(0, maxLatches)
+    .map((row) => ({ latch: row.latchCount, micros: row.timestampMicros }));
+  if (latches.length < 3) {
+    return null;
+  }
+
+  const gaps = latches.slice(1).map((current, index) => {
+    const previous = latches[index];
+    const cycles = Math.round(((current.micros - previous.micros) * ARDUINO_MICROS_TO_REAL * NES_NTSC_CPU_HZ) / 1e6);
+    return {
+      fromLatch: previous.latch,
+      toLatch: current.latch,
+      cycles,
+      frames: cycles / NES_NTSC_CYCLES_PER_FRAME,
+    };
+  });
+  return { latches, gaps };
+}
+
+function formatBootTimingMessage(summary) {
+  const frames = summary.gaps.map((gap) => gap.frames.toFixed(2)).join(" ");
+  const cycles = summary.gaps.map((gap) => gap.cycles).join(" ");
+  return `Boot timing from latch ${summary.latches[0].latch}: gaps in frames ${frames}; in CPU cycles ${cycles}`;
 }
 
 function formatTasTraceRowsForFile(rows) {
@@ -2942,6 +3041,7 @@ module.exports = {
   encodeWebSocketFrame,
   fileTimestamp,
   findSerialPort,
+  formatBootTimingMessage,
   getContentType,
   handleWebSocketBuffer,
   isCandidateSerialDevice,
@@ -2953,6 +3053,7 @@ module.exports = {
   parseTasTraceRows,
   resolveStaticPath,
   serialPortSttyArgs,
+  summarizeBootTiming,
   tasTraceStreamEnabled,
   formatTasTraceRowsForFile,
 };

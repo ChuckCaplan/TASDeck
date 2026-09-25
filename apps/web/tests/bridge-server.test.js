@@ -15,6 +15,7 @@ const {
   browserOpenCommand,
   decodeWebSocketFrame,
   fileTimestamp,
+  formatBootTimingMessage,
   formatTasTraceRowsForFile,
   handleWebSocketBuffer,
   isCandidateSerialDevice,
@@ -24,6 +25,7 @@ const {
   parseTasSerialLine,
   parseTasTraceRows,
   serialPortSttyArgs,
+  summarizeBootTiming,
   tasTraceStreamEnabled,
 } = require("../../../scripts/bridge-server.js");
 const { tasRunChecksum } = require("../src/tas.js");
@@ -1119,6 +1121,110 @@ test("auto-saves frozen TAS trace rows and rearms firmware capture", async () =>
   assert.equal(decoded.command, "tas_trace_resume");
   assert.equal(decoded.trace_frozen, 0);
 
+  await fsp.rm(logDir, { recursive: true, force: true });
+});
+
+const BOOT_TIMING_ROWS = [
+  "0,1000000,0,1,1,1,00,00,00,8,waiting,00,2C,1",
+  "1,1000000,0,1,1,1,00,00,00,8,waiting,00,2C,2",
+  "2,1199291,0,2,2,1,10,10,10,1,ok,00,22,1",
+  "3,1199291,0,2,2,1,00,00,00,1,ok,00,22,2",
+  "4,1382807,1,3,10,8,08,08,08,8,ok,08,22,1",
+  "5,1382807,1,3,10,8,00,00,00,8,ok,00,22,2",
+].join("|");
+
+test("summarizes boot timing as latch-to-latch gaps from port 1 rows", () => {
+  const summary = summarizeBootTiming(parseTasTraceRows(BOOT_TIMING_ROWS));
+
+  assert.deepEqual(summary.latches, [
+    { latch: 1, micros: 1000000 },
+    { latch: 2, micros: 1199291 },
+    { latch: 3, micros: 1382807 },
+  ]);
+  // 199291 us and 183516 us of Arduino time are 12 and 11 NTSC frames once
+  // corrected for the R4's slow micros().
+  assert.deepEqual(summary.gaps.map((gap) => gap.cycles), [357124, 328855]);
+  assert.equal(
+    formatBootTimingMessage(summary),
+    "Boot timing from latch 1: gaps in frames 11.99 11.04; in CPU cycles 357124 328855",
+  );
+});
+
+test("summarizes boot timing from legacy trace rows and needs at least three latches", () => {
+  const legacy = parseTasTraceRows("0,0,0,1,0,0,00,00,00,8,ok,00,00|1,16639,0,2,0,0,00,00,00,8,ok,00,00|2,33278,0,3,0,0,00,00,00,8,ok,00,00");
+  assert.deepEqual(summarizeBootTiming(legacy).gaps.map((gap) => gap.cycles), [29817, 29817]);
+  assert.equal(summarizeBootTiming(legacy.slice(0, 2)), null);
+});
+
+test("logs boot timing once a started run passes the latch threshold", async () => {
+  const logDir = await fsp.mkdtemp(path.join(os.tmpdir(), "tasdeck-boot-timing-"));
+  const bridge = new SerialBridge({ logDir });
+  const writes = [];
+  const socketWrites = [];
+  const client = {
+    heldButtons: new Set(),
+    socket: {
+      destroyed: false,
+      write(frame) {
+        socketWrites.push(frame);
+      },
+    },
+  };
+  const masks = [0x01, 0x00, 0x80];
+
+  bridge.handle = {
+    async write(command) {
+      writes.push(command);
+      const trimmed = command.trim();
+      globalThis.setTimeout(() => {
+        if (trimmed === "TAS_TRACE 1") {
+          bridge.handleSerialBytes(
+            Buffer.from("OK tas_trace total=6 capacity=384 first=0 next=6 page_start=5 page_next=6 count=1 rows=5,1382807,1,3,10,8,00,00,00,8,ok,00,22,2\n"),
+          );
+          return;
+        }
+
+        if (trimmed === "TAS_TRACE 6 0") {
+          bridge.handleSerialBytes(
+            Buffer.from(`OK tas_trace total=6 capacity=384 first=0 next=6 page_start=0 page_next=6 count=6 rows=${BOOT_TIMING_ROWS}\n`),
+          );
+        }
+      }, 0);
+    },
+  };
+  bridge.portPath = "/dev/cu.usbmodem-test";
+  bridge.serialReady = true;
+  bridge.addClient(client);
+  await bridge.handleClientTasMessage(client, {
+    type: "tas_upload",
+    fileName: "run.r08",
+    frameCount: masks.length,
+    inputFrameCount: masks.length,
+    masks,
+    checksum: tasRunChecksum(masks),
+  });
+
+  const run = bridge.activeTasRun;
+  const status = { type: "tas_status", command: "tas_status", started: 1, complete: 0, received: 3, error: "ok" };
+  bridge.applyTasFirmwareStatus(run, { ...status, latch: 15 }, "tas_status");
+  assert.equal(run.bootTimingTask, undefined, "not started yet");
+  bridge.markTasRunStarted(run);
+  bridge.applyTasFirmwareStatus(run, { ...status, latch: 15 }, "tas_status");
+  assert.equal(run.bootTimingTask, undefined, "below the latch threshold");
+  bridge.applyTasFirmwareStatus(run, { ...status, latch: 16 }, "tas_status");
+  bridge.applyTasFirmwareStatus(run, { ...status, latch: 17 }, "tas_status");
+  await run.bootTimingTask;
+
+  assert.deepEqual(writes, ["TAS_TRACE 1\n", "TAS_TRACE 6 0\n"]);
+  assert.deepEqual(run.bootTiming.gaps.map((gap) => gap.cycles), [357124, 328855]);
+  const bridgeMessages = socketWrites
+    .map((frame) => JSON.parse(decodeWebSocketFrame(frame).payload.toString("utf8")))
+    .filter((message) => message.type === "bridge")
+    .map((message) => message.message)
+    .filter((message) => message.startsWith("Boot timing"));
+  assert.deepEqual(bridgeMessages, ["Boot timing from latch 1: gaps in frames 11.99 11.04; in CPU cycles 357124 328855"]);
+  const saved = await fsp.readFile(path.join(logDir, "trace", "boot-timing.log"), "utf8");
+  assert.match(saved, /^\S+ run\.r08 delay= Boot timing from latch 1: gaps in frames 11\.99 11\.04; in CPU cycles 357124 328855\n$/);
   await fsp.rm(logDir, { recursive: true, force: true });
 });
 
