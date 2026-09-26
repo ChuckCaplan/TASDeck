@@ -103,6 +103,9 @@ ports are driven, and `Skip first` is 0.
 | Game and run | Time | TAS Link | Original Format | Hardware | Notes |
 | --- | ---: | --- | --- | --- | --- |
 | [Arkanoid — "warpless" by eien86](https://www.youtube.com/watch?v=_Aq-DNFsMJ8) | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro | — |
+| Battletoads — "game end glitch" by MESHUGGAH, feos & Koh1fds | 00:55.66 | [3528M](https://tasvideos.org/3528M) | `.r08` | Real cartridge | 2 controllers, start delay 4. Resync: the published `.r08` plus one P1 Right press after its last input, [`Battletoads_GEG+tail1830R.r08`](docs/design/battletoads/Battletoads_GEG+tail1830R.r08); the unmodified file lands on the Dark Queen on this console — see [Battletoads](docs/design/battletoads/README.md) |
+| Battletoads — "warpless, 2 players" by Lobsterzelda | 19:15.11 | [4267M](https://tasvideos.org/4267M) | `.r08` | Real cartridge | 2 controllers; boot lottery, plays out only on some power-on boots — see [Battletoads](docs/design/battletoads/README.md) |
+| Battletoads — "warps, 2 players" by Lobsterzelda | 10:40.61 | [4271M](https://tasvideos.org/4271M) | `.r08` | Real cartridge | 2 controllers; boot lottery, plays out only on some power-on boots — see [Battletoads](docs/design/battletoads/README.md) |
 | [Chip 'n Dale Rescue Rangers — 2 players by dragonxyk](https://www.youtube.com/watch?v=FdtvpdCli3k) | 09:33 | [1128M](https://tasvideos.org/1128M) | `.r08` | EverDrive N8 Pro | 2 controllers |
 | [Disney's The Little Mermaid by McBobX](https://www.youtube.com/watch?v=6GE6xpsqm-g) | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro | — |
 | [Donkey Kong — "all items" by Phil, Spikestuff, GoddessMaria & Alyosha](https://www.youtube.com/watch?v=I4crTwfEUwo) | 01:16 | [5254M](https://tasvideos.org/5254M) | `.bk2`, `.r08` | EverDrive N8 Pro | Boot lottery — took dozens of attempts to sync |
