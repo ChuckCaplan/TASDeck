@@ -80,7 +80,7 @@ rotated value (`$37` or `$B7`), the next opcode fetched from open bus is that by
 elsewhere. On the EverDrive preload ROMs (v2 D, v5) `$6000-7FFF` is RAM filled with `$6F`, which
 behaves like NesHawk. That is why they won and the cartridge does not.
 
-### Evidence (harness in `logs/research/battletoads-2026-09-24-real-bus/`)
+### Evidence
 
 - A research build adds `BT_WRITE_DB` (`NES.WriteMemory` sets `DB`). From the default winning state,
   per-latch RAM, RNG and timing stay identical through the jump (latch 2397). After it, NesHawk shows
@@ -140,8 +140,8 @@ behavior does.
 ## Why The Unmodified Movie Loses Every Time
 
 Analysis from 2026-09-25, from the 2021 harness's default winning state at delay 4 (`BT_OFFSET=-12`,
-phase 0, parity 0, 3 blanks). Commands and raw outputs are listed in
-[Reproducing The Analysis](#reproducing-the-analysis).
+phase 0, parity 0, 3 blanks).
+See [Research Harnesses](#research-harnesses) for how the emulator was built.
 
 ### `$75` is `$6F` on every console
 
@@ -164,7 +164,7 @@ A holds `$6F` for 20 CPU cycles across six instruction boundaries. The model's N
 cycles after the window opens and 8 before it closes. Consoles differ in CPU/PPU alignment by about
 one cycle, so no console can move the NMI out of this window without changing the whole game state.
 Every modeled state on the winning trajectory stores `$6F`, at every Start delay tried (1-12). Across
-the 27 alignment-knob combinations run on 2026-09-24 (`results/kw.out`), 114 jumps read `$6F` and 15
+the 27 alignment-knob combinations run on 2026-09-24, 114 jumps read `$6F` and 15
 read `$76`, and `$76` also loses on a real bus (see the sweep below). No Start delay, power-on state
 or boot produces a winning `$75` from the unmodified input.
 
@@ -233,7 +233,7 @@ four. The model was checked for a state that would explain both test results:
 
 So no modeled state gives `+test1950L` the ending and `+test2000R` the Dark Queen together. The
 `+test2000R` result is one boot. The Dark Queen is the most common failure on a real bus: 68 of the
-130 losing `$75` values, and 41 of the 63 single-press tails searched (`results/tails.out`). GOOD cartridge
+130 losing `$75` values, and 41 of the 63 single-press tails searched. GOOD cartridge
 boots have also gone off-model before, for example the speeder-bike loss. So one Dark Queen is weak
 evidence, while an ending is hard to reach by accident.
 This analysis still favors the real bus, but the discrepancy is unexplained.
@@ -263,8 +263,8 @@ emulation as tuned to his own console and cartridge.
 `BT_WRITE_DB=1`:
 
 - Every modeled power-on state that reaches the glitch reaches the **ending** (8 of 8 runs, delays 2
-  and 4). Without the rule the same states store `$6F` and land on the Dark Queen. The saved
-  classifier output (`results/2026-09-25/ob7_rule_sweep.out`) labels the delay-2 pair `Q` only
+  and 4). Without the rule the same states store `$6F` and land on the Dark Queen. The
+  outcome classifier labels the delay-2 pair `Q` only
   because its jump comes 11 frames earlier and polling resumes before the 4,400-frame limit. Its end
   latch equals its jump latch and it then goes silent for hundreds of frames, as every ending does; a
   Dark Queen landing polls every frame.
@@ -495,9 +495,9 @@ around its own offset and never produced the Dark Queen landing or the speeder-b
 
 ### The 2021 reference
 
-`logs/research/battletoads-2026-09-23-startup-state/harness/` builds BizHawk
+A headless harness built from BizHawk
 [`01c3b14`](https://github.com/TASEmulators/BizHawk/commit/01c3b1449593ad1637584783677e9be5939cd6f9)
-(2021-07-02) headless, with the same latch hook and open-bus cartridge model as before. Environment
+(2021-07-02), with the same latch hook and open-bus cartridge model as before. Environment
 variables set the power-on state after construction: `BT_OFFSET` (`start_up_offset`), `BT_VBL`,
 `BT_OVF`, `BT_IDLE`, `BT_PHASE`, `BT_CPU_PARITY`, plus `BT_BLANKS` (hardware Start delay minus 1),
 `BT_INSERT` (`record:count` blank records before a movie record), `BT_KEEPWRAM` (EverDrive work-RAM
@@ -650,8 +650,7 @@ where the delay-4 winners are:
 | 12 / 11 / 13 | 356,827 | +306 | 34 / 45 |
 
 `sweep8.out` stopped at latch 2400, the glitch itself, so on its own it could not tell the ending from
-the Dark Queen landing, which differ only afterwards. Rerun past the glitch on 2026-09-24
-(`sweep8-long.out`, `harness/rerun_long.py`, 4,520 frames): all 75 are real endings, with the ending
+the Dark Queen landing, which differ only afterwards. Rerun past the glitch on 2026-09-24 (4,520 frames): all 75 are real endings, with the ending
 image and the ending's ~120 silent latches after the jump; no label changed, and **no modeled state
 lands on the Dark Queen at delay 4**. The cartridge's GOOD boots landing there is a real gap in the
 model, not a scoring error.
@@ -676,7 +675,7 @@ delays 1 and 4, warps and warpless:
    pre-render line, dropping one dot to move onto the other alignment.
 5. A final delay to the target frame and dot, then the original startup continues at `$82C8`.
 
-Sources: `logs/research/battletoads-2026-09-23-startup-state/v5/`, built by `v5build.py` with
+Built with the synchronizer parameters
 `PT=176 PN=1 PB=0 FX=46 FT=76 NX=92 NT=144` (SHA256 `ff011488…8113d95`). The code lives in the
 free space v2-v4 used (bank 6 `$FED0-$FF4A`, bank 7 `$80BC-$80FF` and `$FF40-$FF75`) and adds about
 half a second of black screen at power-on.
@@ -861,75 +860,26 @@ latch before the game's first poll.
   true forever after playback completes. A trace taken after the movie ends is flooded with
   post-completion rows and cannot hold the payload window at records 1807-1818.
 
-## Reproducing The Analysis
+## Research Harnesses
 
-### The 2021 harness
+The analysis above ran on headless NesHawk harnesses. Their sources, patches, sweep outputs and
+traces were local only, and were deleted on 2026-09-25 when the investigation ended. To rebuild one:
 
-Use the 2021 harness in `logs/research/battletoads-2026-09-23-startup-state/harness/` for anything
-involving power-on state. Its `Program.cs`, project file and `bizhawk-01c3b14-headless.patch`
-rebuild against the BizHawk `01c3b14` source archive with a .NET 8 SDK. As rebuilt on 2026-09-24:
-a blob-filtered sparse clone of `TASEmulators/BizHawk` at `01c3b14` needs only `src/BizHawk.Common`,
-`src/BizHawk.BizInvoke`, `src/BizHawk.Emulation.Common`, the NES core, `CPUs/MOS 6502X`, `Sound`,
-`CoreNames.cs`, `Resources` and `Assets/gamedb` (about 50 MB). Apply the patch's three edits by hand
-or with CRLF handling, because the sources are CRLF with BOM and `patch` rejects every hunk. Copy
-`libblip_buf.dylib` from the 2.5.2 `validated-build/`, and set `BT_ROOT` to the checkout, since
-`Program.cs` defaults to a deleted scratch path. The default state should give `endLatch=2397` and
-`final=BE24D5985F763F04` at 4,500 frames, about 15 seconds per run. `bootsweep.py` records the
-start state of every modeled power-on for a ROM, `sweep.py` runs job lists in parallel,
-`keymap.py`/`cartdelay.py` build the start-state and delay tables, and `classify_boot.py` applies
-them to a pasted `Boot timing` line. The sweep outputs (`sweep*.out`, `boot_*.json`,
-`geg_classes.json`) sit in the parent directory.
-
-### The real-bus tracer
-
-The open-bus work uses a separate tracer in `logs/research/battletoads-2026-09-24-real-bus/harness/`:
-`Program.cs`, `Tracer.csproj`, and `bizhawk-01c3b14-research-knobs.patch`. The patch adds
-`BT_WRITE_DB`, `BT_NMI_DOTS`, `BT_VBL_DOT` and `BT_NMI_SUP` to NesHawk. To build it:
-
-1. Put the project in a directory next to the patched BizHawk checkout, which must be named `BH`
-   (the project file includes `../BH/src/...`).
-2. Run `dotnet build -c Release -o <out>`.
-3. Copy `libblip_buf.dylib` into `<out>`.
-
-Run it as `dotnet <out>/Tracer.dll "<rom>" "<r08>" <outprefix> <frame limit>`. Set `BT_ROOT` to the
-checkout. The delay-4 GOOD state is `BT_OFFSET=-12 BT_VBL=0 BT_IDLE=0 BT_PHASE=0 BT_CPU_PARITY=0
-BT_BLANKS=3`, and the jump comes at frame 3944, so a limit of 4400 is enough. Options:
-
-| Variable | Effect |
-| --- | --- |
-| `BT_WRITE_DB=1` | Real bus: CPU writes set the open-bus value |
-| `BT_TRACEJUMP=1`, `BT_TRACE_FROM=<latch>` | At `$75BD`, dump the last 200 instructions, zero page and stack; `BT_JUMPLINE=1` prints only `JUMP ... V75=..` |
-| `BT_OBREADS=1`, `BT_WATCH_FROM=2399` | Log every CPU read in `$6000-7FFF` (the slide) with the byte at PC |
-| `BT_POKE75=<hex>` | Set `$75` when the glitch first reaches `$75BD` (added 2026-09-25) |
-| `BT_LOOPTRACE=<f0>-<f1>` | Log busy-loop (`$871F-$874F`) instructions with A and the CPU cycle in frames f0-f1 (added 2026-09-25) |
-| `BT_OB7=1` | Alyosha's GBAHawk rule: bit 7 of unmapped `$6000-7FFF` reads = A2 (`2` inverts it). Only in `harness/2026-09-25/alyosha-ob7/` (patch and `Program.cs`; its shell scripts point at a deleted scratch build) |
-
-To classify outcomes, run `harness/tailcls.py <results> <frame limit> -v`. It prints `E?` for the
-ending, `Q` for the Dark Queen and `s` for the race-level stall, and its limit must equal the
-tracer's. The 2026-09-25 scripts are in `harness/2026-09-25/`:
-
-- `poke75_sweep.py <out> 1 all` runs all 256 `$75` values on the real bus.
-- `jobs_run.py knob_good_test_jobs.json <out>` runs both test files over the 29 knob and state
-  combinations that give a GOOD fingerprint.
-- Both scripts hard-code the 2026-09-24 scratch build directory for `dotnet` and `BT_ROOT`. After a
-  rebuild, point `TRACER_DLL` at the new `Tracer.dll`, and `RUNS` at an output folder, or edit `B`.
-
-Outputs are in `results/2026-09-25/`:
-
-- `poke75_retention.out`: the 256-value sweep.
-- `knob_good_1950L_2000R_retention.out`: the knob check.
-- `slide_*_{retention,neshawk}.txt`: the slide traces.
-- `final_nmi_busy_loop.txt`: the busy-loop trace.
-
-The 23-state check groups `battletoads-2026-09-23-startup-state/sweep8-long.out` by title
-13/10/13, first gap about 387,143, difference about +296, and `rh2390`.
-
-### The 2.5.2 harness
-
-The 2.5.2 harness in `logs/research/battletoads-2026-09-15/reference/harness/` models the
-pre-June-2021 state. Its `validated-build/` binary needs `/private/tmp/battletoads-reference` with a
-.NET 8 runtime and the BizHawk 2.5.2 `Assets/gamedb`; run
-`dotnet Headless.dll "<rom>" "<r08>" <outprefix> 6000`.
+- **2021 reference.** BizHawk
+  [`01c3b14`](https://github.com/TASEmulators/BizHawk/commit/01c3b1449593ad1637584783677e9be5939cd6f9)
+  built headless with a .NET 8 SDK from a sparse clone (`src/BizHawk.Common`, `src/BizHawk.BizInvoke`,
+  `src/BizHawk.Emulation.Common`, the NES core, `CPUs/MOS 6502X`, `Sound`, `CoreNames.cs`, `Resources`
+  and `Assets/gamedb`). The sources are CRLF with a BOM, so patches have to be applied with CRLF
+  handling. A harness needs a hook before each controller latch that serves the next `.r08` record,
+  and knobs that set the power-on state after construction (`start_up_offset`, the vblank,
+  sprite-overflow and odd-frame flags, CPU/PPU phase and CPU parity). NesHawk's default state
+  reaches the game-end-glitch ending at latch 2,397.
+- **Real bus.** One line in `NES.WriteMemory` that sets the open-bus value `DB` to the written byte
+  turns the ending into the Dark Queen landing.
+- **Alyosha's quirk.** In NesHawk's read of unmapped `$6000-7FFF` (no work RAM), force bit 7 of the
+  returned value to address bit A2. With the real-bus line as well, the unmodified movie reaches the
+  ending again.
+- **2.5.2 harness.** BizHawk 2.5.2 models the pre-June-2021 power-on state. It is superseded.
 
 ## Open Questions
 

@@ -305,7 +305,7 @@ a candidate, but do not prove that CPU/PPU alignment causes the current hardware
 exclude replay-device timing.
 
 Two experimental ROMs tried to remove it, both built locally rather than by the repository script
-(`logs/research/battletoads-2026-09-15/v3/` and `v4/`):
+(their sources were not kept):
 
 - **v3** adds v1's synchronizer back on top of v2's preload, entered through the game's own two
   VBlank waits so it starts at the phase it was designed for, with v2's fixed delay removed. In the
@@ -350,8 +350,7 @@ model the N8 Pro. It failed on hardware as described above and was withdrawn for
   controller read.
 
 v2 keeps v1's reset hook, trampoline, and jump-table entry, and replaces the synchronizer with the
-fixed-length preload. The v1 assembly and harness are preserved locally in
-`logs/research/battletoads-2026-09-15/`.
+fixed-length preload. The v1 assembly and harness were not kept.
 
 ## Primary References
 
@@ -362,4 +361,3 @@ fixed-length preload. The v1 assembly and harness are preserved locally in
 - [Battletoads game resources, game end glitch](https://tasvideos.org/GameResources/NES/Battletoads#GameEnd)
 - [Warpless author's Surf City explanation](https://tasvideos.org/6758S#Level5SurfCity)
 - [NTSC PPU frame timing](https://www.nesdev.org/wiki/PPU_frame_timing)
-- Local evidence: `logs/research/battletoads-2026-09-15/n8-cartridge-ram/`

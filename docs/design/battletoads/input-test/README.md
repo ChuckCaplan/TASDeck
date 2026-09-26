@@ -62,8 +62,7 @@ Validation: two complete clean emulator runs and seven deliberate fault cases ga
 results; a missing-marker case stayed WAIT. The exact failure index and displayed bytes were
 checked, and the ROM/replay hashes reproduced on a second build.
 
-The September 2026 development harness and captured evidence are under
-`logs/research/battletoads-2026-09-15/input-probe/`. `validate.py` records final NES RAM and asserts
-pass/fail state, exact failure index, and displayed expected/received bytes using the local NesHawk
-2.5.2 headless build. That harness supplies ideal digital controller values; it cannot simulate
+The September 2026 development harness, since deleted, recorded final NES RAM and asserted the
+pass/fail state, exact failure index, and displayed expected/received bytes using a local NesHawk
+2.5.2 headless build. That harness supplied ideal digital controller values; it could not simulate
 Arduino interrupt latency or the electrical signals at the console port.

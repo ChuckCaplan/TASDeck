@@ -55,5 +55,6 @@ out only boots the watcher calls GOOD.
 | [input-test/](input-test/README.md) | Test ROM that checks what the NES receives, using Battletoads' controller-read loop |
 | `tests/` | Tests for the tools; `npm test` runs them |
 
-ROMs, the published `.r08` files and the BizHawk research harnesses under `logs/research/` are not
-in the repository.
+ROMs, the published `.r08` files and the BizHawk research harnesses are not in the repository. The
+harnesses were deleted when the investigation ended; see
+[Research Harnesses](real-cartridge.md#research-harnesses).
