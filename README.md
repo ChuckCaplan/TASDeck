@@ -113,6 +113,7 @@ ports are driven, and `Skip first` is 0.
 | [Donkey Kong — "all items" by Phil, Spikestuff, GoddessMaria & Alyosha](https://www.youtube.com/watch?v=I4crTwfEUwo) | 01:16 | [5254M](https://tasvideos.org/5254M) | `.bk2`, `.r08` | EverDrive N8 Pro | Boot lottery — took dozens of attempts to sync |
 | [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro | — |
 | [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro | 2 controllers |
+| Double Dribble by ShesChardcore | 01:46.06 | [5087M](https://tasvideos.org/5087M) | `.bk2` | EverDrive N8 Pro | `.tdmask` converted with `npm run bk2`. |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro | — |
 | [Golf by link_7777](https://www.youtube.com/watch?v=OwDKHgDyLVg) | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, primed work RAM, and a per-console start delay (255 on the verified console) — see [Golf and uninitialized work RAM](docs/games/golf-uninitialized-ram.md) |
 | [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro | — |
