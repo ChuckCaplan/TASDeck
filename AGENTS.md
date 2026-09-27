@@ -91,10 +91,11 @@ against a synthetic ROM; set `TASDECK_SKIP_FCEUX_TESTS=1` to skip them.
 - `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
   continuous hardware trace, the sibling exporter trace, and the source FM2.
-- `docs/design/<game>/`: Game-specific case studies with their own tools and tests. Test files in
-  `docs/design/*/tests/` run with `npm test` and are linted with `docs/design/*/tools/`.
-  `docs/design/battletoads/README.md` lists the Battletoads write-ups, boot watcher, boot hunter,
-  EverDrive patch and test ROMs.
+- `docs/games/`: Game-specific case studies, some with their own tools and tests. Test files in
+  `docs/games/*/tests/` run with `npm test` and are linted with `docs/games/*/tools/`.
+  `docs/games/battletoads/README.md` lists the Battletoads write-ups, boot watcher, boot hunter,
+  EverDrive patch and test ROMs. `docs/games/golf-uninitialized-ram.md` and
+  `docs/games/rbi-baseball-uninitialized-ram.md` cover the two runs that need primed work RAM.
 - `firmware/uno_r4_wifi/uno_r4_wifi.ino`: Arduino UNO R4 WiFi serial bridge sketch.
 - `firmware/uno_r4_wifi/src/NesDeckProtocol.*`: Testable firmware command protocol parser.
 - `firmware/uno_r4_wifi/src/NesTasPlayback.*`: Testable latch-synchronized TAS mask playback.

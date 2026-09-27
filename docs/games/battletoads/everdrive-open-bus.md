@@ -197,7 +197,7 @@ parity 1. Editing any instruction in the preload changes the cycle count and mus
 Build from the repository root with your own copy of the ROM:
 
 ```sh
-node docs/design/battletoads/tools/patch-startup.js \
+node docs/games/battletoads/tools/patch-startup.js \
   "/path/to/Battletoads (USA).nes" \
   "/path/to/Battletoads (USA) - TASDeck open bus v2.nes"
 ```
@@ -210,7 +210,7 @@ To check the builder against your ROM:
 
 ```sh
 BATTLETOADS_TEST_ROM="/path/to/Battletoads (USA).nes" \
-  node --test docs/design/battletoads/tests/patch-startup.test.js
+  node --test docs/games/battletoads/tests/patch-startup.test.js
 ```
 
 The reported successful attempt used **cold power-on with EverDrive auto-load**, not launching the

@@ -199,7 +199,7 @@ Before arming playback:
   [alyosha-tas](https://github.com/alyosha-tas/NES_replay_files) corpus plays power-on runs with
   `--blank 1` and runs that start from reset with `--blank 0`, so strobe mode prefills
   `Start delay 1`. The first FM2 converter `.polls.r08` confirmed on a console,
-  [R.B.I. Baseball's](design/rbi-baseball-uninitialized-ram.md), completed from a held-Reset
+  [R.B.I. Baseball's](games/rbi-baseball-uninitialized-ram.md), completed from a held-Reset
   cartridge start at `Start delay 0`. None has been confirmed at the prefilled 1 yet; if one
   desyncs within its first records, try `Start delay 0`. A hand-entered delay
   survives mode changes; the prefill applies only while the field is untouched. `.tdmask` always
@@ -273,7 +273,7 @@ The usual console-side causes:
   and then flip, so a handful of identical runs is not proof of determinism. Boot-cycle at least
   three or four times before concluding a movie cannot sync. Each run logs a `Boot timing` line
   once 16 latches have passed: the gaps between the first latches, in NTSC frames and CPU cycles,
-  and appends it to `logs/trace/boot-timing.log`. `docs/design/battletoads/boot-timing-test/` builds a ROM that
+  and appends it to `logs/trace/boot-timing.log`. `docs/games/battletoads/boot-timing-test/` builds a ROM that
   checks those numbers against reads timed by the NES itself.
   Those gaps come from the console's startup timing, so boots that print different gaps started
   in different states, and a game-specific table of winning gaps can reject a doomed boot seconds
@@ -285,11 +285,11 @@ The usual console-side causes:
   open bus. The EverDrive N8 Pro answers every CPU read from `$4020` up, with save RAM or its own
   stand-in value, so table overreads and glitches that execute code in this range can behave
   differently on it. Open bus itself also differs between consoles; see
-  [Battletoads](design/battletoads/README.md).
+  [Battletoads](games/battletoads/README.md).
 - **Power-on RAM contents.** Movies that depend on a particular uninitialized RAM pattern desync
   from an EverDrive launch, whose loader zero-fills the zero page, and no TASDeck setting
   compensates. Priming RAM and then swapping to a real cartridge under a held Reset does; see
-  [Golf](design/golf-uninitialized-ram.md) and [R.B.I. Baseball](design/rbi-baseball-uninitialized-ram.md).
+  [Golf](games/golf-uninitialized-ram.md) and [R.B.I. Baseball](games/rbi-baseball-uninitialized-ram.md).
 - **Mapper-specific behavior.** Some titles are documented as failing on every replay device, not
   only this one. Nightshade is the standing example: TASVideos testing reports it syncing about one
   attempt in twenty at one startup offset and somewhat better at another, with MMC3 mapper clocking
@@ -301,7 +301,7 @@ When a run fails the same way repeatedly, note the record number where the trace
 first departs from a known-good run. That number identifies the retry point and often makes a failed
 attempt cost minutes instead of the movie's full length.
 
-[Battletoads](design/battletoads/README.md) is the worked example of power-on-phase failures and
+[Battletoads](games/battletoads/README.md) is the worked example of power-on-phase failures and
 of how console hardware, not the replay device, can decide an ACE run.
 
 ## Continuous Trace Capture

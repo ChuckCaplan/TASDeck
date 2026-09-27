@@ -48,7 +48,7 @@ out only boots the watcher calls GOOD.
 | [real-cartridge.md](real-cartridge.md) | Main write-up: original-cartridge runs, the boot-timing model, the open-bus analysis of the game-end glitch, and how to rebuild the research harnesses |
 | [everdrive-open-bus.md](everdrive-open-bus.md) | The EverDrive N8 Pro's `$6000-7FFF` work-RAM problem and the patched ROMs |
 | [`Battletoads_GEG+tail1830R.r08`](Battletoads_GEG+tail1830R.r08) | The game-end-glitch resync that won on the original cartridge (above) |
-| `tools/watch-boot.js` | Follows `logs/trace/boot-timing.log` and prints a GOOD / BAD / MAYBE / OFF-MODEL verdict for each boot: `node docs/design/battletoads/tools/watch-boot.js` |
+| `tools/watch-boot.js` | Follows `logs/trace/boot-timing.log` and prints a GOOD / BAD / MAYBE / OFF-MODEL verdict for each boot: `node docs/games/battletoads/tools/watch-boot.js` |
 | `tools/hunt-boot.js` | Power-cycles the NES through a TP-Link Kasa smart plug until the watcher accepts a boot, then lets it play out; needs `--plug HOST` or `TASDECK_PLUG_HOST` |
 | `tools/patch-startup.js`, `rom-patches/` | Builds the EverDrive open-bus-preload ROM (v2) from your own USA ROM |
 | [boot-timing-test/](boot-timing-test/README.md) | Test ROM that checks TASDeck's `Boot timing` numbers against reads timed by the NES |

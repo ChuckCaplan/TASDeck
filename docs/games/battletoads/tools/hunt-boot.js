@@ -297,7 +297,7 @@ function parseArgs(argv) {
   return options;
 }
 
-const USAGE = `Usage: node docs/design/battletoads/tools/hunt-boot.js FILE.r08 [options]
+const USAGE = `Usage: node docs/games/battletoads/tools/hunt-boot.js FILE.r08 [options]
   --accept GOOD[,MAYBE]   verdicts that get played out (default GOOD)
   --delay N               Start delay in strobes (default 4 for GEG files, else 1)
   --off-seconds N         power-off time before each boot (default 10)

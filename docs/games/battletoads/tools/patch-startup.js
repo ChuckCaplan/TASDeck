@@ -73,7 +73,7 @@ function buildPatchedRom(source) {
 
 function main(args) {
   if (args.length !== 2) {
-    throw new Error('Usage: node docs/design/battletoads/tools/patch-startup.js "source.nes" "new-output.nes"');
+    throw new Error('Usage: node docs/games/battletoads/tools/patch-startup.js "source.nes" "new-output.nes"');
   }
   const [input, output] = args.map((name) => path.resolve(name));
   if (input === output) {
