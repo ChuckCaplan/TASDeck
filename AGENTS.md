@@ -100,7 +100,9 @@ against a synthetic ROM; set `TASDECK_SKIP_FCEUX_TESTS=1` to skip them.
 - `docs/games/`: Game-specific case studies, some with their own tools and tests. Test files in
   `docs/games/*/tests/` run with `npm test` and are linted with `docs/games/*/tools/`.
   `docs/games/battletoads/README.md` lists the Battletoads write-ups, boot watcher, boot hunter,
-  EverDrive patch and test ROMs. `docs/games/golf-uninitialized-ram.md` and
+  EverDrive patch and test ROMs. `docs/games/smb2/README.md` covers the Super Mario Bros. 2
+  game-end glitch and its guard tool, and `docs/games/smb3/README.md` the SMB3 0.32 run and its
+  corrected `.r08`. `docs/games/golf-uninitialized-ram.md` and
   `docs/games/rbi-baseball-uninitialized-ram.md` cover the two runs that need primed work RAM.
 - `docs/design/`: Tool design notes that are not about one game.
 - `docs/design/bizhawk-harness.md`: How the BizHawk harness builds, serves records like the
