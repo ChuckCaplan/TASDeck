@@ -141,6 +141,7 @@ ports are driven, and `Skip first` is 0.
 | [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (7x) |
 | [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord_Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (10x) |
 | [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro | — |
+| Zelda II: The Adventure of Link — "warp glitch" by Inzult | 05:43.47 | [1082M](https://tasvideos.org/1082M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0. Plays TASBot's lag-stripped frame dump `inzult3-zelda2.frame.r08` |
 
 ## Background
 
