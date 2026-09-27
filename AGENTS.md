@@ -88,6 +88,12 @@ against a synthetic ROM; set `TASDECK_SKIP_FCEUX_TESTS=1` to skip them.
 - `scripts/fceux-export-tasdeck-mask.lua`: FCEUX Lua exporter for lag-stripped mask streams and
   per-latch `.r08` streams (one record per rising `$4016` strobe edge).
 - `scripts/convert-bk2-to-tasdeck-mask.sh`: Git Bash BizHawk BK2 converter for Windows.
+- `scripts/bizhawk-harness.js` (`npm run bk2`): cross-platform BK2 converter (`.r08` + `.tdmask`)
+  and playback checker. It builds BizHawk's NES core from source into `.cache/bizhawk-harness/`;
+  `scripts/bizhawk-harness/` holds the build, BizHawk patches, formats, check logic, and the C#
+  harness with its port of the firmware playback model.
+- `apps/web/tests/bizhawk-harness.test.js`: Harness helper tests, plus an end-to-end synthetic-ROM
+  test that runs when the 2.6.3 harness is built or `TASDECK_HARNESS_TESTS=1`.
 - `scripts/bizhawk-export-tasdeck-mask.lua`: BizHawk Lua exporter for lag-stripped mask streams.
 - `scripts/expand-tdmask-from-hardware-trace.js`: Diagnostic tool that expands a stream using a
   continuous hardware trace, the sibling exporter trace, and the source FM2.
@@ -96,6 +102,11 @@ against a synthetic ROM; set `TASDECK_SKIP_FCEUX_TESTS=1` to skip them.
   `docs/games/battletoads/README.md` lists the Battletoads write-ups, boot watcher, boot hunter,
   EverDrive patch and test ROMs. `docs/games/golf-uninitialized-ram.md` and
   `docs/games/rbi-baseball-uninitialized-ram.md` cover the two runs that need primed work RAM.
+- `docs/design/`: Tool design notes that are not about one game.
+- `docs/design/bizhawk-harness.md`: How the BizHawk harness builds, serves records like the
+  firmware, judges a check, and was validated; job-file fields and research hooks it lacks.
+- `docs/design/emulator-methods.md`: Which emulator method answers which question: the BizHawk
+  harness, the FCEUX converter and headless FCEUX recipe, and the read-count/deadline method.
 - `firmware/uno_r4_wifi/uno_r4_wifi.ino`: Arduino UNO R4 WiFi serial bridge sketch.
 - `firmware/uno_r4_wifi/src/NesDeckProtocol.*`: Testable firmware command protocol parser.
 - `firmware/uno_r4_wifi/src/NesTasPlayback.*`: Testable latch-synchronized TAS mask playback.
@@ -335,7 +346,8 @@ are the constraints that shape implementation decisions:
   validated at load time. Import relies on the replay-device convention documented in
   [`.r08` Format](docs/hardware-tas-workflow.md#r08-format).
 - The web UI does not accept raw FM2 or BK2 files; convert the movie plus its matching ROM first.
-  The FM2 converter writes a `.polls.r08` and a `.tdmask`; the BK2 converter writes a `.tdmask`.
+  The FM2 converter and `npm run bk2` write a per-latch `.r08` and a `.tdmask`; the Git Bash BK2
+  converter writes a `.tdmask`.
 - The bridge serves record upload and trace streaming over one serial link with no arbitration
   beyond a buffer-level backoff that reads a status value which can go stale under load. High
   trace-row rates — worst case a two-port `strobe` run, which emits a row per port per latch edge —

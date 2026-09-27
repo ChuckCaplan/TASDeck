@@ -10,8 +10,8 @@ controller ports. With the correct ROM, TAS movie, power-on state, and cartridge
 this is the path for running one-controller and two-controller TAS movies on real NES hardware.
 
 TASDeck plays a raw `.r08` replay natively, and plays `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movies
-after converting them with the included converter scripts: the FM2 converter writes both a per-latch
-`.r08` and a `.tdmask` byte stream, and the BK2 converter writes a `.tdmask`.
+after converting them with the included converter scripts: the FM2 converter and the BizHawk harness
+each write both a per-latch `.r08` and a `.tdmask` byte stream.
 
 ## Hardware
 
@@ -122,9 +122,10 @@ Install these prerequisites:
   directory containing `arduino-cli.exe` added to the Windows user `Path`.
 - The native [FCEUX Win64 build](https://fceux.com/web/download.html) if you will convert `.fm2`
   movies. Extract it and add the directory containing `fceux64.exe` to the Windows user `Path`.
-- [BizHawk for Windows](https://github.com/TASEmulators/BizHawk/releases/latest) if you will convert
-  `.bk2` movies. Download the Windows x64 archive, extract it, and add the directory containing
-  `EmuHawk.exe` to the Windows user `Path`.
+- [BizHawk for Windows](https://github.com/TASEmulators/BizHawk/releases/latest) only if you will
+  convert `.bk2` movies with the older EmuHawk-driven converter. Download the Windows x64 archive,
+  extract it, and add the directory containing `EmuHawk.exe` to the Windows user `Path`. The BizHawk
+  harness (`npm run bk2`) needs neither BizHawk nor Windows.
 
 Open the **MSYS2 UCRT64** terminal and install the C++ compiler:
 
@@ -299,8 +300,23 @@ FCEUX_BIN=/c/FCEUX/fceux64.exe \
   "movie.tdmask"
 ```
 
-For an NES BizHawk `.bk2` movie on Windows, put `EmuHawk.exe` on `PATH` and run the converter from
-Git Bash:
+For an NES BizHawk `.bk2` movie on any system, use the BizHawk harness. The first run builds BizHawk's
+NES core from source under `.cache/bizhawk-harness/` (about 30 seconds; it needs git, and installs a
+private .NET SDK, about 600 MB, when none is on `PATH`):
+
+```sh
+npm run bk2 -- convert "movie.bk2" "game.nes"
+```
+
+It writes `movie.r08` (one record per latch, `strobe` mode), `movie.tdmask` (`poll` mode), and
+`movie.movie-end.png`, the screen the movie ends on in the emulator. Before trying a file on the
+console, `npm run bk2 -- check "movie.bk2" "game.nes"` plays it the way TASDeck will, including from
+simulated EverDrive launches, and reports the Start delay to use; add `--file other.r08` to check a
+different file. See [Convert And Check A BizHawk
+Movie](docs/hardware-tas-workflow.md#convert-and-check-a-bizhawk-movie).
+
+On Windows, the older converter drives an installed EmuHawk and writes only the `.tdmask`. Put
+`EmuHawk.exe` on `PATH` and run it from Git Bash:
 
 ```sh
 scripts/convert-bk2-to-tasdeck-mask.sh \

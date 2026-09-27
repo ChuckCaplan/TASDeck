@@ -43,6 +43,7 @@ playwright-report/
 test-results/
 
 # Local build outputs and temporary binaries
+.cache/
 build/
 dist/
 *.elf

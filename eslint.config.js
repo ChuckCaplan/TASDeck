@@ -70,7 +70,7 @@ module.exports = [
     rules: sharedRules,
   },
   {
-    files: ["scripts/*.js", "docs/games/*/tools/*.js"],
+    files: ["scripts/*.js", "scripts/bizhawk-harness/*.js", "docs/games/*/tools/*.js"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "commonjs",
@@ -80,6 +80,7 @@ module.exports = [
         clearTimeout: "readonly",
         console: "readonly",
         __dirname: "readonly",
+        fetch: "readonly",
         module: "readonly",
         process: "readonly",
         require: "readonly",

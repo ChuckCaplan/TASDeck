@@ -108,8 +108,15 @@ FCEUX_BIN=/c/FCEUX/fceux64.exe \
   "movie.tdmask"
 ```
 
-On Windows, use the BizHawk converter for an NES `.bk2` movie. Put `EmuHawk.exe` on `PATH` and run it
-from Git Bash:
+For an NES `.bk2` movie on any system, use the BizHawk harness (see [Convert And Check A BizHawk
+Movie](#convert-and-check-a-bizhawk-movie)):
+
+```sh
+npm run bk2 -- convert "movie.bk2" "game.nes"
+```
+
+On Windows, the older BizHawk converter drives an installed EmuHawk instead. Put `EmuHawk.exe` on
+`PATH` and run it from Git Bash:
 
 ```sh
 scripts/convert-bk2-to-tasdeck-mask.sh \
@@ -140,9 +147,10 @@ FCEUX does not add them: Super Mario Bros. 3 exports exactly four latches on eve
 frames. For those games, start with the `.tdmask`, whose `poll` mode absorbs a re-read inside the
 same latch window.
 
-The BizHawk converter writes only the `.tdmask`. `scripts/convert-bk2-to-fm2.js` is not a route to
-a per-latch `.r08`: it exists to feed the hardware-trace expander, drops Reset and Power input,
-ignores savestate starts, and a NesHawk movie replayed in FCEUX can desync.
+The Windows BizHawk converter writes only the `.tdmask`; the BizHawk harness writes both.
+`scripts/convert-bk2-to-fm2.js` is not a route to a per-latch `.r08`: it exists to feed the
+hardware-trace expander, drops Reset and Power input, ignores savestate starts, and a NesHawk movie
+replayed in FCEUX can desync.
 
 For `.bk2`, the BizHawk converter restarts the movie at frame 0 in BizHawk, writes both controller
 masks for each non-lag frame, and exits BizHawk when finished. Keep any core/firmware settings
@@ -161,6 +169,103 @@ emitted mask pair to its source BK2 movie frame.
 The ROM, movie, and initial console state must match. A different ROM revision, header, save state,
 or startup path can change lag and controller polling enough to desynchronize the run.
 
+## Convert And Check A BizHawk Movie
+
+`scripts/bizhawk-harness.js` plays a `.bk2` on BizHawk's own NES core without installing BizHawk. On
+first use it installs a private .NET 8 SDK if none is on `PATH`, fetches the NES core sources of a
+BizHawk release, adds the hooks it needs, and builds them, all under `.cache/bizhawk-harness/`. That
+took about 30 seconds on a fast connection and uses about 700 MB, most of it the SDK; delete the
+folder to remove it all, or `npm run bk2 -- clean` to drop only cached runs. It needs Node and git.
+It has been run on macOS; the Linux and Windows paths use the same tools but are untested.
+
+```sh
+npm run bk2 -- convert "movie.bk2" "game.nes"
+npm run bk2 -- check "movie.bk2" "game.nes"
+```
+
+`convert` writes, in the current directory or `--out-dir`:
+
+- `<movie>.r08`: the pads at every latch while the movie runs, one record per latch. For a SubNESHawk
+  movie these are exactly the rows that ended at a latch. Play it in `strobe` mode.
+- `<movie>.tdmask` and its `.trace.csv`: one mask per frame BizHawk did not flag as lag, the same
+  bytes the Windows converter writes. It is skipped for a movie whose input changes between latches
+  inside a frame, which only the `.r08` can carry.
+- `<movie>.movie-end.png`: the screen 600 frames after the last input. Look at it: if it is not the
+  game's ending, the movie does not sync on this core or ROM, and nothing converted from it will.
+
+It also notes what matters for playback: latches per frame, reads per latch, reads past the eighth
+clock, reads of open bus, and Reset or Power presses.
+
+The movie's BizHawk version picks the core: 2.6.3 for movies recorded before 2.8, 2.11.1 after.
+`--bizhawk 2.6.3` or `--bizhawk 2.11.1` overrides it. `--bios disksys.rom` supplies the FDS BIOS.
+
+`check` plays a file the way TASDeck firmware serves it and compares the screens after its last record
+with the movie's. Without `--file` it checks the `.r08` that `convert` writes; `--file` checks any
+`.r08` or `.tdmask`, in `strobe` mode for an `.r08` and `poll` mode for a `.tdmask` unless `--mode`
+says otherwise. `--start-delay`, `--skip-first`, `--overread` and `--guard-until` match the UI and
+bridge settings. It runs:
+
+- a default power-on;
+- eight simulated EverDrive menu launches (`--launches`): the game runs from power-on for a random
+  30-120 frames, then restarts at a random point in a frame with the PPU left running and the
+  EverDrive loader's RAM image, which moves the DMC and CPU/PPU phase the way a menu launch does;
+- two cartridge power-ons with random RAM, and with `--power-on`, 24 power-on timing states plus
+  all-`$00` and all-`$FF` RAM;
+- the Start delay one higher and one lower;
+- for a movie that reads past the eighth clock, the other two `--overread` levels.
+
+It prints each run's result and a verdict, and writes each run's `end.png` (and `divergence.png`, the
+movie and the run side by side at the first checkpoint where they part) to the directory it names.
+
+```txt
+Should play from an EverDrive menu launch: 8 of 8 launches reach the same ending.
+Cartridge power-on states: 3 of 3 reach the same ending (including the default).
+Start delay must be exact: use 1 from the EverDrive menu; one higher or lower loses.
+Settings: Sync Mode strobe, Ports 2, Skip first 0, Start delay 1 from the EverDrive menu.
+```
+
+The emulator's Start delay counts from the game's first latch. An EverDrive menu launch spends one
+latch before that, so a file whose record 0 belongs on the game's first latch plays at `Start delay 1`
+in `strobe` mode; windowed modes have played at 0. Super Mario Bros. 3 in 0.32 seconds, the Super
+Mario Bros. 2 game-end glitch, and Prince of Persia all won on the console at the delay this reports.
+
+A check is only as good as BizHawk's model of the console. It does not model the EverDrive's missing
+open bus at `$6000-$7FFF` (it reports reads there instead), a console whose timing differs from the
+modeled states, or a movie that needs its Reset pressed. With no movie, `check "game.nes" --file
+FILE.r08` compares every run with the default power-on, which shows whether the result depends on the
+start but not whether it reaches the ending; look at the `end.png` files.
+
+Every command and option (`npm run bk2 -- --help` prints the same list):
+
+| Command or option | Applies to | Meaning |
+| --- | --- | --- |
+| `setup` | | Build the harness now instead of on first use; with `--bizhawk`, that version |
+| `convert <movie.bk2> <rom>` | | Write `.r08`, `.tdmask`, `.tdmask.trace.csv` and `.movie-end.png` |
+| `check <movie.bk2> <rom>` | | Check the `.r08` `convert` would write, or `--file` |
+| `check <rom> --file FILE` | | Check a file with no movie; runs are compared with the default power-on |
+| `clean` | | Delete cached movie runs and check output; keeps the builds |
+| `--bizhawk 2.6.3` or `2.11.1` | all | Core version; default by the movie's recording version |
+| `--bios FILE` | all | FDS BIOS (`disksys.rom`) for Famicom Disk System movies |
+| `--out-dir DIR` | convert, check | Output folder; `convert` defaults to the current directory, `check` to `.cache/bizhawk-harness/checks/` |
+| `--tail-frames N` | convert, check | Frames after the last input to run and compare (default 600, at least 60) |
+| `--file FILE` | check | The `.r08` or `.tdmask` to play |
+| `--mode strobe\|poll\|latch` | check | Sync mode; default `strobe` for `.r08`, `poll` for `.tdmask` |
+| `--start-delay N` | check | Start delay counted from the game's first latch (default 0); the report gives the EverDrive menu value |
+| `--skip-first N` | check | Drop N records first, like the UI's Skip first |
+| `--window-us N` | check | Latch window for `poll`/`latch` mode and the strobe guard (default 8000, the firmware's) |
+| `--overread preadvance\|pressed\|released` | check | Level after the eighth clock in `strobe` mode, like `BRIDGE_TAS_OVERREAD` |
+| `--guard-until N` | check | Guarded strobe prefix, like `BRIDGE_TAS_GUARD_UNTIL` |
+| `--launches N` | check | Simulated EverDrive launches (default 8) |
+| `--power-on` | check | Add 24 cartridge power-on timing states and all-`$00`/all-`$FF` RAM |
+| `--no-alignment` | check | Skip the Start delay one-higher and one-lower runs |
+| `--jobs N` | check | Runs at once (default: CPU count minus one) |
+
+| Environment variable | Meaning |
+| --- | --- |
+| `TASDECK_HARNESS_CACHE` | Cache folder instead of `.cache/bizhawk-harness/` |
+| `TASDECK_DOTNET` | A `dotnet` executable to use before looking on `PATH` |
+| `TASDECK_HARNESS_TESTS=1` | Let `npm test` build the harness for its end-to-end test |
+
 ## Console Synchronization
 
 A `.tdmask` export always advances only after a window containing a completed eight-clock controller
@@ -176,7 +281,7 @@ gate; both windowed modes exist for dumps documented as needing TAStm32 `--dpcm`
 | `.r08` verified with default TAStm32 settings | `strobe` |
 | `.r08` documented as requiring TAStm32 `--dpcm` | `poll` or `latch` |
 | `.polls.r08` from the FM2 converter (one record per latch) | `strobe` |
-| A future SubNESHawk per-latch dump | `strobe` |
+| SubNESHawk `.bk2` rows that end at a latch (see below) | `strobe` |
 
 This is important for games such as SMB3 and Tetris. DPCM sample DMA can corrupt a controller read,
 causing the game to reread until two consecutive values match. Serving a new mask for every poll
@@ -188,6 +293,17 @@ a single frame — the Super Mario Bros. 3 ["game end
 glitch"](https://tasvideos.org/7245S) arbitrary-code-execution run writes its payload that way. Such
 a movie needs `strobe` mode together with a source dump holding one record per latch; a frame-model
 export of it cannot work in any mode, because the per-read variation is already gone from the data.
+
+A SubNESHawk `.bk2` is not a per-latch dump as it stands. Each Input Log row ends at whichever comes
+first: the strobe's falling write or the end of a video frame. Rows that end at a frame boundary are
+never latched by the console, and the header's `VBlankCount` counts exactly those rows. A `.r08`
+built by copying every row into a record carries them as extra records and shifts the payload by one
+latch at each frame edge. The Super Mario Bros. 3 run above is 617 rows but 598 latches: a
+row-for-row copy hangs the game after 360 latches, while the 598 latched rows reach the ending in
+BizHawk from every modeled power-on state (see [Super Mario Bros. 3 in 0.32
+seconds](games/smb3/README.md)). Converting one needs an emulator pass that records which rows were
+latched, which is what `npm run bk2 -- convert` does ([Convert And Check A BizHawk
+Movie](#convert-and-check-a-bizhawk-movie)).
 
 ### Reads Past The Eighth Clock
 

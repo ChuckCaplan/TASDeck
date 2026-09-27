@@ -44,7 +44,9 @@ TASDeck supports live controller input from the on-screen controls or keyboard, 
 port 1 or port 2, and plays versioned `.tdmask` streams or raw `.r08` replay files on a real NES. An
 `.fm2` (FCEUX) or `.bk2` (BizHawk) TAS movie is converted with the scripts in `scripts/` (see the
 [Installation guide](INSTALL.md)) rather than loaded into the web UI directly; the FM2 converter
-writes both a per-latch `.r08` and a `.tdmask` from one FCEUX pass. An `.r08` can be played as-is
+writes both a per-latch `.r08` and a `.tdmask` from one FCEUX pass. `npm run bk2` does the same for a
+`.bk2` on any system by building BizHawk's NES core from source, and can check how a file will play
+on the console before you try it. An `.r08` can be played as-is
 with no conversion, defaulting to a per-strobe mode that matches default TAStm32 replay semantics.
 
 TASDeck drives standard NES controllers on either port. Zapper, Arkanoid paddle, Power Pad, Four

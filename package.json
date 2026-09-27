@@ -12,7 +12,7 @@
     "start:web": "node scripts/bridge-server.js",
     "serve:web": "node scripts/bridge-server.js --no-open",
     "lint": "npm run lint:web",
-    "lint:web": "eslint apps/web/src apps/web/tests scripts/*.js docs/games/*/tools/*.js docs/games/*/tests/*.js eslint.config.js",
+    "lint:web": "eslint apps/web/src apps/web/tests scripts/*.js scripts/bizhawk-harness/*.js docs/games/*/tools/*.js docs/games/*/tests/*.js eslint.config.js",
     "test": "sh scripts/test.sh",
     "test:web": "node --test apps/web/tests/*.test.js docs/games/*/tests/*.test.js",
     "test:ui": "playwright test",
@@ -21,7 +21,8 @@
     "compile:firmware:diagnostic": "sh scripts/compile-firmware.sh --diagnostic",
     "upload:firmware": "sh scripts/upload-firmware.sh",
     "upload:firmware:diagnostic": "sh scripts/upload-firmware.sh --diagnostic",
-    "check": "sh scripts/check.sh"
+    "check": "sh scripts/check.sh",
+    "bk2": "node scripts/bizhawk-harness.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

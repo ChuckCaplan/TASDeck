@@ -881,6 +881,10 @@ traces were local only, and were deleted on 2026-09-25 when the investigation en
   ending again.
 - **2.5.2 harness.** BizHawk 2.5.2 models the pre-June-2021 power-on state. It is superseded.
 
+[Headless BizHawk Harness](../../design/bizhawk-harness.md) builds 2.6.3 and 2.11.1 the same way, from a
+sparse clone with source patches; `01c3b14` would need its own profile there, with these knobs and
+patches added.
+
 ## Open Questions
 
 - Why this console's cartridge boots produce title fingerprints no modeled state produces (6 of 14
