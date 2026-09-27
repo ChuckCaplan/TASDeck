@@ -7,7 +7,11 @@
 
 namespace tasdeck {
 
-constexpr uint16_t kTasBufferCapacity = 512;
+// Burst-consuming runs spend records far faster than the bridge's 500 ms status
+// polls refill them: SMB3's 0.32 glitch uses all 598 records in about 130 ms,
+// and SMB2's game-end glitch takes its last 375 in about 80 ms. The bridge keeps
+// the ring about 75% full, so 1024 holds either burst in full.
+constexpr uint16_t kTasBufferCapacity = 1024;
 constexpr uint16_t kTasStartBufferedFrames = 120;
 // RA4M1 core clock: DWT->CYCCNT ticks per micros() microsecond.
 constexpr uint32_t kCoreCyclesPerMicro = 48;
@@ -180,6 +184,7 @@ class NesTasPlayback {
       return false;
     }
     preAdvanced_ = false;
+    holdArmed_ = false;
     pollCompletedInWindow_ = false;
     nextMasks = currentPipelineMasks();
     lastEdgeKind_ = TasEdgeKind::PreAdvanced;
@@ -244,6 +249,38 @@ class NesTasPlayback {
     return TasPlaybackResult::Ok;
   }
 
+  // Guarded strobe prefix (TAS_GUARD_UNTIL). Records below the boundary are
+  // one per console frame: every strobe inside a latch window re-serves the
+  // current record, so a DPCM re-strobe spends nothing, and the expiry service
+  // advances once the window closes. From the boundary on, playback is plain
+  // per-strobe again. SMB2's game-end glitch needs per-strobe records for its
+  // payload but frame records for the gameplay before it, whose DMC collisions
+  // fall differently on every EverDrive launch. Zero disables the guard.
+  TasPlaybackResult setGuardUntil(uint32_t records);
+  uint32_t guardUntil() const { return guardUntil_; }
+  // Called from the latch tail instead of the record prefetch while the
+  // current record is guarded: arms the fast path to re-serve it. Returns false
+  // when the current record is not guarded, so the caller prefetches normally.
+  // Call with interrupts masked; it is a handful of loads and stores.
+  // Only the window-expiry service advances past a held record. Unlike the
+  // windowed modes there is no in-ISR fallback: the fast path re-commits the
+  // hold on every strobe, so an expiry the 1 kHz service misses is a silent
+  // one-record slip.
+  bool armStrobeHold() {
+    if (
+      guardUntil_ == 0 ||
+      syncMode_ != TasSyncMode::Strobe ||
+      !started_ ||
+      complete_ ||
+      preAdvanced_ ||
+      error_ != TasPlaybackResult::Ok ||
+      currentFrame_ >= guardUntil_) {
+      return false;
+    }
+    holdArmed_ = true;
+    preAdvanced_ = true;
+    return true;
+  }
   bool active() const;
   bool ready() const;
   bool startRequested() const;
@@ -318,6 +355,7 @@ class NesTasPlayback {
   uint32_t latchWindowMicros_ = kTasDefaultLatchWindowMicros;
   uint32_t lastLatchMicros_ = 0;
   uint32_t startDelayRemaining_ = 0;
+  uint32_t guardUntil_ = 0;
   alignas(uint32_t) volatile uint32_t maskPipelineWord_ = 0;
   uint8_t portCount_ = 1;
   TasSyncMode syncMode_ = TasSyncMode::Unknown;
@@ -330,6 +368,8 @@ class NesTasPlayback {
   bool hasLatched_ = false;
   bool pollCompletedInWindow_ = false;
   bool preAdvanced_ = false;
+  // preAdvanced_ re-arms the current guarded record rather than the next one.
+  bool holdArmed_ = false;
   TasEdgeKind lastEdgeKind_ = TasEdgeKind::SameWindow;
 };
 

@@ -224,9 +224,18 @@ TAS_END
 TAS_STATUS
 TAS_TRACE [count] [start]
 TAS_TRACE_RESUME
+TAS_OVERREAD <preadvance|pressed|released>
+TAS_GUARD_UNTIL <records>
 ```
 
-Firmware `TAS_TRACE` returns up to 12 rows per response from a 512-entry trace ring. Windowed runs
+`TAS_OVERREAD` sets what a `strobe` run serves on reads past the eighth clock: `preadvance` (the
+default, the next record's A) or a fixed `pressed`/`released` level. `TAS_BEGIN` resets it, and the
+bridge sends it after `TAS_BEGIN` only when started with `BRIDGE_TAS_OVERREAD`. `TAS_GUARD_UNTIL`
+makes a `strobe` run serve records below the boundary one per latch window (the expiry service
+advances them) and per strobe from the boundary on; the bridge sends it for `BRIDGE_TAS_GUARD_UNTIL`,
+shifted by `Skip first`. Both reset on `TAS_BEGIN`.
+
+Firmware `TAS_TRACE` returns up to 12 rows per response from a 368-entry trace ring. Windowed runs
 write completed-poll rows; strobe runs write one edge row per active port and suppress poll rows. The
 middleware pages this into the full trace window requested by the web UI.
 
@@ -333,3 +342,8 @@ are the constraints that shape implementation decisions:
   have been observed to starve the upload into a buffer underrun that resembles a desync. Treat
   strict upload priority as the real fix if this is revisited; see [Continuous Trace
   Capture](docs/hardware-tas-workflow.md#continuous-trace-capture).
+- `BRIDGE_TAS_OVERREAD` and `BRIDGE_TAS_GUARD_UNTIL` are process-scoped by design for now. They
+  belong to one movie but reach every `strobe` run the bridge arms until it restarts without them;
+  the bridge logs them at each arm and refuses a guard past the end of the file. Per-file settings
+  mean carrying them in the upload, a bridge contract change. Make that change whole rather than
+  half-fixing it, for example by clearing the settings after one run.

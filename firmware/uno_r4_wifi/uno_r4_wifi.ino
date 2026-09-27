@@ -33,12 +33,13 @@ using tasdeck::buttonName;
 using tasdeck::commandTypeName;
 using tasdeck::parseCommand;
 using tasdeck::tasSyncModeName;
+using tasdeck::tasOverreadModeName;
 using tasdeck::tasPlaybackResultName;
 
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v76";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v77";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -55,9 +56,10 @@ constexpr size_t kResponseBufferLength = 1536;
 // Revision 7 cedes 128 rows (3.6 KB) to the RAM-resident NES pin ISRs
 // (.code_in_ram, ~2.6 KB): the strobe fast path's entry-to-release span must
 // beat Golf's 7.8 µs second read, and flash wait states priced that budget
-// at 0.75 cycles/byte. 384 rows still hold seconds of history at every
-// observed row rate, and the anomaly freeze preserves evidence regardless.
-constexpr uint16_t kTasTraceCapacity = 384;
+// at 0.75 cycles/byte. v77 cedes 16 more rows (448 bytes) to the 1024-record
+// TAS ring. 368 rows still hold seconds of history at every observed row
+// rate, and the anomaly freeze preserves evidence regardless.
+constexpr uint16_t kTasTraceCapacity = 368;
 
 // The loop-side pre-advance is best-effort: a blocking USB CDC write can stall
 // the main loop for tens of milliseconds (measured: every bridge exchange cost
@@ -140,6 +142,9 @@ volatile uint8_t controllerDiagWindowKind = 0;
 volatile uint8_t controllerPollsInWindow = 0;
 volatile uint8_t controller2PollsInWindow = 0;
 volatile bool tasOutputEnabled = false;
+// Strobe-mode level for reads past the 8th clock of a train. TAS_BEGIN resets
+// it to preadvance; TAS_OVERREAD selects pressed (a real pad's 1s) or released.
+volatile tasdeck::TasOverreadMode tasOverreadMode = tasdeck::TasOverreadMode::Preadvance;
 TasTraceEntry tasTrace[kTasTraceCapacity] = {};
 volatile uint16_t tasTraceHead = 0;
 volatile uint16_t tasTraceCount = 0;
@@ -421,7 +426,7 @@ void printStartupBanner() {
   Serial.println(kLatchEdgeMode);
   Serial.print("NES clock shift edge: ");
   Serial.println(kClockEdgeMode);
-  Serial.println("Protocol: PING | STATUS | BUTTON [1|2] <button> <down|up> | TAS_BEGIN <frames> poll|latch|strobe [ports] [window_us] | TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum> | TAS_START [delay_frames] | TAS_CANCEL | TAS_END | TAS_STATUS | TAS_TRACE [count] [start] | TAS_TRACE_RESUME");
+  Serial.println("Protocol: PING | STATUS | BUTTON [1|2] <button> <down|up> | TAS_BEGIN <frames> poll|latch|strobe [ports] [window_us] | TAS_CHUNK <start> <count> [ports] <hex_masks> <checksum> | TAS_START [delay_frames] | TAS_CANCEL | TAS_END | TAS_STATUS | TAS_TRACE [count] [start] | TAS_TRACE_RESUME | TAS_OVERREAD preadvance|pressed|released | TAS_GUARD_UNTIL <records>");
   Serial.println("NES pins: P1 latch D2 clock D3 data D6, P2 clock D8 data D7 (latch shared from D2)");
   if (kDiagnosticForcedMask != 0) {
     Serial.print("DIAGNOSTIC: forced controller mask 0x");
@@ -837,7 +842,9 @@ bool processCommandLine(const char* line, char* response, size_t responseLength)
     command.type == CommandType::TasEnd ||
     command.type == CommandType::TasStatus ||
     command.type == CommandType::TasTrace ||
-    command.type == CommandType::TasTraceResume) {
+    command.type == CommandType::TasTraceResume ||
+    command.type == CommandType::TasOverread ||
+    command.type == CommandType::TasGuardUntil) {
     return processTasCommand(command, response, responseLength);
   }
 
@@ -1034,7 +1041,7 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
   snprintf(
     response,
     responseLength,
-    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s irq_path=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu latch_tail_last_cyc=%lu latch_tail_max_cyc=%lu latch_prefetch_masked_last_cyc=%lu latch_prefetch_masked_max_cyc=%lu clock_write_last_cyc=%lu clock_write_max_cyc=%lu",
+    "OK %s fw=%s latch_edge=%s clock_edge=%s active=%u ready=%u start_requested=%u started=%u complete=%u receiving_complete=%u current=%lu total=%lu received=%lu buffered=%u capacity=%u ports=%u mask=%02X mask2=%02X pressed=%02X latched=%02X index=%u data=%u pressed2=%02X latched2=%02X index2=%u data2=%u output_enabled=%u start_delay_polls=%lu window_us=%lu sync=%s irq_path=%s latch=%lu clock=%lu clock2=%lu bare_strobes=%lu torn_strobes=%lu error=%s anomaly_count=%lu anomaly_seq=%lu anomaly_kind=%u trace_frozen=%u latch_isr_last_cyc=%lu latch_isr_max_cyc=%lu latch_head_last_cyc=%lu latch_head_max_cyc=%lu latch_tail_last_cyc=%lu latch_tail_max_cyc=%lu latch_prefetch_masked_last_cyc=%lu latch_prefetch_masked_max_cyc=%lu clock_write_last_cyc=%lu clock_write_max_cyc=%lu overread=%s guard_until=%lu",
     commandName,
     kFirmwareId,
     kLatchEdgeMode,
@@ -1085,7 +1092,9 @@ void formatTasStatusResponse(const char* commandName, char* response, size_t res
     static_cast<unsigned long>(tasLatchPrefetchMaskedLastCycles),
     static_cast<unsigned long>(tasLatchPrefetchMaskedMaxCycles),
     static_cast<unsigned long>(tasClockWriteLastCycles),
-    static_cast<unsigned long>(tasClockWriteMaxCycles));
+    static_cast<unsigned long>(tasClockWriteMaxCycles),
+    tasOverreadModeName(tasOverreadMode),
+    static_cast<unsigned long>(tasPlayback.guardUntil()));
 }
 
 void formatTasChunkResponse(char* response, size_t responseLength) {
@@ -1275,6 +1284,7 @@ bool processTasCommand(const Command& command, char* response, size_t responseLe
       applyNesPinInterruptPriorities(
         command.syncMode == tasdeck::TasSyncMode::Strobe);
       tasOutputEnabled = false;
+      tasOverreadMode = tasdeck::TasOverreadMode::Preadvance;
       resetTasTrace();
       controllerLatchCount = 0;
       controllerClockCount = 0;
@@ -1345,6 +1355,13 @@ bool processTasCommand(const Command& command, char* response, size_t responseLe
     resumeTasTrace();
     interrupts();
     result = TasPlaybackResult::Ok;
+  } else if (command.type == CommandType::TasOverread) {
+    tasOverreadMode = command.overreadMode;
+    result = TasPlaybackResult::Ok;
+  } else if (command.type == CommandType::TasGuardUntil) {
+    noInterrupts();
+    result = tasPlayback.setGuardUntil(command.guardUntil);
+    interrupts();
   } else {
     result = TasPlaybackResult::Invalid;
   }
@@ -1391,6 +1408,16 @@ bool processTasCommand(const Command& command, char* response, size_t responseLe
 
   if (command.type == CommandType::TasTraceResume) {
     formatTasStatusResponse("tas_trace_resume", response, responseLength);
+    return true;
+  }
+
+  if (command.type == CommandType::TasOverread) {
+    formatTasStatusResponse("tas_overread", response, responseLength);
+    return true;
+  }
+
+  if (command.type == CommandType::TasGuardUntil) {
+    formatTasStatusResponse("tas_guard_until", response, responseLength);
     return true;
   }
 
@@ -1838,9 +1865,10 @@ void writeDataPinsForMasks(tasdeck::TasFrameMasks masks) {
 // record's bit 0 — the clock ISR pre-positions that from preAdvancedMasks(),
 // one record ahead. Calling this mid-strobe-playback would overwrite the wire
 // with the stale current-frame bit 0 and reintroduce the v51 dropped-first-bit
-// desync. Today the only strobe caller is the frame-0 release in
-// serviceTasWindowExpiry (where current and next coincide); the started-run
-// expiry is gated off (windowExpiryDue returns false), so this holds.
+// desync. The strobe callers are serviceTasWindowExpiry's frame-0 release and
+// its TAS_GUARD_UNTIL hold upgrade, which both re-latch the record the next
+// strobe will serve first (current and next coincide); every other started
+// strobe expiry is gated off (windowExpiryDue returns false), so this holds.
 void writeDataPins() {
   writeDataPinLevels(dataLineHigh(), port2DataLineHigh());
 }
@@ -2085,6 +2113,20 @@ inline void recordLatchPrefetchMaskedCycles(uint32_t elapsed) {
 // The prefetch never ends the run (it declines when the buffer is exhausted);
 // the completing edge resolves Complete/Underrun through the general path.
 inline void prefetchNextStrobeRecord() {
+  if (tasPlayback.guardUntil() != 0) {
+    // TAS_GUARD_UNTIL: while the current record is guarded, re-arm it so a
+    // re-strobe in the same latch window serves it again; the expiry service
+    // advances once the window closes. armStrobeHold declines past the
+    // boundary and the normal prefetch below takes over.
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    const bool held = tasPlayback.armStrobeHold();
+    __set_PRIMASK(primask);
+    if (held) {
+      return;
+    }
+  }
+
   tasdeck::TasStrobeRecordPrefetch prefetch = {};
   if (
     tasPlayback.previewNextStrobeRecord(prefetch) !=
@@ -2297,7 +2339,10 @@ TASDECK_RAM_ISR void handleStrobeLatchEdge() {
         (pinsAtEntry & kPort2DataBit) == 0 ? 1 : 0;
       resolveStrobeEdgeClockedMasks(strobeCapture);
       countStrobeEdge(strobeCapture, latchCountAtEdge);
-      if (tasOutputEnabled) {
+      // Only preadvance pre-positions the next A after a completed train, so
+      // under pressed/released over-reads the line at the strobe is expected
+      // to differ and the latch head's write is what serves bit 0.
+      if (tasOutputEnabled && tasOverreadMode == tasdeck::TasOverreadMode::Preadvance) {
         const uint8_t expectedLow = (fastMasks.port1 & 0x01) != 0 ? 1 : 0;
         if (controllerDiagLineLowAtLatch != expectedLow) {
           noteTasAnomalyMasked(kTasAnomalyLineMismatch);
@@ -2453,6 +2498,7 @@ TASDECK_RAM_ISR void handleStrobeLatchEdge() {
       // corrected the pin immediately after entry.
       if (
         tasOutputEnabled &&
+        tasOverreadMode == tasdeck::TasOverreadMode::Preadvance &&
         (kind == static_cast<tasdeck::TasEdgeKind>(tasdeck::TasEdgeKind::PreAdvanced) ||
           kind == static_cast<tasdeck::TasEdgeKind>(tasdeck::TasEdgeKind::AdvancedAtEdge) ||
           kind == static_cast<tasdeck::TasEdgeKind>(tasdeck::TasEdgeKind::Started))) {
@@ -2643,9 +2689,17 @@ TASDECK_RAM_ISR __attribute__((noinline)) void handleStrobePort1Clock() {
       // After bit 7, pre-position A for the next strobe. The pre-advanced
       // record normally supplies it; stagedNextMask covers a tail prefetch
       // that has not run yet. This final-clock branch has an inter-strobe
-      // budget rather than Golf's 2.2-us inter-bit budget.
+      // budget rather than Golf's 2.2-us inter-bit budget. TAS_OVERREAD
+      // pressed/released instead holds a fixed level for any reads past the
+      // 8th (SMB2's game-end glitch clocks in pad 1s without a strobe), and
+      // the next strobe's latch head then writes that record's A.
       uint8_t betweenPollMask = controllerPressedMask;
-      if (tasPlayback.preAdvanced()) {
+      const tasdeck::TasOverreadMode overread = tasOverreadMode;
+      if (overread == tasdeck::TasOverreadMode::Pressed) {
+        betweenPollMask = 0x01;
+      } else if (overread == tasdeck::TasOverreadMode::Released) {
+        betweenPollMask = 0x00;
+      } else if (tasPlayback.preAdvanced()) {
         betweenPollMask = tasPlayback.preAdvancedMasks().port1;
       } else if (tasPlayback.willAdvanceOnEdge()) {
         betweenPollMask = tasPlayback.stagedNextMask();
@@ -2791,7 +2845,12 @@ TASDECK_RAM_ISR __attribute__((noinline)) void handleStrobePort2Clock() {
       }
     } else {
       uint8_t betweenPollMask = controller2PressedMask;
-      if (tasPlayback.preAdvanced()) {
+      const tasdeck::TasOverreadMode overread = tasOverreadMode;
+      if (overread == tasdeck::TasOverreadMode::Pressed) {
+        betweenPollMask = 0x01;
+      } else if (overread == tasdeck::TasOverreadMode::Released) {
+        betweenPollMask = 0x00;
+      } else if (tasPlayback.preAdvanced()) {
         betweenPollMask = tasPlayback.preAdvancedMasks().port2;
       } else if (tasPlayback.willAdvanceOnEdge()) {
         betweenPollMask = tasPlayback.stagedNextMasks().port2;

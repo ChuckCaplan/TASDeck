@@ -9,6 +9,7 @@
   const TAS_CONTROLLER_PORT_COUNT = tasApi.TAS_CONTROLLER_PORT_COUNT || 2;
   const HARDWARE_BUTTONS = new Set(["a", "b", "select", "start", "up", "down", "left", "right"]);
   const HARDWARE_ACTIONS = new Set(["down", "up"]);
+  const TAS_OVERREAD_MODES = new Set(["preadvance", "pressed", "released"]);
 
   function isTasSource(source) {
     return typeof source === "string" && source.startsWith(TAS_SOURCE_PREFIX);
@@ -114,6 +115,18 @@
     return "TAS_STATUS";
   }
 
+  // Strobe runs only: records below the boundary are served one per latch window.
+  function tasGuardUntilToBridgeCommand(records) {
+    const normalized = Number(records);
+    return Number.isSafeInteger(normalized) && normalized >= 0 ? `TAS_GUARD_UNTIL ${normalized}` : null;
+  }
+
+  // Strobe runs only: what the firmware serves on reads past the 8th clock.
+  function tasOverreadToBridgeCommand(mode) {
+    const normalized = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+    return TAS_OVERREAD_MODES.has(normalized) ? `TAS_OVERREAD ${normalized}` : null;
+  }
+
   function tasTraceToBridgeCommand(message = {}) {
     const count = normalizeTasTraceCount(message?.count);
     const start = normalizeTasTraceStart(message?.start ?? message?.pageStart ?? message?.page_start);
@@ -180,6 +193,8 @@
     tasCancelToBridgeCommand,
     tasChunkToBridgeCommand,
     tasEndToBridgeCommand,
+    tasGuardUntilToBridgeCommand,
+    tasOverreadToBridgeCommand,
     tasStartToBridgeCommand,
     tasStatusToBridgeCommand,
     tasTraceToBridgeCommand,

@@ -17,6 +17,7 @@ const {
   fileTimestamp,
   formatBootTimingMessage,
   formatTasTraceRowsForFile,
+  formatTraceEventLogHeader,
   handleWebSocketBuffer,
   isCandidateSerialDevice,
   listCandidateSerialPorts,
@@ -26,6 +27,8 @@ const {
   parseTasTraceRows,
   serialPortSttyArgs,
   summarizeBootTiming,
+  tasGuardUntilRecords,
+  tasOverreadMode,
   tasTraceStreamEnabled,
 } = require("../../../scripts/bridge-server.js");
 const { tasRunChecksum } = require("../src/tas.js");
@@ -414,6 +417,29 @@ test("keeps continuous TAS trace streaming opt-in", () => {
   assert.equal(tasTraceStreamEnabled({}), false);
   assert.equal(tasTraceStreamEnabled({ BRIDGE_TAS_TRACE_STREAM: "0" }), false);
   assert.equal(tasTraceStreamEnabled({ BRIDGE_TAS_TRACE_STREAM: "1" }), true);
+});
+
+test("reads the strobe over-read mode from BRIDGE_TAS_OVERREAD", () => {
+  assert.equal(tasOverreadMode({}), "preadvance");
+  assert.equal(tasOverreadMode({ BRIDGE_TAS_OVERREAD: " Pressed " }), "pressed");
+  assert.equal(tasOverreadMode({ BRIDGE_TAS_OVERREAD: "released" }), "released");
+  assert.throws(() => tasOverreadMode({ BRIDGE_TAS_OVERREAD: "ones" }), /BRIDGE_TAS_OVERREAD/);
+});
+
+test("reads the strobe guard boundary from BRIDGE_TAS_GUARD_UNTIL", () => {
+  assert.equal(tasGuardUntilRecords({}), 0);
+  assert.equal(tasGuardUntilRecords({ BRIDGE_TAS_GUARD_UNTIL: " 677 " }), 677);
+  assert.throws(() => tasGuardUntilRecords({ BRIDGE_TAS_GUARD_UNTIL: "-1" }), /BRIDGE_TAS_GUARD_UNTIL/);
+  assert.throws(() => tasGuardUntilRecords({ BRIDGE_TAS_GUARD_UNTIL: "1e3" }), /BRIDGE_TAS_GUARD_UNTIL/);
+});
+
+test("fails a TAS_OVERREAD arm immediately on firmware that predates it", () => {
+  const message = parseTasSerialLine("ERR invalid_command TAS_OVERREAD pressed");
+  assert.equal(message.type, "tas_error");
+  assert.equal(message.error, "tas_overread_unsupported");
+  assert.match(message.message, /v77/);
+  assert.equal(parseTasSerialLine("ERR invalid_command TAS_BOGUS"), null);
+  assert.equal(parseTasSerialLine("ERR invalid_command TAS_GUARD_UNTIL 677").error, "tas_guard_until_unsupported");
 });
 
 test("closes the serial FileHandle after an unexpected read failure", async () => {
@@ -1039,6 +1065,8 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
     paused: false,
     uploadEnded: true,
     startDelayPolls: 12,
+    overread: "pressed",
+    guardUntil: 677,
     firmwareStatus: {
       trace_frozen: 0,
       bare_strobes: 7,
@@ -1058,7 +1086,7 @@ test("streams TAS trace rows to a per-run CSV with a final drain", async () => {
   assert.match(files[0], /\.stream\.csv$/);
   const contents = await fsp.readFile(path.join(traceDir, files[0]), "utf8");
   assert.match(contents, /# tasdeck trace stream v1/);
-  assert.match(contents, /^# delay_polls: 12$/m);
+  assert.match(contents, /^# delay_polls: 12\n# overread: pressed\n# guard_until: 677$/m);
   assert.match(contents, /sequence,timestampMicros,tasFrame/);
   assert.match(contents, /^0,100,0,2,16,8,01,00,01,8,ok,01,03(?:,.*)?$/m);
   assert.match(contents, /^2,300,2,6,48,8,80,00,80,8,ok,80,02(?:,.*)?$/m);
@@ -1445,6 +1473,124 @@ test("bridge-owned TAS arm preserves strobe synchronization and counters", async
   assert.equal(payload.sync, "strobe");
   assert.equal(payload.bare_strobes, 4);
   assert.equal(payload.torn_strobes, 2);
+});
+
+function overreadArmBridge(syncMode, tasOverread, tasGuardUntil = 0, upload = {}) {
+  const bridge = new SerialBridge({ tasOverread, tasGuardUntil });
+  const writes = [];
+  const masks = [0x01, 0x00, 0x80];
+
+  bridge.handle = {
+    async write(command) {
+      writes.push(command);
+      const trimmed = command.trim();
+      if (trimmed.startsWith("TAS_BEGIN")) {
+        bridge.handleSerialBytes(Buffer.from(`OK tas_begin active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=512 ports=1 sync=${syncMode} error=ok overread=preadvance\n`));
+      } else if (trimmed.startsWith("TAS_GUARD_UNTIL")) {
+        bridge.handleSerialBytes(Buffer.from(`OK tas_guard_until active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=1024 ports=1 sync=${syncMode} error=ok overread=${tasOverread} guard_until=${trimmed.split(" ")[1]}\n`));
+      } else if (trimmed.startsWith("TAS_OVERREAD")) {
+        bridge.handleSerialBytes(Buffer.from(`OK tas_overread active=1 ready=0 current=0 total=3 received=0 buffered=0 capacity=512 ports=1 sync=${syncMode} error=ok overread=${tasOverread}\n`));
+      } else if (trimmed.startsWith("TAS_CHUNK")) {
+        bridge.handleSerialBytes(Buffer.from(`OK tas_chunk active=1 ready=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=${syncMode} error=ok\n`));
+      } else if (trimmed === "TAS_END") {
+        bridge.handleSerialBytes(Buffer.from(`OK tas_end active=1 ready=1 receiving_complete=1 current=0 total=3 received=3 buffered=3 capacity=512 ports=1 sync=${syncMode} error=ok overread=${tasOverread} guard_until=${Math.max(0, tasGuardUntil - (upload.skipPolls || 0))}\n`));
+      }
+    },
+  };
+  bridge.portPath = "/dev/cu.usbmodem-test";
+  bridge.serialReady = true;
+  const socketWrites = [];
+  const client = {
+    heldButtons: new Set(),
+    socket: {
+      destroyed: false,
+      write(frame) {
+        socketWrites.push(frame);
+      },
+    },
+  };
+  bridge.addClient(client);
+  const bridgeMessages = () =>
+    socketWrites
+      .map((frame) => JSON.parse(decodeWebSocketFrame(frame).payload.toString("utf8")))
+      .filter((message) => message.type === "bridge" && !message.message.startsWith("Arduino: "))
+      .map((message) => message.message);
+  bridge.handleClientTasMessage(client, {
+    type: "tas_upload",
+    fileName: "run.r08",
+    frameCount: masks.length,
+    inputFrameCount: 2,
+    syncMode,
+    masks,
+    checksum: tasRunChecksum(masks),
+    ...upload,
+  });
+  return { bridge, client, writes, bridgeMessages };
+}
+
+test("bridge-owned strobe arm sends TAS_OVERREAD right after TAS_BEGIN", async () => {
+  const { bridge, client, writes } = overreadArmBridge("strobe", "pressed");
+
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.equal(writes[0], "TAS_BEGIN 3 strobe\n");
+  assert.equal(writes[1], "TAS_OVERREAD pressed\n");
+  assert.ok(writes[2].startsWith("TAS_CHUNK"));
+  assert.equal(bridge.tasStatusPayload("tas_status", bridge.activeTasRun).overread, "pressed");
+});
+
+test("bridge-owned strobe arm sends the guard boundary after the over-read", async () => {
+  const { bridge, client, writes, bridgeMessages } = overreadArmBridge("strobe", "pressed", 2);
+
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.deepEqual(writes.slice(0, 3), ["TAS_BEGIN 3 strobe\n", "TAS_OVERREAD pressed\n", "TAS_GUARD_UNTIL 2\n"]);
+  assert.equal(bridge.tasStatusPayload("tas_status", bridge.activeTasRun).guard_until, 2);
+  // The settings belong to one movie but reach every strobe run, so each arm says so.
+  assert.deepEqual(bridgeMessages(), [
+    "run.r08 arms with BRIDGE_TAS_OVERREAD=pressed and BRIDGE_TAS_GUARD_UNTIL=2 (records below 2 play one per latch window). " +
+      "These apply to every strobe run until the bridge restarts without them.",
+  ]);
+  assert.match(formatTraceEventLogHeader({}, bridge.activeTasRun), /\noverread: pressed\nguard_until: 2\n/);
+});
+
+test("bridge-owned strobe arm refuses a guard boundary past the end of the file", async () => {
+  const { bridge, client, writes, bridgeMessages } = overreadArmBridge("strobe", "preadvance", 4, { skipPolls: 1 });
+
+  await assert.rejects(
+    bridge.handleClientTasMessage(client, { type: "tas_arm" }),
+    /^Error: BRIDGE_TAS_GUARD_UNTIL=4 is past the end of run\.r08, which has 3 records\. Restart the bridge without it/,
+  );
+  assert.deepEqual(writes, []);
+  assert.equal(bridge.activeTasRun.state, "uploaded");
+
+  // The boundary may reach the end exactly, and windowed runs ignore it.
+  const whole = overreadArmBridge("strobe", "preadvance", 3);
+  await whole.bridge.handleClientTasMessage(whole.client, { type: "tas_arm" });
+  assert.equal(whole.writes[1], "TAS_GUARD_UNTIL 3\n");
+  const windowed = overreadArmBridge("poll", "preadvance", 4);
+  await windowed.bridge.handleClientTasMessage(windowed.client, { type: "tas_arm" });
+  assert.equal(windowed.writes[0], "TAS_BEGIN 3 poll\n");
+  assert.deepEqual(windowed.bridgeMessages(), []);
+  assert.deepEqual(bridgeMessages(), []);
+});
+
+test("bridge-owned guard boundary follows Skip first and stays out of windowed runs", async () => {
+  const skipped = overreadArmBridge("strobe", "preadvance", 2, { skipPolls: 1 });
+  await skipped.bridge.handleClientTasMessage(skipped.client, { type: "tas_arm" });
+  assert.equal(skipped.writes[0], "TAS_BEGIN 2 strobe\n");
+  assert.equal(skipped.writes[1], "TAS_GUARD_UNTIL 1\n");
+
+  const windowed = overreadArmBridge("poll", "preadvance", 2);
+  await windowed.bridge.handleClientTasMessage(windowed.client, { type: "tas_arm" });
+  assert.equal(windowed.writes.some((command) => command.startsWith("TAS_GUARD_UNTIL")), false);
+});
+
+test("bridge-owned arm leaves over-reads alone by default and outside strobe mode", async () => {
+  for (const [syncMode, tasOverread] of [["strobe", "preadvance"], ["poll", "pressed"]]) {
+    const { bridge, client, writes } = overreadArmBridge(syncMode, tasOverread);
+    await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+    assert.equal(writes[0], `TAS_BEGIN 3 ${syncMode}\n`);
+    assert.equal(writes.some((command) => command.startsWith("TAS_OVERREAD")), false);
+  }
 });
 
 test("bridge-owned TAS upload streams two-controller masks", async () => {

@@ -189,6 +189,40 @@ glitch"](https://tasvideos.org/7245S) arbitrary-code-execution run writes its pa
 a movie needs `strobe` mode together with a source dump holding one record per latch; a frame-model
 export of it cannot work in any mode, because the per-read variation is already gone from the data.
 
+### Reads Past The Eighth Clock
+
+After the eighth clock of a strobe-mode train, TASDeck by default holds the next record's `A` on the
+data line, so the following strobe finds bit 0 already in place. A real controller instead shifts in
+pressed bits, and BizHawk models that. Most games never read a ninth bit. Super Mario Bros. 2's
+["game end glitch"](https://tasvideos.org/7280M) does: its payload jumps back into the middle of the
+game's read loop without a new strobe and clocks three more bits on port 1 and four on port 2, and
+the bits become code it later executes. With the default level, or with released bits, the game
+pauses instead of reaching the ending. Start the bridge with
+
+```sh
+BRIDGE_TAS_OVERREAD=pressed npm start
+```
+
+to serve pressed bits past the eighth clock in `strobe` runs. The setting belongs to one movie but
+reaches every `strobe` run the bridge arms until it is restarted without the variable: the bridge
+sends `TAS_OVERREAD pressed` after each of their `TAS_BEGIN`s, and the event log names the file and
+the setting at each arm. Windowed modes ignore it. Leave it unset for anything else: fast readers
+such as Golf rely on the default pre-positioned bit.
+
+### Guarded Strobe Prefix
+
+A per-strobe dump of a DPCM game spends one record on every strobe, including the re-reads a DMC
+collision forces, and collisions fall wherever the DMC timer's phase puts them. A cartridge
+power-on fixes that phase; an EverDrive menu launch does not. When only the end of a movie needs
+per-strobe records, collapse the rest to one record per frame and start the bridge with
+`BRIDGE_TAS_GUARD_UNTIL=<records>`: in `strobe` runs, records below that count are served one per
+latch window (every strobe in the window gets the same record, and the next record follows when the
+window closes), and from the boundary on each strobe spends a record again. `Skip first` moves the
+boundary with it. Like `BRIDGE_TAS_OVERREAD`, it reaches every `strobe` run until the bridge restarts
+without it, and the event log says so at each arm; an arm fails when the boundary is past the end of
+the file. [Super Mario Bros. 2's game-end glitch](games/smb2/README.md) is the worked example and has
+the tool that collapses its dump.
+
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.

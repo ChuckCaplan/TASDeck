@@ -28,6 +28,8 @@ const {
   tasCancelToBridgeCommand,
   tasChunkToBridgeCommand,
   tasEndToBridgeCommand,
+  tasGuardUntilToBridgeCommand,
+  tasOverreadToBridgeCommand,
   tasStartToBridgeCommand,
   tasStatusToBridgeCommand,
   tasTraceToBridgeCommand,
@@ -45,10 +47,10 @@ const MAX_EVENT_LOG_BYTES = 4 * 1024 * 1024;
 const BRIDGE_TAS_BUFFER_STATUS_POLL_MS = 500;
 const BRIDGE_TAS_DONE_STATUS_POLL_MS = 1000;
 const BRIDGE_TAS_WAITER_TIMEOUT_MS = 10000;
-const BRIDGE_TAS_TRACE_DEFAULT_COUNT = 384;
-const BRIDGE_TAS_TRACE_MAX_COUNT = 384;
+const BRIDGE_TAS_TRACE_DEFAULT_COUNT = 368;
+const BRIDGE_TAS_TRACE_MAX_COUNT = 368;
 const BRIDGE_TAS_TRACE_PAGE_LIMIT = 12;
-// Optional continuous trace streaming follows the firmware's 384-row ring
+// Optional continuous trace streaming follows the firmware's 368-row ring
 // for the whole run. Keep it off during normal playback: paging trace rows
 // produces near-constant USB CDC traffic, and the Arduino core can briefly
 // mask NES pin interrupts while servicing that traffic. Frozen-ring auto
@@ -123,6 +125,8 @@ class SerialBridge {
     this.tasRunSequence = 0;
     this.tasWaiters = [];
     this.connectPromise = null;
+    this.tasOverread = options.tasOverread ?? tasOverreadMode();
+    this.tasGuardUntil = options.tasGuardUntil ?? tasGuardUntilRecords();
   }
 
   isConnected() {
@@ -497,8 +501,27 @@ class SerialBridge {
     };
   }
 
+  // BRIDGE_TAS_OVERREAD and BRIDGE_TAS_GUARD_UNTIL are set for one movie but apply to every strobe
+  // run this bridge process arms. The guard counts records of the file as loaded; Skip first removes
+  // records from the front, so the boundary moves with them. Windowed runs ignore both.
+  tasStrobeSettings(run) {
+    if (run.syncMode !== "strobe") {
+      return { overread: "", guardUntil: 0 };
+    }
+    if (this.tasGuardUntil > run.originalFrameCount) {
+      throw new Error(
+        `BRIDGE_TAS_GUARD_UNTIL=${this.tasGuardUntil} is past the end of ${run.fileName}, which has ` +
+          `${run.originalFrameCount} records. Restart the bridge without it, or with a boundary for this file.`,
+      );
+    }
+    return { overread: this.tasOverread, guardUntil: Math.max(0, this.tasGuardUntil - run.skipPolls) };
+  }
+
   async armTasRun() {
     const run = this.requireActiveTasRun();
+    const strobeSettings = this.tasStrobeSettings(run);
+    run.overread = strobeSettings.overread;
+    run.guardUntil = strobeSettings.guardUntil;
     run.state = "arming";
     run.paused = false;
     run.stopped = false;
@@ -523,6 +546,32 @@ class SerialBridge {
       (message) => message.command === "tas_begin",
     );
     this.applyTasFirmwareStatus(run, status, "tas_begin");
+
+    // TAS_BEGIN resets the firmware to preadvance and no guard, so only a strobe
+    // run with a bridge setting sends anything extra.
+    const applied = [];
+    if (run.overread && run.overread !== "preadvance") {
+      status = await this.sendFirmwareTasCommand(
+        tasOverreadToBridgeCommand(run.overread),
+        (message) => message.command === "tas_overread",
+      );
+      this.applyTasFirmwareStatus(run, status, "tas_overread");
+      applied.push(`BRIDGE_TAS_OVERREAD=${run.overread}`);
+    }
+    if (run.guardUntil > 0) {
+      status = await this.sendFirmwareTasCommand(
+        tasGuardUntilToBridgeCommand(run.guardUntil),
+        (message) => message.command === "tas_guard_until",
+      );
+      this.applyTasFirmwareStatus(run, status, "tas_guard_until");
+      const skipped = run.skipPolls > 0 ? ` after Skip first ${run.skipPolls}` : "";
+      applied.push(`BRIDGE_TAS_GUARD_UNTIL=${this.tasGuardUntil} (records below ${run.guardUntil}${skipped} play one per latch window)`);
+    }
+    if (applied.length > 0) {
+      this.broadcastBridge(
+        `${run.fileName} arms with ${applied.join(" and ")}. These apply to every strobe run until the bridge restarts without them.`,
+      );
+    }
 
     while (this.activeTasRun === run && !run.stopped && !run.paused && run.nextFrameIndex < run.frameCount && !tasStatusReady(status)) {
       status = await this.waitForTasBufferSpace(run, status);
@@ -1227,6 +1276,8 @@ class SerialBridge {
           `# bridge_run_id: ${run.id}`,
           `# effective_polls: ${run.frameCount}`,
           `# delay_polls: ${run.startDelayPolls ?? ""}`,
+          `# overread: ${run.overread ?? ""}`,
+          `# guard_until: ${run.guardUntil ?? ""}`,
           `# started: ${startedAt.toISOString()}`,
           TAS_TRACE_CSV_HEADER,
         ];
@@ -1320,6 +1371,8 @@ class SerialBridge {
       anomaly_seq: status.anomaly_seq ?? firmwareStatus.anomaly_seq ?? 0,
       anomaly_kind: status.anomaly_kind ?? firmwareStatus.anomaly_kind ?? 0,
       trace_frozen: status.trace_frozen ?? firmwareStatus.trace_frozen ?? 0,
+      overread: status.overread ?? firmwareStatus.overread ?? "",
+      guard_until: status.guard_until ?? firmwareStatus.guard_until ?? 0,
       error: status.error || firmwareStatus.error || run.error || "ok",
       message: status.message || `Bridge TAS ${bridgeState}`,
     };
@@ -1729,7 +1782,11 @@ class SerialBridge {
 }
 
 function createServer(options = {}) {
-  const serialBridge = new SerialBridge({ serialPort: options.serialPort });
+  const serialBridge = new SerialBridge({
+    serialPort: options.serialPort,
+    tasOverread: options.tasOverread,
+    tasGuardUntil: options.tasGuardUntil,
+  });
   const server = http.createServer((request, response) => {
     serveStatic(request, response).catch((error) => {
       response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
@@ -2411,7 +2468,7 @@ async function writeSerialData(handle, data) {
 }
 
 function parseTasSerialLine(line) {
-  const okMatch = /^OK\s+(tas_begin|tas_chunk|tas_cancel|tas_start|tas_end|tas_status|tas_trace|tas_trace_resume)\b(.*)$/i.exec(line);
+  const okMatch = /^OK\s+(tas_begin|tas_chunk|tas_cancel|tas_start|tas_end|tas_status|tas_trace|tas_trace_resume|tas_overread|tas_guard_until)\b(.*)$/i.exec(line);
   if (okMatch) {
     const command = okMatch[1].toLowerCase();
     return {
@@ -2419,6 +2476,18 @@ function parseTasSerialLine(line) {
       command,
       message: line,
       ...parseKeyValueTokens(okMatch[2]),
+    };
+  }
+
+  // Firmware older than v77 rejects TAS_OVERREAD and TAS_GUARD_UNTIL as unknown
+  // commands. Fail the arm now rather than after the response timeout.
+  const unsupportedMatch = /^ERR\s+invalid_command\s+TAS_(OVERREAD|GUARD_UNTIL)\b/i.exec(line);
+  if (unsupportedMatch) {
+    const setting = unsupportedMatch[1].toUpperCase();
+    return {
+      type: "tas_error",
+      error: `tas_${setting.toLowerCase()}_unsupported`,
+      message: `${line} (BRIDGE_TAS_${setting} needs Arduino firmware v77 or newer)`,
     };
   }
 
@@ -2615,6 +2684,8 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `delay_polls: ${run?.startDelayPolls ?? metadata.delayPolls ?? ""}`,
     `boot_timing: ${run?.bootTimingMessage ?? ""}`,
     `sync_mode: ${metadata.syncMode ?? run?.syncMode ?? HARDWARE_TAS_SYNC_MODE}`,
+    `overread: ${run?.overread ?? ""}`,
+    `guard_until: ${run?.guardUntil ?? ""}`,
     `port_count: ${metadata.portCount ?? run?.portCount ?? ""}`,
     `original_polls: ${metadata.originalPolls ?? run?.originalFrameCount ?? ""}`,
     `effective_polls: ${metadata.effectivePolls ?? run?.frameCount ?? ""}`,
@@ -2895,6 +2966,32 @@ function tasTraceStreamEnabled(env = process.env) {
   return String(env.BRIDGE_TAS_TRACE_STREAM || "").trim() === "1";
 }
 
+// BRIDGE_TAS_OVERREAD picks what strobe runs serve on reads past the 8th clock:
+// preadvance (default), pressed (a real controller's 1s), or released.
+function tasOverreadMode(env = process.env) {
+  const value = String(env.BRIDGE_TAS_OVERREAD || "").trim().toLowerCase();
+  if (value === "") {
+    return "preadvance";
+  }
+  if (!tasOverreadToBridgeCommand(value)) {
+    throw new Error(`BRIDGE_TAS_OVERREAD must be preadvance, pressed, or released: ${env.BRIDGE_TAS_OVERREAD}`);
+  }
+  return value;
+}
+
+// BRIDGE_TAS_GUARD_UNTIL=N: in strobe runs, records below N are one per latch
+// window instead of one per strobe. 0 or unset disables it.
+function tasGuardUntilRecords(env = process.env) {
+  const raw = String(env.BRIDGE_TAS_GUARD_UNTIL || "").trim();
+  if (raw === "") {
+    return 0;
+  }
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+    throw new Error(`BRIDGE_TAS_GUARD_UNTIL must be a record count: ${env.BRIDGE_TAS_GUARD_UNTIL}`);
+  }
+  return Number(raw);
+}
+
 function printHelp() {
   console.log(`Usage: node scripts/bridge-server.js [options]
 
@@ -2903,6 +3000,12 @@ Options:
   --port <port>          Port to bind. Default: PORT or ${DEFAULT_PORT}
   --serial-port <port>   Override automatic Arduino lookup. Also accepts SERIAL_PORT or ARDUINO_PORT
   --no-open              Do not open the local browser
+
+Environment:
+  BRIDGE_TAS_OVERREAD    preadvance (default), pressed, or released: what strobe
+                         runs serve on reads past the 8th clock of a train
+  BRIDGE_TAS_GUARD_UNTIL record count: in strobe runs, records below it play one
+                         per latch window (DPCM re-strobes spend nothing)
 
 The server serves apps/web and exposes the USB middleware at /bridge.`);
 }
@@ -2988,7 +3091,18 @@ async function main() {
     return;
   }
 
-  const { server, serialBridge } = createServer({ serialPort: args.serialPort });
+  let tasOverread;
+  let tasGuardUntil;
+  try {
+    tasOverread = tasOverreadMode();
+    tasGuardUntil = tasGuardUntilRecords();
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 2;
+    return;
+  }
+
+  const { server, serialBridge } = createServer({ serialPort: args.serialPort, tasOverread, tasGuardUntil });
 
   server.listen(args.port, args.host, () => {
     const urls = localUrls(args.host, args.port);
@@ -2996,6 +3110,12 @@ async function main() {
     console.log(`Local URL: ${urls[0]}`);
     urls.slice(1).forEach((url) => console.log(`LAN URL:   ${url}`));
     console.log(`USB serial: ${args.serialPort || "auto-detect on connect"}`);
+    if (tasOverread !== "preadvance") {
+      console.log(`Strobe over-read: ${tasOverread} (BRIDGE_TAS_OVERREAD)`);
+    }
+    if (tasGuardUntil > 0) {
+      console.log(`Strobe guard: records below ${tasGuardUntil} play one per latch window (BRIDGE_TAS_GUARD_UNTIL)`);
+    }
 
     if (args.openBrowser) {
       openBrowser(urls[0]);
@@ -3052,6 +3172,7 @@ module.exports = {
   fileTimestamp,
   findSerialPort,
   formatBootTimingMessage,
+  formatTraceEventLogHeader,
   getContentType,
   handleWebSocketBuffer,
   isCandidateSerialDevice,
@@ -3064,6 +3185,8 @@ module.exports = {
   resolveStaticPath,
   serialPortSttyArgs,
   summarizeBootTiming,
+  tasGuardUntilRecords,
+  tasOverreadMode,
   tasTraceStreamEnabled,
   formatTasTraceRowsForFile,
 };

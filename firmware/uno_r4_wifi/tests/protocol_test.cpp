@@ -17,6 +17,7 @@ using tasdeck::TasFrameMasks;
 using tasdeck::TasEdgeKind;
 using tasdeck::TasPlaybackResult;
 using tasdeck::TasStrobeRecordPrefetch;
+using tasdeck::TasOverreadMode;
 using tasdeck::TasSyncMode;
 using tasdeck::actionName;
 using tasdeck::buttonMask;
@@ -26,6 +27,7 @@ using tasdeck::parseCommand;
 using tasdeck::tasChunkChecksum;
 using tasdeck::tasPlaybackResultName;
 using tasdeck::tasSyncModeName;
+using tasdeck::tasOverreadModeName;
 
 namespace {
 
@@ -197,6 +199,25 @@ void testTasProtocolCommands() {
   assert(parseCommand("TAS_TRACE_RESUME", command));
   assert(command.type == CommandType::TasTraceResume);
   assert(std::strcmp(commandTypeName(command.type), "tas_trace_resume") == 0);
+
+  assert(parseCommand("TAS_OVERREAD pressed", command));
+  assert(command.type == CommandType::TasOverread);
+  assert(command.overreadMode == TasOverreadMode::Pressed);
+  assert(std::strcmp(commandTypeName(command.type), "tas_overread") == 0);
+  assert(std::strcmp(tasOverreadModeName(command.overreadMode), "pressed") == 0);
+
+  assert(parseCommand("tas_overread RELEASED", command));
+  assert(command.overreadMode == TasOverreadMode::Released);
+  assert(std::strcmp(tasOverreadModeName(command.overreadMode), "released") == 0);
+
+  assert(parseCommand("TAS_GUARD_UNTIL 677", command));
+  assert(command.type == CommandType::TasGuardUntil);
+  assert(command.guardUntil == 677);
+  assert(std::strcmp(commandTypeName(command.type), "tas_guard_until") == 0);
+
+  assert(parseCommand("TAS_OVERREAD preadvance", command));
+  assert(command.overreadMode == TasOverreadMode::Preadvance);
+  assert(std::strcmp(tasOverreadModeName(command.overreadMode), "preadvance") == 0);
 }
 
 void testInvalidCommandsResetOutput() {
@@ -276,6 +297,21 @@ void testInvalidCommandsResetOutput() {
   assert(command.type == CommandType::Invalid);
 
   assert(!parseCommand("TAS_TRACE_RESUME now", command));
+  assert(command.type == CommandType::Invalid);
+
+  assert(!parseCommand("TAS_OVERREAD", command));
+  assert(command.type == CommandType::Invalid);
+
+  assert(!parseCommand("TAS_OVERREAD ones", command));
+  assert(command.type == CommandType::Invalid);
+  assert(command.overreadMode == TasOverreadMode::Unknown);
+
+  assert(!parseCommand("TAS_OVERREAD pressed now", command));
+  assert(command.type == CommandType::Invalid);
+
+  assert(!parseCommand("TAS_GUARD_UNTIL", command));
+  assert(!parseCommand("TAS_GUARD_UNTIL -1", command));
+  assert(!parseCommand("TAS_GUARD_UNTIL 1 2", command));
   assert(command.type == CommandType::Invalid);
 
   assert(!parseCommand("UNKNOWN", command));
@@ -1287,6 +1323,101 @@ void testTasStrobePlaybackPreAdvancesFromTail() {
   assert(prefetchNextStrobeRecord(playback, nextMasks) == TasPlaybackResult::Waiting);
 }
 
+// Mirrors prefetchNextStrobeRecord() in the sketch: a guarded record re-arms
+// itself, anything else prefetches the next record.
+TasPlaybackResult armStrobeTail(NesTasPlayback& playback, TasFrameMasks& nextMasks) {
+  if (playback.armStrobeHold()) {
+    nextMasks = playback.currentMasks();
+    return TasPlaybackResult::Ok;
+  }
+  return prefetchNextStrobeRecord(playback, nextMasks);
+}
+
+// TAS_GUARD_UNTIL: records below the boundary are one per latch window, so a
+// DPCM re-strobe re-serves the record and the expiry service advances; from
+// the boundary on every strobe consumes a record again (SMB2's game-end
+// glitch: frame records for gameplay, per-strobe records for the payload).
+void testTasStrobeGuardedPrefixServesOneRecordPerWindow() {
+  NesTasPlayback playback;
+  const uint8_t masks[] = {0x02, 0x40, 0x81, 0x10, 0x20};
+  uint8_t nextMask = 0xff;
+  TasFrameMasks nextMasks = {};
+
+  assert(playback.begin(5, TasSyncMode::Poll, 8000) == TasPlaybackResult::Ok);
+  assert(playback.setGuardUntil(2) == TasPlaybackResult::Invalid);
+
+  assert(playback.begin(5, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.setGuardUntil(6) == TasPlaybackResult::Invalid);
+  assert(playback.setGuardUntil(2) == TasPlaybackResult::Ok);
+  assert(playback.guardUntil() == 2);
+  assert(playback.pushChunk(0, masks, 5) == TasPlaybackResult::Ok);
+  assert(playback.finishReceiving() == TasPlaybackResult::Ok);
+  assert(playback.start(0) == TasPlaybackResult::Ok);
+  assert(playback.setGuardUntil(1) == TasPlaybackResult::Invalid);
+
+  // Frame-0 release is unchanged.
+  assert(playback.onWindowExpired(1000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+
+  // First frame: the edge commits record 0; a re-strobe that beats the tail
+  // re-serves it on the general path instead of spending record 1.
+  assert(playback.onLatchEdge(5000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.onLatchEdge(5100, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x02);
+  assert(playback.currentFrame() == 0);
+  assert(playback.lastEdgeKind() == TasEdgeKind::SameWindow);
+
+  // The tail arms a hold, so a later re-strobe in the window takes the fast
+  // commit and still gets record 0.
+  assert(armStrobeTail(playback, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x02);
+  assert(playback.preAdvanced());
+  assert(!playback.windowExpiryDue(5100 + 7999));
+  assert(playback.tryCommitPreAdvancedEdge(5300, nextMasks));
+  assert(nextMasks.port1 == 0x02);
+  assert(playback.currentFrame() == 0);
+  assert(armStrobeTail(playback, nextMasks) == TasPlaybackResult::Ok);
+
+  // The window closes: the expiry service replaces the hold with record 1.
+  assert(!playback.windowExpiryDue(5300 + 7999));
+  assert(playback.windowExpiryDue(5300 + 8000));
+  assert(playback.onWindowExpired(5300 + 8000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x40);
+  assert(playback.currentFrame() == 1);
+  assert(playback.preAdvanced());
+  assert(!playback.windowExpiryDue(5300 + 9000));
+
+  // Second frame, still guarded.
+  assert(playback.tryCommitPreAdvancedEdge(21700, nextMasks));
+  assert(nextMasks.port1 == 0x40);
+  assert(armStrobeTail(playback, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x40);
+  assert(playback.onWindowExpired(21700 + 8000, nextMask) == TasPlaybackResult::Ok);
+  assert(nextMask == 0x81);
+  assert(playback.currentFrame() == 2);
+
+  // Record 2 is the boundary: per-strobe again, every edge spends a record
+  // even inside the window, and the expiry service stays out of it.
+  assert(playback.tryCommitPreAdvancedEdge(38400, nextMasks));
+  assert(nextMasks.port1 == 0x81);
+  assert(armStrobeTail(playback, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x10);
+  assert(playback.currentFrame() == 3);
+  assert(!playback.windowExpiryDue(38400 + 9000));
+  assert(playback.tryCommitPreAdvancedEdge(38600, nextMasks));
+  assert(nextMasks.port1 == 0x10);
+  assert(armStrobeTail(playback, nextMasks) == TasPlaybackResult::Ok);
+  assert(nextMasks.port1 == 0x20);
+  assert(playback.tryCommitPreAdvancedEdge(38800, nextMasks));
+  assert(armStrobeTail(playback, nextMasks) == TasPlaybackResult::Waiting);
+  assert(playback.onLatchEdge(39000, nextMask) == TasPlaybackResult::Complete);
+
+  // TAS_BEGIN clears the guard.
+  assert(playback.begin(5, TasSyncMode::Strobe, 8000) == TasPlaybackResult::Ok);
+  assert(playback.guardUntil() == 0);
+}
+
 void testTasStrobeFastPathCommitInline() {
   NesTasPlayback playback;
   const uint8_t masks[] = {0x02, 0x40};
@@ -1498,7 +1629,7 @@ void testTasPlaybackRejectsOutOfOrderAndOverflowChunks() {
   assert(std::strcmp(tasPlaybackResultName(playback.error()), "out_of_order") == 0);
 
   playback.reset();
-  assert(playback.begin(1000, TasSyncMode::Poll, 8000) == TasPlaybackResult::Ok);
+  assert(playback.begin(tasdeck::kTasBufferCapacity + 2 * tasdeck::kTasChunkFrameLimit, TasSyncMode::Poll, 8000) == TasPlaybackResult::Ok);
   uint8_t chunk[tasdeck::kTasChunkFrameLimit] = {};
   uint32_t startIndex = 0;
   while (startIndex + tasdeck::kTasChunkFrameLimit <= tasdeck::kTasBufferCapacity) {
@@ -1584,6 +1715,7 @@ int main() {
   testTasStrobePlaybackAdvancesOnEveryEdge();
   testTasStrobePlaybackDelayAndWindowService();
   testTasStrobePlaybackPreAdvancesFromTail();
+  testTasStrobeGuardedPrefixServesOneRecordPerWindow();
   testTasStrobeFastPathCommitInline();
   testTasStrobeFastPathSplitCommitAndTimestamp();
   testTasStrobePrefetchRejectsPreviewStaleAfterNestedLatch();

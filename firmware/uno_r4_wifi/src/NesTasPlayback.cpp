@@ -112,6 +112,19 @@ TasPlaybackResult NesTasPlayback::start(uint32_t startDelayFrames) {
   return TasPlaybackResult::Ok;
 }
 
+TasPlaybackResult NesTasPlayback::setGuardUntil(uint32_t records) {
+  if (!active()) {
+    return TasPlaybackResult::Inactive;
+  }
+
+  if (syncMode_ != TasSyncMode::Strobe || startRequested_ || started_ || records > totalFrames_) {
+    return TasPlaybackResult::Invalid;
+  }
+
+  guardUntil_ = records;
+  return TasPlaybackResult::Ok;
+}
+
 TasPlaybackResult NesTasPlayback::finishReceiving() {
   if (!active()) {
     return TasPlaybackResult::Inactive;
@@ -152,6 +165,12 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
       return lastWindowResult_;
     }
 
+    const bool sameGuardWindow =
+      started_ &&
+      currentFrame_ < guardUntil_ &&
+      hasLatched_ &&
+      static_cast<int32_t>(nowMicros - lastLatchMicros_) <
+        static_cast<int32_t>(latchWindowMicros_);
     hasLatched_ = true;
     lastLatchMicros_ = nowMicros;
 
@@ -175,6 +194,12 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
       nextMasks = currentPipelineMasks();
       result = TasPlaybackResult::Ok;
       lastEdgeKind_ = TasEdgeKind::Started;
+    } else if (sameGuardWindow) {
+      // A guarded record re-strobed before its tail armed the hold: serve it
+      // again rather than spend the next record.
+      nextMasks = currentPipelineMasks();
+      result = TasPlaybackResult::Ok;
+      lastEdgeKind_ = TasEdgeKind::SameWindow;
     } else {
       result = advanceFrame(nextMasks);
       lastEdgeKind_ = result == TasPlaybackResult::Ok
@@ -256,7 +281,7 @@ TasPlaybackResult NesTasPlayback::onLatchEdge(uint32_t nowMicros, TasFrameMasks&
 }
 
 bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
-  if (!active() || preAdvanced_) {
+  if (!active() || (preAdvanced_ && !holdArmed_)) {
     return false;
   }
 
@@ -283,8 +308,9 @@ bool NesTasPlayback::windowExpiryDue(uint32_t nowMicros) const {
     // µs at menus, far inside the 8 ms holdoff), so those edges fell to the
     // general path and its full-length PRIMASK hold merged the console's slow
     // read train. Only the !started_ frame-0 release above still runs here;
-    // every started edge is armed by the edge before it.
-    return false;
+    // every started edge is armed by the edge before it, except that a guarded
+    // record's hold is replaced by the next record once its window closes.
+    return holdArmed_;
   }
 
   return pollCompletedInWindow_;
@@ -316,6 +342,10 @@ TasPlaybackResult NesTasPlayback::onWindowExpired(uint32_t nowMicros, TasFrameMa
     result = TasPlaybackResult::Ok;
   } else {
     pollCompletedInWindow_ = false;
+    if (holdArmed_) {
+      holdArmed_ = false;
+      preAdvanced_ = false;
+    }
     result = advanceFrame(nextMasks);
   }
 
@@ -477,6 +507,7 @@ void NesTasPlayback::reset() {
   latchWindowMicros_ = kTasDefaultLatchWindowMicros;
   lastLatchMicros_ = 0;
   startDelayRemaining_ = 0;
+  guardUntil_ = 0;
   syncMode_ = TasSyncMode::Unknown;
   error_ = TasPlaybackResult::Ok;
   lastWindowResult_ = TasPlaybackResult::Waiting;
@@ -487,6 +518,7 @@ void NesTasPlayback::reset() {
   hasLatched_ = false;
   pollCompletedInWindow_ = false;
   preAdvanced_ = false;
+  holdArmed_ = false;
   lastEdgeKind_ = TasEdgeKind::SameWindow;
 }
 

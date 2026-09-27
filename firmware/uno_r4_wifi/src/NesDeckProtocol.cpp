@@ -517,6 +517,38 @@ bool parseCommand(const char* line, Command& command) {
     return parseTasTraceCommand(tokens, command);
   }
 
+  if (equalsIgnoreCase(tokens.values[0], "tas_overread")) {
+    if (tokens.count != 2) {
+      return false;
+    }
+
+    TasOverreadMode mode = TasOverreadMode::Unknown;
+    if (equalsIgnoreCase(tokens.values[1], "preadvance")) {
+      mode = TasOverreadMode::Preadvance;
+    } else if (equalsIgnoreCase(tokens.values[1], "pressed")) {
+      mode = TasOverreadMode::Pressed;
+    } else if (equalsIgnoreCase(tokens.values[1], "released")) {
+      mode = TasOverreadMode::Released;
+    } else {
+      return false;
+    }
+
+    command.type = CommandType::TasOverread;
+    command.overreadMode = mode;
+    return true;
+  }
+
+  if (equalsIgnoreCase(tokens.values[0], "tas_guard_until")) {
+    uint32_t records = 0;
+    if (tokens.count != 2 || !parseUnsigned(tokens.values[1], records)) {
+      return false;
+    }
+
+    command.type = CommandType::TasGuardUntil;
+    command.guardUntil = records;
+    return true;
+  }
+
   return false;
 }
 
@@ -544,6 +576,10 @@ const char* commandTypeName(CommandType type) {
       return "tas_trace";
     case CommandType::TasTraceResume:
       return "tas_trace_resume";
+    case CommandType::TasOverread:
+      return "tas_overread";
+    case CommandType::TasGuardUntil:
+      return "tas_guard_until";
     case CommandType::Invalid:
     default:
       return "invalid";
@@ -595,6 +631,20 @@ const char* tasSyncModeName(TasSyncMode syncMode) {
     case TasSyncMode::Strobe:
       return "strobe";
     case TasSyncMode::Unknown:
+    default:
+      return "unknown";
+  }
+}
+
+const char* tasOverreadModeName(TasOverreadMode mode) {
+  switch (mode) {
+    case TasOverreadMode::Preadvance:
+      return "preadvance";
+    case TasOverreadMode::Pressed:
+      return "pressed";
+    case TasOverreadMode::Released:
+      return "released";
+    case TasOverreadMode::Unknown:
     default:
       return "unknown";
   }

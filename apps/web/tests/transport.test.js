@@ -9,6 +9,8 @@ const {
   tasEndToBridgeCommand,
   tasStartToBridgeCommand,
   tasStatusToBridgeCommand,
+  tasGuardUntilToBridgeCommand,
+  tasOverreadToBridgeCommand,
   tasTraceToBridgeCommand,
 } = require("../src/transport.js");
 
@@ -154,4 +156,19 @@ test("rejects malformed hardware TAS protocol messages", () => {
     }),
     null,
   );
+});
+
+test("formats strobe over-read commands", () => {
+  assert.equal(tasOverreadToBridgeCommand("pressed"), "TAS_OVERREAD pressed");
+  assert.equal(tasOverreadToBridgeCommand(" Released "), "TAS_OVERREAD released");
+  assert.equal(tasOverreadToBridgeCommand("preadvance"), "TAS_OVERREAD preadvance");
+  assert.equal(tasOverreadToBridgeCommand("ones"), null);
+  assert.equal(tasOverreadToBridgeCommand(undefined), null);
+});
+
+test("formats strobe guard commands", () => {
+  assert.equal(tasGuardUntilToBridgeCommand(677), "TAS_GUARD_UNTIL 677");
+  assert.equal(tasGuardUntilToBridgeCommand(0), "TAS_GUARD_UNTIL 0");
+  assert.equal(tasGuardUntilToBridgeCommand(-1), null);
+  assert.equal(tasGuardUntilToBridgeCommand(1.5), null);
 });

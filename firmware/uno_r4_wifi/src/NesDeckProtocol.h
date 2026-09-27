@@ -30,6 +30,8 @@ enum class CommandType {
   TasStatus,
   TasTrace,
   TasTraceResume,
+  TasOverread,
+  TasGuardUntil,
 };
 
 enum class Button {
@@ -57,6 +59,16 @@ enum class TasSyncMode {
   Strobe,
 };
 
+// What a strobe-mode run serves on reads past the 8th clock of a train. A
+// real controller shifts in pressed (1) bits; TASDeck's default instead holds
+// the next record's A so the following strobe finds it already on the wire.
+enum class TasOverreadMode {
+  Unknown,
+  Preadvance,
+  Pressed,
+  Released,
+};
+
 struct TasFrameMasks {
   uint8_t port1 = 0;
   uint8_t port2 = 0;
@@ -79,6 +91,8 @@ struct Command {
   uint8_t traceCount = kTasTracePageLimit;
   uint32_t traceStart = 0;
   bool traceHasStart = false;
+  TasOverreadMode overreadMode = TasOverreadMode::Unknown;
+  uint32_t guardUntil = 0;
 };
 
 bool parseCommand(const char* line, Command& command);
@@ -89,6 +103,7 @@ const char* commandTypeName(CommandType type);
 const char* buttonName(Button button);
 const char* actionName(Action action);
 const char* tasSyncModeName(TasSyncMode syncMode);
+const char* tasOverreadModeName(TasOverreadMode mode);
 
 }  // namespace tasdeck
 
