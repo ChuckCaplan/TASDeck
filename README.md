@@ -2,7 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChuckCaplan/TASDeck/ci.yml?branch=main&logo=github&label=CI)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
 [![YouTube](https://img.shields.io/badge/YouTube-console%20verifications-informational?logo=youtube&logoColor=white)](https://www.youtube.com/@TASDeck)
-[![Verified runs](https://img.shields.io/badge/verified%20runs-40-success)](#verified-tas-runs)
+[![Verified runs](https://img.shields.io/badge/verified%20runs-41-success)](#verified-tas-runs)
 
 TASDeck lets you control a real NES from a browser and play tool-assisted speedrun (TAS) files on
 real hardware using an Arduino UNO R4. The browser provides live controller input and TAS
@@ -97,7 +97,7 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 
 ## Verified TAS Runs
 
-The following **40** runs have completed successfully on real NES hardware with TASDeck.
+The following **41** runs have completed successfully on real NES hardware with TASDeck.
 
 Unless the notes say otherwise, each run uses the defaults: a `.tdmask` plays in `completed reads`
 sync mode at start delay 0, an `.r08` plays in `per strobe` mode at start delay 1, both controller
@@ -117,6 +117,7 @@ ports are driven, and `Skip first` is 0.
 | Double Dribble by ShesChardcore | 01:46.06 | [5087M](https://tasvideos.org/5087M) | `.bk2` | EverDrive N8 Pro | `.tdmask` converted with `npm run bk2`. |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro | — |
 | [Golf by link_7777](https://www.youtube.com/watch?v=OwDKHgDyLVg) | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, primed work RAM, and a per-console start delay (255 on the verified console) — see [Golf and uninitialized work RAM](docs/games/golf-uninitialized-ram.md) |
+| Kaizo Mario Bros. 3 by Lord_Tom | 14:42.71 | [3119M](https://tasvideos.org/3119M) | `.fm2` | EverDrive N8 Pro | ROM hack: Obitus1's v1.0 patch ([romhacking.net 2477](https://www.romhacking.net/hacks/2477/)) on the SMB3 PRG1 ROM. `.tdmask` converted with `npm run bk2` from Alyosha's [BizHawk resync](https://github.com/alyosha-tas/NES_replay_files/blob/main/bk2_files/lordtom-kaizomariobros3.bk2), whose input is the `.fm2`'s one frame earlier; its per-latch `.r08` desyncs before the first level on DPCM re-reads |
 | [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro | — |
 | [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0 |
 | [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro | — |
