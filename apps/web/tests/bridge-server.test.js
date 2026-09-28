@@ -29,6 +29,7 @@ const {
   summarizeBootTiming,
   tasGuardUntilRecords,
   tasOverreadMode,
+  tasWindowMicros,
   tasTraceStreamEnabled,
 } = require("../../../scripts/bridge-server.js");
 const { tasRunChecksum } = require("../src/tas.js");
@@ -431,6 +432,16 @@ test("reads the strobe guard boundary from BRIDGE_TAS_GUARD_UNTIL", () => {
   assert.equal(tasGuardUntilRecords({ BRIDGE_TAS_GUARD_UNTIL: " 677 " }), 677);
   assert.throws(() => tasGuardUntilRecords({ BRIDGE_TAS_GUARD_UNTIL: "-1" }), /BRIDGE_TAS_GUARD_UNTIL/);
   assert.throws(() => tasGuardUntilRecords({ BRIDGE_TAS_GUARD_UNTIL: "1e3" }), /BRIDGE_TAS_GUARD_UNTIL/);
+});
+
+test("reads the windowed latch window from BRIDGE_TAS_WINDOW_US", () => {
+  assert.equal(tasWindowMicros({}), 0);
+  assert.equal(tasWindowMicros({ BRIDGE_TAS_WINDOW_US: " 4000 " }), 4000);
+  assert.equal(tasWindowMicros({ BRIDGE_TAS_WINDOW_US: "500" }), 500);
+  assert.equal(tasWindowMicros({ BRIDGE_TAS_WINDOW_US: "15000" }), 15000);
+  for (const value of ["499", "15001", "4e3", "-4000", "4000us"]) {
+    assert.throws(() => tasWindowMicros({ BRIDGE_TAS_WINDOW_US: value }), /BRIDGE_TAS_WINDOW_US must be 500-15000/);
+  }
 });
 
 test("fails a TAS_OVERREAD arm immediately on firmware that predates it", () => {
@@ -1475,8 +1486,8 @@ test("bridge-owned TAS arm preserves strobe synchronization and counters", async
   assert.equal(payload.torn_strobes, 2);
 });
 
-function overreadArmBridge(syncMode, tasOverread, tasGuardUntil = 0, upload = {}) {
-  const bridge = new SerialBridge({ tasOverread, tasGuardUntil });
+function overreadArmBridge(syncMode, tasOverread, tasGuardUntil = 0, upload = {}, tasWindowUs = 0) {
+  const bridge = new SerialBridge({ tasOverread, tasGuardUntil, tasWindowUs });
   const writes = [];
   const masks = [0x01, 0x00, 0x80];
 
@@ -1571,6 +1582,25 @@ test("bridge-owned strobe arm refuses a guard boundary past the end of the file"
   assert.equal(windowed.writes[0], "TAS_BEGIN 3 poll\n");
   assert.deepEqual(windowed.bridgeMessages(), []);
   assert.deepEqual(bridgeMessages(), []);
+});
+
+test("bridge-owned windowed arm sends BRIDGE_TAS_WINDOW_US in TAS_BEGIN and says so", async () => {
+  const { bridge, client, writes, bridgeMessages } = overreadArmBridge("poll", "preadvance", 0, {}, 4000);
+
+  await bridge.handleClientTasMessage(client, { type: "tas_arm" });
+  assert.equal(writes[0], "TAS_BEGIN 3 poll 1 4000\n");
+  assert.ok(writes[1].startsWith("TAS_CHUNK"));
+  assert.deepEqual(bridgeMessages(), [
+    "run.r08 arms with BRIDGE_TAS_WINDOW_US=4000 (latch window 4000 µs). " +
+      "It applies to every poll and latch run until the bridge restarts without it.",
+  ]);
+  assert.match(formatTraceEventLogHeader({}, bridge.activeTasRun), /\nguard_until: 0\nwindow_us: 4000\n/);
+
+  // Strobe runs keep the firmware default.
+  const strobe = overreadArmBridge("strobe", "preadvance", 0, {}, 4000);
+  await strobe.bridge.handleClientTasMessage(strobe.client, { type: "tas_arm" });
+  assert.equal(strobe.writes[0], "TAS_BEGIN 3 strobe\n");
+  assert.deepEqual(strobe.bridgeMessages(), []);
 });
 
 test("bridge-owned guard boundary follows Skip first and stays out of windowed runs", async () => {

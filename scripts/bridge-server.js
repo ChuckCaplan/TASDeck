@@ -22,6 +22,8 @@ const {
   tasRunChecksum,
 } = require("../apps/web/src/tas.js");
 const {
+  TAS_MAX_WINDOW_US,
+  TAS_MIN_WINDOW_US,
   eventToBridgeCommand,
   formatTasChunkCommand,
   tasBeginToBridgeCommand,
@@ -127,6 +129,7 @@ class SerialBridge {
     this.connectPromise = null;
     this.tasOverread = options.tasOverread ?? tasOverreadMode();
     this.tasGuardUntil = options.tasGuardUntil ?? tasGuardUntilRecords();
+    this.tasWindowUs = options.tasWindowUs ?? tasWindowMicros();
   }
 
   isConnected() {
@@ -522,6 +525,9 @@ class SerialBridge {
     const strobeSettings = this.tasStrobeSettings(run);
     run.overread = strobeSettings.overread;
     run.guardUntil = strobeSettings.guardUntil;
+    // BRIDGE_TAS_WINDOW_US is the windowed counterpart: it reaches every poll and
+    // latch run, and strobe runs keep the firmware default.
+    run.windowUs = run.syncMode === "strobe" ? 0 : this.tasWindowUs;
     run.state = "arming";
     run.paused = false;
     run.stopped = false;
@@ -536,6 +542,7 @@ class SerialBridge {
       frameCount: run.frameCount,
       syncMode: run.syncMode,
       portCount: run.portCount,
+      windowUs: run.windowUs,
     });
     if (!beginCommand) {
       throw new Error("TAS run has an invalid frame count, sync mode, or port count.");
@@ -546,6 +553,12 @@ class SerialBridge {
       (message) => message.command === "tas_begin",
     );
     this.applyTasFirmwareStatus(run, status, "tas_begin");
+    if (run.windowUs > 0) {
+      this.broadcastBridge(
+        `${run.fileName} arms with BRIDGE_TAS_WINDOW_US=${run.windowUs} (latch window ${run.windowUs} µs). ` +
+          "It applies to every poll and latch run until the bridge restarts without it.",
+      );
+    }
 
     // TAS_BEGIN resets the firmware to preadvance and no guard, so only a strobe
     // run with a bridge setting sends anything extra.
@@ -1278,6 +1291,7 @@ class SerialBridge {
           `# delay_polls: ${run.startDelayPolls ?? ""}`,
           `# overread: ${run.overread ?? ""}`,
           `# guard_until: ${run.guardUntil ?? ""}`,
+          `# window_us: ${run.windowUs || ""}`,
           `# started: ${startedAt.toISOString()}`,
           TAS_TRACE_CSV_HEADER,
         ];
@@ -1786,6 +1800,7 @@ function createServer(options = {}) {
     serialPort: options.serialPort,
     tasOverread: options.tasOverread,
     tasGuardUntil: options.tasGuardUntil,
+    tasWindowUs: options.tasWindowUs,
   });
   const server = http.createServer((request, response) => {
     serveStatic(request, response).catch((error) => {
@@ -2686,6 +2701,7 @@ function formatTraceEventLogHeader(metadata, run, timestamp = new Date()) {
     `sync_mode: ${metadata.syncMode ?? run?.syncMode ?? HARDWARE_TAS_SYNC_MODE}`,
     `overread: ${run?.overread ?? ""}`,
     `guard_until: ${run?.guardUntil ?? ""}`,
+    `window_us: ${run?.windowUs || ""}`,
     `port_count: ${metadata.portCount ?? run?.portCount ?? ""}`,
     `original_polls: ${metadata.originalPolls ?? run?.originalFrameCount ?? ""}`,
     `effective_polls: ${metadata.effectivePolls ?? run?.frameCount ?? ""}`,
@@ -2992,6 +3008,22 @@ function tasGuardUntilRecords(env = process.env) {
   return Number(raw);
 }
 
+// BRIDGE_TAS_WINDOW_US=N: poll and latch runs coalesce latches closer than N
+// microseconds into one frame instead of the firmware's 8000. Unset keeps it.
+function tasWindowMicros(env = process.env) {
+  const raw = String(env.BRIDGE_TAS_WINDOW_US || "").trim();
+  if (raw === "") {
+    return 0;
+  }
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || value < TAS_MIN_WINDOW_US || value > TAS_MAX_WINDOW_US) {
+    throw new Error(
+      `BRIDGE_TAS_WINDOW_US must be ${TAS_MIN_WINDOW_US}-${TAS_MAX_WINDOW_US} microseconds: ${env.BRIDGE_TAS_WINDOW_US}`,
+    );
+  }
+  return value;
+}
+
 function printHelp() {
   console.log(`Usage: node scripts/bridge-server.js [options]
 
@@ -3006,6 +3038,8 @@ Environment:
                          runs serve on reads past the 8th clock of a train
   BRIDGE_TAS_GUARD_UNTIL record count: in strobe runs, records below it play one
                          per latch window (DPCM re-strobes spend nothing)
+  BRIDGE_TAS_WINDOW_US   ${TAS_MIN_WINDOW_US}-${TAS_MAX_WINDOW_US}: latch window for poll and latch runs, in
+                         microseconds (firmware default 8000)
 
 The server serves apps/web and exposes the USB middleware at /bridge.`);
 }
@@ -3093,16 +3127,18 @@ async function main() {
 
   let tasOverread;
   let tasGuardUntil;
+  let tasWindowUs;
   try {
     tasOverread = tasOverreadMode();
     tasGuardUntil = tasGuardUntilRecords();
+    tasWindowUs = tasWindowMicros();
   } catch (error) {
     console.error(error.message);
     process.exitCode = 2;
     return;
   }
 
-  const { server, serialBridge } = createServer({ serialPort: args.serialPort, tasOverread, tasGuardUntil });
+  const { server, serialBridge } = createServer({ serialPort: args.serialPort, tasOverread, tasGuardUntil, tasWindowUs });
 
   server.listen(args.port, args.host, () => {
     const urls = localUrls(args.host, args.port);
@@ -3115,6 +3151,9 @@ async function main() {
     }
     if (tasGuardUntil > 0) {
       console.log(`Strobe guard: records below ${tasGuardUntil} play one per latch window (BRIDGE_TAS_GUARD_UNTIL)`);
+    }
+    if (tasWindowUs > 0) {
+      console.log(`Latch window: ${tasWindowUs} µs for poll and latch runs (BRIDGE_TAS_WINDOW_US)`);
     }
 
     if (args.openBrowser) {
@@ -3188,5 +3227,6 @@ module.exports = {
   tasGuardUntilRecords,
   tasOverreadMode,
   tasTraceStreamEnabled,
+  tasWindowMicros,
   formatTasTraceRowsForFile,
 };

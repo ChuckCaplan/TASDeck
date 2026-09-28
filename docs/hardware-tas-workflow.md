@@ -339,6 +339,22 @@ without it, and the event log says so at each arm; an arm fails when the boundar
 the file. [Super Mario Bros. 2's game-end glitch](games/smb2/README.md) is the worked example and has
 the tool that collapses its dump.
 
+### Latch Window
+
+`poll` and `latch` runs treat latches closer together than 8 ms as one frame. A game that polls
+late in one frame, less than 8 ms before the next frame's read, has its two frames merged into one
+record, and every later record reaches the console a frame late. A continuous trace shows it as a
+record spanning one more frame of latches than the movie gives it. Start the bridge with
+
+```sh
+BRIDGE_TAS_WINDOW_US=3000 npm start
+```
+
+to use a shorter window, in microseconds (500-15000). Keep it above the longest gap between two
+reads inside one frame, DPCM re-reads included; the trace's latch timestamps give both numbers.
+Like the strobe settings, it reaches every `poll` and `latch` run until the bridge restarts without
+it, and the event log says so at each arm. `strobe` runs keep the default.
+
 Before arming playback:
 
 - Put the cartridge or EverDrive and game at the exact state expected by the movie.

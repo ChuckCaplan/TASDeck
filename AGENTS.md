@@ -172,7 +172,7 @@ Keyboard controls use the common NES emulator mapping:
 
 Hardware TAS playback uploads a parsed mask stream to the bridge, then the bridge streams chunks to
 the Arduino. The Arduino advances through masks according to NES controller latch timing rather than
-a browser timer. In the windowed `poll` and `latch` modes, latch edges closer together than the latch window (default 8 ms) are the same
+a browser timer. In the windowed `poll` and `latch` modes, latch edges closer together than the latch window (default 8 ms, `BRIDGE_TAS_WINDOW_US` overrides it) are the same
 console frame and re-serve the current mask; expiry after a wider gap advances to the next mask, but
 only when the previous window contained a completed 8-clock read (bare boot strobes and latch noise
 never consume masks) in `poll` mode. `latch` mode grants advancement credit to every accepted window
@@ -356,8 +356,9 @@ are the constraints that shape implementation decisions:
   have been observed to starve the upload into a buffer underrun that resembles a desync. Treat
   strict upload priority as the real fix if this is revisited; see [Continuous Trace
   Capture](docs/hardware-tas-workflow.md#continuous-trace-capture).
-- `BRIDGE_TAS_OVERREAD` and `BRIDGE_TAS_GUARD_UNTIL` are process-scoped by design for now. They
-  belong to one movie but reach every `strobe` run the bridge arms until it restarts without them;
-  the bridge logs them at each arm and refuses a guard past the end of the file. Per-file settings
+- `BRIDGE_TAS_OVERREAD`, `BRIDGE_TAS_GUARD_UNTIL` and `BRIDGE_TAS_WINDOW_US` are process-scoped by
+  design for now. They belong to one movie but reach every run of their modes (`strobe` for the first
+  two, `poll`/`latch` for the window, sent as `TAS_BEGIN`'s `window_us`) until the bridge restarts
+  without them; the bridge logs them at each arm and refuses a guard past the end of the file. Per-file settings
   mean carrying them in the upload, a bridge contract change. Make that change whole rather than
   half-fixing it, for example by clearing the settings after one run.

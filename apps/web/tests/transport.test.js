@@ -109,6 +109,15 @@ test("formats hardware TAS protocol commands", () => {
     tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 120, syncMode: "strobe", portCount: 2 }),
     "TAS_BEGIN 120 strobe 2",
   );
+  // A window override always names the port count, even for one port.
+  assert.equal(
+    tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 120, syncMode: "poll", windowUs: 4000 }),
+    "TAS_BEGIN 120 poll 1 4000",
+  );
+  assert.equal(
+    tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 120, syncMode: "latch", portCount: 2, windowUs: 500 }),
+    "TAS_BEGIN 120 latch 2 500",
+  );
   assert.equal(
     tasChunkToBridgeCommand({
       type: "tas_chunk",
@@ -144,6 +153,9 @@ test("rejects malformed hardware TAS protocol messages", () => {
   assert.equal(tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 0, syncMode: "poll" }), null);
   assert.equal(tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 1, syncMode: "60" }), null);
   assert.equal(tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 1, syncMode: "frame" }), null);
+  assert.equal(tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 1, syncMode: "poll", windowUs: 499 }), null);
+  assert.equal(tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 1, syncMode: "poll", windowUs: 15001 }), null);
+  assert.equal(tasBeginToBridgeCommand({ type: "tas_begin", frameCount: 1, syncMode: "poll", windowUs: 4000.5 }), null);
   assert.equal(tasStartToBridgeCommand({ type: "tas_start", delayPolls: -1 }), null);
   assert.equal(tasTraceToBridgeCommand({ type: "tas_trace", count: 13 }), null);
   assert.equal(tasTraceToBridgeCommand({ type: "tas_trace", count: 1, start: -1 }), null);

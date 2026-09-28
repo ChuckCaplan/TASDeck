@@ -10,6 +10,9 @@
   const HARDWARE_BUTTONS = new Set(["a", "b", "select", "start", "up", "down", "left", "right"]);
   const HARDWARE_ACTIONS = new Set(["down", "up"]);
   const TAS_OVERREAD_MODES = new Set(["preadvance", "pressed", "released"]);
+  // Firmware TAS_BEGIN window_us bounds (kTasMin/MaxLatchWindowMicros).
+  const TAS_MIN_WINDOW_US = 500;
+  const TAS_MAX_WINDOW_US = 15000;
 
   function isTasSource(source) {
     return typeof source === "string" && source.startsWith(TAS_SOURCE_PREFIX);
@@ -41,16 +44,23 @@
     const frameCount = Number(message?.frameCount);
     const syncMode = message?.syncMode || HARDWARE_TAS_SYNC_MODE;
     const portCount = normalizeTasPortCount(message?.portCount ?? message?.ports ?? message?.controllerPorts);
+    const windowUs = message?.windowUs ? Number(message.windowUs) : 0;
 
     if (
       !Number.isSafeInteger(frameCount) ||
       frameCount <= 0 ||
       !HARDWARE_TAS_SYNC_MODES.has(syncMode) ||
-      portCount === null
+      portCount === null ||
+      !(windowUs === 0 || (Number.isSafeInteger(windowUs) && windowUs >= TAS_MIN_WINDOW_US && windowUs <= TAS_MAX_WINDOW_US))
     ) {
       return null;
     }
 
+    // A latch window override always names the port count: the firmware reads
+    // a lone fourth token as either, by value range.
+    if (windowUs > 0) {
+      return `TAS_BEGIN ${frameCount} ${syncMode} ${portCount} ${windowUs}`;
+    }
     return portCount === 1
       ? `TAS_BEGIN ${frameCount} ${syncMode}`
       : `TAS_BEGIN ${frameCount} ${syncMode} ${portCount}`;
@@ -187,6 +197,8 @@
   }
 
   const api = {
+    TAS_MAX_WINDOW_US,
+    TAS_MIN_WINDOW_US,
     eventToBridgeCommand,
     formatTasChunkCommand,
     tasBeginToBridgeCommand,
