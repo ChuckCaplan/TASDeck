@@ -75,6 +75,8 @@ against a synthetic ROM; set `TASDECK_SKIP_FCEUX_TESTS=1` to skip them.
   shared by the app and tests.
 - `apps/web/tests/tas.test.js`: Web helper tests.
 - `apps/web/tests/transport.test.js`: Web transport command-formatting tests.
+- `apps/web/tests/readme.test.js`: Checks that the README's verified-run count (badge and the
+  sentence above the Verified TAS Runs table) matches the table. Adding a run means updating both.
 - `apps/web/tests/bridge-server.test.js`: Middleware, WebSocket, serial, upload, and trace tests.
 - `apps/web/tests/convert-bk2-to-tasdeck-mask.test.js`: BizHawk BK2 converter wrapper tests.
 - `apps/web/tests/convert-fm2-to-tasdeck-mask.test.js`: FCEUX FM2 converter wrapper tests, including

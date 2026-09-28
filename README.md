@@ -2,6 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChuckCaplan/TASDeck/ci.yml?branch=main&logo=github&label=CI)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
 [![YouTube](https://img.shields.io/badge/YouTube-console%20verifications-informational?logo=youtube&logoColor=white)](https://www.youtube.com/@TASDeck)
+[![Verified runs](https://img.shields.io/badge/verified%20runs-40-success)](#verified-tas-runs)
 
 TASDeck lets you control a real NES from a browser and play tool-assisted speedrun (TAS) files on
 real hardware using an Arduino UNO R4. The browser provides live controller input and TAS
@@ -96,7 +97,7 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 
 ## Verified TAS Runs
 
-The following runs have completed successfully on real NES hardware with TASDeck.
+The following **40** runs have completed successfully on real NES hardware with TASDeck.
 
 Unless the notes say otherwise, each run uses the defaults: a `.tdmask` plays in `completed reads`
 sync mode at start delay 0, an `.r08` plays in `per strobe` mode at start delay 1, both controller
@@ -136,6 +137,7 @@ ports are driven, and `Skip first` is 0.
 | [Super Mario Bros. 3 — "warps" by Lord_Tom, Maru & Tompa](https://www.youtube.com/watch?v=gfD4Rx75C1g) | 10:24.338 | [3922M](https://tasvideos.org/3922M) | `.fm2` | Real cartridge | — |
 | [Super Mario Bros. 3 — "game end glitch" by Lord_Tom & Tompa](https://www.youtube.com/watch?v=A12l7o14aHw) | 02:54.98 | [4288S](https://tasvideos.org/4288S) | `.fm2` | Real cartridge & EverDrive N8 Pro | Wins the game on World 7-1 |
 | Super Mario Bros. 3 — "game end glitch" by OnehundredthCoin | 00:00.316 | [4554M](https://tasvideos.org/4554M) | `.bk2` | EverDrive N8 Pro | 2 controllers. Plays the `.bk2` converted to one record per latch, [`smb3-032-100thCoin-latched-598.r08`](docs/games/smb3/smb3-032-100thCoin-latched-598.r08) — see [Super Mario Bros. 3 game-end glitch in 0.32 seconds](docs/games/smb3/README.md) |
+| Super Mario Bros. 3 — "arbitrary code execution, playaround" (Total Control) by Lord_Tom | 08:16.233 | [3050M](https://tasvideos.org/3050M) | `.fm2` | Real cartridge & EverDrive N8 Pro | 2 controllers; needs the PRG1 ROM and the bridge started with `BRIDGE_TAS_WINDOW_US=3000` — see [Latch Window](docs/hardware-tas-workflow.md#latch-window) |
 | [Tecmo Super Bowl by Arc](https://www.youtube.com/watch?v=vCKRAUU1gmQ) | 07:10.092 | [5171M](https://tasvideos.org/5171M) | `.fm2` | EverDrive N8 Pro | — |
 | [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro | — |
 | [Tetris — "playaround" by Baxter](https://www.youtube.com/watch?v=FT3IpLBWAPE) | 02:17.36 | [1502M](https://tasvideos.org/1502M) | `.fm2` | EverDrive N8 Pro | — |
