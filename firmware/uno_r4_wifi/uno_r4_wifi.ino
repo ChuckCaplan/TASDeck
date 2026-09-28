@@ -39,7 +39,7 @@ using tasdeck::tasPlaybackResultName;
 namespace {
 
 constexpr unsigned long kBaudRate = 115200;
-constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v77";
+constexpr const char* kFirmwareId = "tasdeck-uno-r4-serial-latchwin-v78";
 constexpr const char* kTransportMode = "serial";
 constexpr const char* kLatchEdgeMode = "rising";
 constexpr const char* kClockEdgeMode = "rising";
@@ -78,7 +78,7 @@ constexpr uint8_t kTasServiceTimerPriority = 12;
 constexpr uint16_t kTasTraceFreezeContextPolls = 240;
 
 // Anomaly kinds reported in tas_status and marked in trace diag bit 4.
-constexpr uint8_t kTasAnomalyTornTrain = 1;      // strobe hit a mid-shift register
+constexpr uint8_t kTasAnomalyTornTrain = 1;      // strobe hit a mid-shift register (counted only)
 constexpr uint8_t kTasAnomalyLineMismatch = 2;   // pre-advanced first bit absent at strobe
 constexpr uint8_t kTasAnomalyClockedMismatch = 3;  // reconstructed wire != served mask
 constexpr uint8_t kTasAnomalyReRead = 4;         // 3rd poll in one window (counted only)
@@ -1506,16 +1506,21 @@ void noteTasAnomaly(uint8_t kind) {
   // healthy line, and DMC-heavy re-read-until-match games (Zelda-class) burst
   // past the storm threshold every few seconds while serving stays bit-perfect,
   // so freezing on them buries the ring in benign captures and drowns the
-  // serial link in back-to-back auto trace dumps. Genuinely unstable serving
-  // still trips kinds 2/3, which detect it directly.
+  // serial link in back-to-back auto trace dumps. Torn trains (kind 1) are the
+  // same benign class: SMB3 Total Control's quadruple-read payload frames
+  // re-strobe mid-shift hundreds of times per band while serving stays
+  // bit-perfect, and each freeze blinded a continuous trace stream for ~3 s.
+  // Genuinely unstable serving still trips kinds 2/3, which detect it directly.
   tasAnomalyCount += 1;
   tasAnomalyPendingMark = 1;
-  const bool freezeWorthy = kind != kTasAnomalyReRead && kind != kTasAnomalyReReadStorm;
-  // Freeze-worthy events own anomaly_kind/anomaly_seq. A benign re-read only
+  const bool freezeWorthy =
+    kind == kTasAnomalyLineMismatch || kind == kTasAnomalyClockedMismatch;
+  // Freeze-worthy events own anomaly_kind/anomaly_seq. A counted-only kind
   // fills them provisionally while nothing worse has been seen, so a later
   // real fault still reports its own kind and sequence.
   const bool provisionalKind =
-    tasAnomalyKind == kTasAnomalyReRead || tasAnomalyKind == kTasAnomalyReReadStorm;
+    tasAnomalyKind == kTasAnomalyTornTrain || tasAnomalyKind == kTasAnomalyReRead ||
+    tasAnomalyKind == kTasAnomalyReReadStorm;
   if (tasAnomalyKind == 0 || (freezeWorthy && provisionalKind)) {
     tasAnomalyKind = kind;
     tasAnomalySequence = tasTraceNextSequence;

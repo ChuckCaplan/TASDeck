@@ -168,7 +168,10 @@ sync mode; there is no game list, movie-specific firmware, or mode branch on eve
 rows, and each firmware response returns up to 12 rows so the middleware
 can page through larger captures without overflowing the serial response buffer.
 `TAS_TRACE_RESUME` clears a frozen trace/anomaly latch after the bridge has saved it, allowing the
-next anomaly to freeze a fresh window. Each row includes sequence, timestamp micros, TAS frame,
+next anomaly to freeze a fresh window. Only a missing pre-advanced first bit (kind 2) or a
+reconstructed-wire mismatch (kind 3) freezes the ring; torn trains (kind 1) and guard re-reads
+(kinds 4 and 5) are counted only, because DPCM games produce them constantly while serving stays
+bit-perfect. Each row includes sequence, timestamp micros, TAS frame,
 latch count, clock count, clocks since latch, polled mask, next mask, latched mask, shift index,
 result, the `clockedMask`
 reconstructed from the active port data-line
