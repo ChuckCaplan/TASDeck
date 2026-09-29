@@ -131,18 +131,20 @@ case-insensitive; paths are absolute.
 | `overread` | replay | `preadvance`, `pressed` or `released` after the eighth clock (`strobe` only) |
 | `ports` | replay | 2; with 1, port 2 reads released |
 | `startupOffset`, `idleSynch`, `cpuPhase`, `dmcTimer` | both | Power-on state: `ppu.start_up_offset` (default 4), `ppu.idleSynch`, `ppu.cpu_stepcounter` (0-2), `apu.dmc.timer` (1020 at power-on) |
-| `ram` | both | `everdrive`, `random:<seed>` or `fill:<byte>`; unset keeps BizHawk's power-on RAM |
+| `ram` | both | `everdrive`, `fceux` (the `00 00 00 00 FF FF FF FF` pattern, zero page included), `everdrive+ff:<hex,...>` (the EverDrive pattern with those addresses set to `$FF`, for finding an uninitialised byte), `random:<seed>` or `fill:<byte>`; unset keeps BizHawk's power-on RAM |
 | `launchFrames`, `launchCycle` | replay | EverDrive launch: frames run first, and the CPU cycle in the frame to reset at |
 | `tailFrames` | both | Frames to run after the last input or record (600) |
 | `checkpointEvery`, `checkpointOffset` | both | Screen checkpoint spacing in latches, and the file record number of the job's first record (`Skip first` plus any records a variant drops); checkpoints and `divergence` report file record numbers |
 | `reference`, `writeReference` | replay | Reference screens to compare with; or save this run's as one |
+| `latchLog` | replay | Write `latches.csv`: one line per armed latch with its frame, CPU cycle, each port's reads since the previous latch, and the record it serves, then the read timing since the previous latch in CPU cycles: each port's first read after that latch and shortest gap between reads, the gap from the last read to this latch, and the latch-to-latch gap (-1 where there were no reads). Lines up with a hardware `.trace` by record number |
 | `maxFrames` | replay | Stop a run that never uses its last record |
 
 A movie job writes `summary.json`, `latches.bin` (one record per latch), `frames.bin` (source frame
 and pads per polled frame), `latches.csv`, `reference.bin` and `end.png`. A replay job writes
-`summary.json`, `end.png`, `divergence.png` when it parted from the movie, and `reference.bin` with
-`writeReference`. `check --power-on` sweeps `startupOffset` -4, 0, 4, 8 with both `idleSynch` values
-and all three `cpuPhase` values; `dmcTimer` is only reachable from a job file.
+`summary.json`, `end.png`, `divergence.png` when it parted from the movie, `reference.bin` with
+`writeReference`, and `latches.csv` with `latchLog`. `check --power-on` sweeps `startupOffset` -4,
+0, 4, 8 with both `idleSynch` values and all three `cpuPhase` values; `dmcTimer` is only reachable
+from a job file.
 
 ## Earlier Harness Features Not In The Tool
 

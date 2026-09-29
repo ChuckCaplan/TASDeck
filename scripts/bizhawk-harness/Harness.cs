@@ -54,6 +54,7 @@ sealed class Job
 	public int MaxFrames;
 	public string Reference;
 	public bool WriteReference;
+	public bool LatchLog;
 	public string OutDir;
 }
 
@@ -511,6 +512,19 @@ static class Program
 			// The EverDrive N8 loader clears the zero page and leaves 00 00 00 00 FF FF FF FF elsewhere.
 			for (int i = 0; i < 0x800; i++) nes.ram[i] = i < 0x100 ? (byte)0 : ((i & 4) != 0 ? (byte)0xFF : (byte)0);
 		}
+		else if (job.Ram.StartsWith("everdrive+ff:"))
+		{
+			// The EverDrive pattern with chosen addresses set to $FF (hex, comma-separated): for finding
+			// which uninitialised byte a movie depends on.
+			for (int i = 0; i < 0x800; i++) nes.ram[i] = i < 0x100 ? (byte)0 : ((i & 4) != 0 ? (byte)0xFF : (byte)0);
+			foreach (var a in job.Ram.Substring(13).Split(',', StringSplitOptions.RemoveEmptyEntries)) nes.ram[Convert.ToInt32(a, 16)] = 0xFF;
+		}
+		else if (job.Ram == "fceux")
+		{
+			// FCEUX's and BizHawk's power-on pattern with the zero page included: what a cartridge
+			// power-on (or Vi Grey's RAM primer) gives, unlike the EverDrive loader.
+			for (int i = 0; i < 0x800; i++) nes.ram[i] = (i & 4) != 0 ? (byte)0xFF : (byte)0;
+		}
 		else if (job.Ram.StartsWith("random:"))
 		{
 			new Random(int.Parse(job.Ram.Substring(7))).NextBytes(nes.ram);
@@ -785,14 +799,28 @@ static class Program
 		int strobe = 0, latches = 0, lastRecordFrame = -1;
 		var checkpoints = new List<(int Record, int Frame, double Similarity, byte[] Reference, byte[] Screen)>();
 		int bareLatches = 0;
+		var latchLog = job.LatchLog ? new StringBuilder("latch,frame,cycle,readsP1Before,readsP2Before,served,firstReadP1Cyc,minReadGapP1Cyc,firstReadP2Cyc,minReadGapP2Cyc,lastReadToLatchCyc,latchToLatchCyc\n") : null;
 		string overread = job.Overread;
 
+		// Read timing per port since the last latch, for the latch log: how soon the console reads after
+		// the strobe, how close its reads come, and how soon the next strobe follows the last read.
+		long trainLatchCycle = -1;
+		var firstRead = new long[] { -1, -1 };
+		var lastRead = new long[] { -1, -1 };
+		var minReadGap = new long[] { -1, -1 };
 		NESCore.HookJoyReadPre = addr =>
 		{
 			if (strobe != 0) return;
 			int p = addr == 0x4016 ? 0 : 1;
 			stats.Reads[p]++;
 			if (armed && stats.Reads[p] == 8) model.NotePollCompleted(p);
+			if (latchLog != null && armed)
+			{
+				long c = nes.cpu.TotalExecutedCycles;
+				if (firstRead[p] < 0) firstRead[p] = c;
+				else if (minReadGap[p] < 0 || c - lastRead[p] < minReadGap[p]) minReadGap[p] = c - lastRead[p];
+				lastRead[p] = c;
+			}
 		};
 		ControllerNES.OverreadLevel = port =>
 		{
@@ -810,9 +838,24 @@ static class Program
 			if (armed && strobe == 0 && bit == 1)
 			{
 				if (latches > 0 && stats.Reads[0] == 0 && stats.Reads[1] == 0) bareLatches++;
+				int readsBefore1 = stats.Reads[0], readsBefore2 = stats.Reads[1];
 				stats.CloseLatch();
 				int before = model.HighestServed;
 				model.OnLatchEdge(nes.cpu.TotalExecutedCycles);
+				// One line per armed latch: the reads each port made since the previous latch, then
+				// where this latch landed and which record it serves. Lines up with hardware traces.
+				if (latchLog != null)
+				{
+					long now = nes.cpu.TotalExecutedCycles;
+					long lastAny = Math.Max(lastRead[0], lastRead[1]);
+					latchLog.Append(latches).Append(',').Append(frame).Append(',').Append(now).Append(',')
+						.Append(readsBefore1).Append(',').Append(readsBefore2).Append(',').Append(model.HighestServed).Append(',')
+						.Append(firstRead[0] >= 0 && trainLatchCycle >= 0 ? firstRead[0] - trainLatchCycle : -1).Append(',').Append(minReadGap[0]).Append(',')
+						.Append(firstRead[1] >= 0 && trainLatchCycle >= 0 ? firstRead[1] - trainLatchCycle : -1).Append(',').Append(minReadGap[1]).Append(',')
+						.Append(lastAny >= 0 ? now - lastAny : -1).Append(',').Append(trainLatchCycle >= 0 ? now - trainLatchCycle : -1).Append('\n');
+					trainLatchCycle = now;
+					firstRead[0] = firstRead[1] = lastRead[0] = lastRead[1] = minReadGap[0] = minReadGap[1] = -1;
+				}
 				pads.P1 = model.Served1;
 				pads.P2 = model.Served2;
 				latches++;
@@ -895,6 +938,7 @@ static class Program
 			worst = Math.Min(worst, sim);
 		}
 		Screens.WritePng(Path.Combine(job.OutDir, "end.png"), endScreen);
+		if (latchLog != null) File.WriteAllText(Path.Combine(job.OutDir, "latches.csv"), latchLog.ToString());
 
 		// Where the run left the movie for good: the first checkpoint after which none matches again.
 		// Earlier mismatches that recover (leftover screens after an EverDrive launch) don't count.
