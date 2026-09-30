@@ -2,7 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChuckCaplan/TASDeck/ci.yml?branch=main&logo=github&label=CI)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
 [![YouTube](https://img.shields.io/badge/YouTube-console%20verifications-informational?logo=youtube&logoColor=white)](https://www.youtube.com/@TASDeck)
-[![Verified runs](https://img.shields.io/badge/verified%20runs-40-success)](#verified-tas-runs)
+[![Verified runs](https://img.shields.io/badge/verified%20runs-41-success)](#verified-tas-runs)
 
 TASDeck lets you control a real NES from a browser and play tool-assisted speedrun (TAS) files on
 real hardware using an Arduino UNO R4. The browser provides live controller input and TAS
@@ -97,7 +97,7 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 
 ## Verified TAS Runs
 
-The following **40** runs have completed successfully on real NES hardware with TASDeck.
+The following **41** runs have completed successfully on real NES hardware with TASDeck.
 
 Unless the notes say otherwise, each run uses the defaults: a `.tdmask` plays in `completed reads`
 sync mode at start delay 0, an `.r08` plays in `per strobe` mode at start delay 1, both controller
@@ -106,6 +106,7 @@ ports are driven, and `Skip first` is 0.
 | Game and run | Time | TAS Link | Original Format | Hardware | Notes |
 | --- | ---: | --- | --- | --- | --- |
 | [Arkanoid — "warpless" by eien86](https://www.youtube.com/watch?v=_Aq-DNFsMJ8) | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro | — |
+| Batman by Aglar | 09:21.93 | [1049M](https://tasvideos.org/1049M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0. Plays TASBot's frame dump `algar-batman.frame.r08` |
 | [Battletoads — "game end glitch", 2 players by MESHUGGAH, feos & Koh1fds](https://www.youtube.com/watch?v=D_07CxTXzIw) | 00:55.66 | [3528M](https://tasvideos.org/3528M) | `.r08` | Real cartridge | 2 controllers, start delay 4. Resync: the published `.r08` plus one P1 Right press after its last input, [`Battletoads_GEG+tail1830R.r08`](docs/games/battletoads/Battletoads_GEG+tail1830R.r08) — see [Battletoads](docs/games/battletoads/README.md) |
 | [Battletoads — "warpless, 2 players" by Lobsterzelda](https://www.youtube.com/watch?v=yU8oSNCAbnU) | 19:15.11 | [4267M](https://tasvideos.org/4267M) | `.r08` | Real cartridge | 2 controllers; boot lottery, plays out only on some power-on boots — see [Battletoads](docs/games/battletoads/README.md) |
 | [Battletoads — "warps, 2 players" by Lobsterzelda](https://www.youtube.com/watch?v=6aBn6uj1ANk) | 10:40.61 | [4271M](https://tasvideos.org/4271M) | `.r08` | Real cartridge | 2 controllers; boot lottery, plays out only on some power-on boots — see [Battletoads](docs/games/battletoads/README.md) |
