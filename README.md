@@ -1,6 +1,6 @@
 # TASDeck
 
-[![CI](https://img.shields.io/github/actions/workflow/status/ChuckCaplan/TASDeck/ci.yml?branch=main&logo=github&label=CI)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
+[![CI](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
 [![YouTube](https://img.shields.io/badge/YouTube-console%20verifications-informational?logo=youtube&logoColor=white)](https://www.youtube.com/@TASDeck)
 [![Verified runs](https://img.shields.io/badge/verified%20runs-51-success)](#verified-tas-runs)
 
