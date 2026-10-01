@@ -2,7 +2,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChuckCaplan/TASDeck/ci.yml?branch=main&logo=github&label=CI)](https://github.com/ChuckCaplan/TASDeck/actions/workflows/ci.yml)
 [![YouTube](https://img.shields.io/badge/YouTube-console%20verifications-informational?logo=youtube&logoColor=white)](https://www.youtube.com/@TASDeck)
-[![Verified runs](https://img.shields.io/badge/verified%20runs-41-success)](#verified-tas-runs)
+[![Verified runs](https://img.shields.io/badge/verified%20runs-51-success)](#verified-tas-runs)
 
 TASDeck lets you control a real NES from a browser and play tool-assisted speedrun (TAS) files on
 real hardware using an Arduino UNO R4. The browser provides live controller input and TAS
@@ -97,7 +97,7 @@ Browser UI  <-- WebSocket -->  Node middleware  <-- USB serial -->  UNO R4 firmw
 
 ## Verified TAS Runs
 
-The following **41** runs have completed successfully on real NES hardware with TASDeck.
+The following **51** runs have completed successfully on real NES hardware with TASDeck.
 
 Unless the notes say otherwise, each run uses the defaults: a `.tdmask` plays in `completed reads`
 sync mode at start delay 0, an `.r08` plays in `per strobe` mode at start delay 1, both controller
@@ -105,25 +105,34 @@ ports are driven, and `Skip first` is 0.
 
 | Game and run | Time | TAS Link | Original Format | Hardware | Notes |
 | --- | ---: | --- | --- | --- | --- |
+| 8 Eyes — "2 players" by Slotermeyer | 16:40.28 | [1158M](https://tasvideos.org/1158M) | `.r08` | EverDrive N8 Pro | 2 controllers |
+| Archon: The Light and the Dark by ShesChardcore | 01:00.88 | [4666M](https://tasvideos.org/4666M) | `.r08` | EverDrive N8 Pro | — |
 | [Arkanoid — "warpless" by eien86](https://www.youtube.com/watch?v=_Aq-DNFsMJ8) | 10:56 | [5327M](https://tasvideos.org/5327M) | `.bk2` | EverDrive N8 Pro | — |
 | [Batman by Aglar](https://www.youtube.com/watch?v=_Kj6cqIJKss) | 09:21.93 | [1049M](https://tasvideos.org/1049M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0. Plays TASBot's frame dump `algar-batman.frame.r08` |
+| Battle Chess — "3D Pieces" by FractalFusion | 00:46.62 | [5158M](https://tasvideos.org/5158M) | `.bk2` | EverDrive N8 Pro | `.r08` converted with `npm run bk2` |
 | [Battletoads — "game end glitch", 2 players by MESHUGGAH, feos & Koh1fds](https://www.youtube.com/watch?v=D_07CxTXzIw) | 00:55.66 | [3528M](https://tasvideos.org/3528M) | `.r08` | Real cartridge | 2 controllers, start delay 4. Resync: the published `.r08` plus one P1 Right press after its last input, [`Battletoads_GEG+tail1830R.r08`](docs/games/battletoads/Battletoads_GEG+tail1830R.r08) — see [Battletoads](docs/games/battletoads/README.md) |
 | [Battletoads — "warpless, 2 players" by Lobsterzelda](https://www.youtube.com/watch?v=yU8oSNCAbnU) | 19:15.11 | [4267M](https://tasvideos.org/4267M) | `.r08` | Real cartridge | 2 controllers; boot lottery, plays out only on some power-on boots — see [Battletoads](docs/games/battletoads/README.md) |
 | [Battletoads — "warps, 2 players" by Lobsterzelda](https://www.youtube.com/watch?v=6aBn6uj1ANk) | 10:40.61 | [4271M](https://tasvideos.org/4271M) | `.r08` | Real cartridge | 2 controllers; boot lottery, plays out only on some power-on boots — see [Battletoads](docs/games/battletoads/README.md) |
+| Bionic Commando by nEilfox, Alyosha & Challenger | 12:25.62 | [3613M](https://tasvideos.org/3613M) | `.r08` | EverDrive N8 Pro | — |
 | [Chip 'n Dale Rescue Rangers — 2 players by dragonxyk](https://www.youtube.com/watch?v=FdtvpdCli3k) | 09:33 | [1128M](https://tasvideos.org/1128M) | `.r08` | EverDrive N8 Pro | 2 controllers |
 | [Disney's The Little Mermaid by McBobX](https://www.youtube.com/watch?v=6GE6xpsqm-g) | 06:41.32 | [3298M](https://tasvideos.org/3298M) | `.fm2` | EverDrive N8 Pro | — |
 | [Donkey Kong — "all items" by Phil, Spikestuff, GoddessMaria & Alyosha](https://www.youtube.com/watch?v=I4crTwfEUwo) | 01:16 | [5254M](https://tasvideos.org/5254M) | `.bk2`, `.r08` | EverDrive N8 Pro | Boot lottery — took dozens of attempts to sync |
 | [Double Dragon by Alyosha](https://www.youtube.com/watch?v=wcYWtg0kqyw) | 08:52 | [3211M](https://tasvideos.org/3211M) | `.r08` | EverDrive N8 Pro | — |
 | [Double Dragon II — 2 players by Xipo](https://www.youtube.com/watch?v=VIkQfI6XHhE) | 08:23 | [2607M](https://tasvideos.org/2607M) | `.r08` | EverDrive N8 Pro | 2 controllers |
+| Dr. Mario by CtrlAltDestroy | 01:12.83 | [1290M](https://tasvideos.org/1290M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0. TASBot's `cad-drmario.r08` holds one record per frame, and the game strobes twice per frame, so `per strobe` mode runs through the input twice as fast |
 | [Ghosts 'n Goblins by Arc & Koh1fds](https://www.youtube.com/watch?v=YX-PX36qvdo) | 08:07.55 | [3173M](https://tasvideos.org/3173M) | `.fm2` | EverDrive N8 Pro | — |
 | [Golf by link_7777](https://www.youtube.com/watch?v=OwDKHgDyLVg) | 04:58.49 | [3445M](https://tasvideos.org/3445M) | `.r08` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, primed work RAM, and a per-console start delay (255 on the verified console) — see [Golf and uninitialized work RAM](docs/games/golf-uninitialized-ram.md) |
 | [Kaizo Mario Bros. 3 by Lord_Tom](https://www.youtube.com/watch?v=0q-wFUS73OM) | 14:42.71 | [3119M](https://tasvideos.org/3119M) | `.fm2` | EverDrive N8 Pro | ROM hack: Obitus1's v1.0 patch ([romhacking.net 2477](https://www.romhacking.net/hacks/2477/)) on the SMB3 PRG1 ROM. `.tdmask` converted with `npm run bk2` from Alyosha's [BizHawk resync](https://github.com/alyosha-tas/NES_replay_files/blob/main/bk2_files/lordtom-kaizomariobros3.bk2), whose input is the `.fm2`'s one frame earlier |
 | [Lode Runner by adelikat](https://www.youtube.com/watch?v=AQCvccbO2ls) | 17:42 | [4559M](https://tasvideos.org/4559M) | `.r08` | EverDrive N8 Pro | — |
+| Mighty Bomb Jack by ktwo & SpaceColonizer | 05:59.41 | [6444M](https://tasvideos.org/6444M) | `.r08` | EverDrive N8 Pro | — |
 | [Mike Tyson's Punch-Out!! by adelikat](https://www.youtube.com/watch?v=KTQPddGjbb8) | 17:35 | [1695M](https://tasvideos.org/1695M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0 |
 | [Monopoly by adelikat](https://www.youtube.com/watch?v=MBKtSSF3uyc) | 00:31 | [4104M](https://tasvideos.org/4104M) | `.r08` | EverDrive N8 Pro | — |
+| Monopoly by FractalFusion | 00:28.92 | [6041M](https://tasvideos.org/6041M) | `.r08` | EverDrive N8 Pro | — |
+| Monopoly — "7 CPUs" by FractalFusion | 01:37.45 | [6074M](https://tasvideos.org/6074M) | `.r08` | EverDrive N8 Pro | — |
 | [Pac-Man (Tengen) by eien86](https://www.youtube.com/watch?v=ke553evnN2I) | 12:04 | [5231M](https://tasvideos.org/5231M) | `.bk2` | EverDrive N8 Pro | — |
 | [Prince of Persia by eien86](https://www.youtube.com/watch?v=-pI4v2DWXAQ) | 15:20.05 | [4651M](https://tasvideos.org/4651M) | `.bk2` | EverDrive N8 Pro | `.r08` converted with `npm run bk2` |
 | [R.B.I. Baseball — "playaround" by adelikat](https://www.youtube.com/watch?v=1z95yioeaVA) | 04:28.79 | [1118M](https://tasvideos.org/1118M) | `.fcm` | Real cartridge (work RAM primed) | Will not run from the EverDrive menu; needs a real cartridge, work RAM primed the same way as Golf, and the converter's `.polls.r08` at start delay 0 — see [R.B.I. Baseball and uninitialized work RAM](docs/games/rbi-baseball-uninitialized-ram.md) |
+| Strider by Baddap1 | 03:04.56 | [3995M](https://tasvideos.org/3995M) | `.r08` | EverDrive N8 Pro | Looks glitchy by design: the run clips through walls and takes damage on purpose |
 | [Super Mario Bros. — "warps" by HappyLee](https://www.youtube.com/watch?v=wT-2EFStFg0) | 04:57.31 | [1715M](https://tasvideos.org/1715M) | `.fm2` | EverDrive N8 Pro | — |
 | [Super Mario Bros. — "warpless" by HappyLee & Mars608](https://www.youtube.com/watch?v=JpjCpAvx-Nk) | 18:36.78 | [3728M](https://tasvideos.org/3728M) | `.fm2` | EverDrive N8 Pro | — |
 | [Super Mario Bros. — "Playaround" by flamexx](https://www.youtube.com/watch?v=OOrngcD9NOQ) | 23:30.36 | [User File](https://tasvideos.org/UserFiles/Info/638765452219459600) | `.fm2` | EverDrive N8 Pro | Ends on 7-1 |
@@ -142,6 +151,7 @@ ports are driven, and `Skip first` is 0.
 | [Tecmo Super Bowl by Arc](https://www.youtube.com/watch?v=vCKRAUU1gmQ) | 07:10.092 | [5171M](https://tasvideos.org/5171M) | `.fm2` | EverDrive N8 Pro | — |
 | [Tetris — "maximum score" by r57shell & Archanfel](https://www.youtube.com/watch?v=A2dBl0pKB0A) | 02:53.13 | [4853M](https://tasvideos.org/4853M) | `.fm2` | EverDrive N8 Pro | — |
 | [Tetris — "playaround" by Baxter](https://www.youtube.com/watch?v=FT3IpLBWAPE) | 02:17.36 | [1502M](https://tasvideos.org/1502M) | `.fm2` | EverDrive N8 Pro | — |
+| Tetris — "Mode B" by Baxter | 00:38.85 | [925M](https://tasvideos.org/925M) | `.r08` | EverDrive N8 Pro | Sync mode `completed reads`, start delay 0. Plays TASBot's lag-stripped frame dump `baxter-tetris-modebx2.r08` |
 | [The Legend of Zelda — 2 controllers by Baxter & jprofit22](https://www.youtube.com/watch?v=go0Gdj3tPLY) | 22:38.13 | [1685M](https://tasvideos.org/1685M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (7x) |
 | [The Legend of Zelda — "Swordless Challenge", 2 controllers by Lord_Tom](https://www.youtube.com/watch?v=i4vA6L4wWBU) | 24:39.71 | [3289M](https://tasvideos.org/3289M) | `.fm2` | EverDrive N8 Pro | 2 controllers — P2 presses Up+A to save and continue (10x) |
 | [Tiger-Heli by adelikat & ThunderAxe31](https://www.youtube.com/watch?v=YqREIOvE25Y) | 12:54 | [5037M](https://tasvideos.org/5037M) | `.r08` | EverDrive N8 Pro | — |
